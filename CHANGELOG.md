@@ -1,5 +1,28 @@
 # Changelog
 
+## V30 — recherche de parents uma.moe
+
+- Ajout d’un second mode uma.moe : recherche d’un **parent distant pour l’Ace**, associé à un parent local fixé ou à un pool automatique de parents locaux.
+- Le Main uma.moe est normalisé comme une branche parent complète avec ses deux ascendants ; les réponses incomplètes sont exclues et comptabilisées dans les diagnostics.
+- Le calcul ne réimplémente pas le scoring : il appelle désormais le même moteur central que les paires de parents locales.
+- Affinité exacte sur les six membres visibles : deux branches Ace↔parent, quatre triples avec les grands-parents, lien parent↔parent et bonus des cinq liens G1.
+- Tous les Sparks des deux parents et de leurs quatre grands-parents participent aux composantes blue, pink, white, race/scenario et unique.
+- Préclassement automatique des branches locales et distantes avec le score parent local, puis calcul exhaustif des paires sélectionnées.
+- Nouvelle fenêtre de résultats détaillant les six membres, chaque lien d’affinité, les G1 communes, les pondérations et les factors contributifs.
+- Nouveaux exports `uma_moe_parent_pairs.json`, `uma_moe_parent_pairs.csv`, `uma_moe_parent_diagnostics.json` et `uma_moe_parent_raw_response.json`.
+- Le moteur de paire parent a été extrait de l’optimiseur local en fonctions réutilisables ; les classements locaux continuent d’utiliser exactement cette implémentation.
+
+## V29 — debug UX des sélecteurs et pondérations
+
+- Les listes d'Uma sont désormais triées alphabétiquement par personnage puis par costume/carte, avec le nom de l'Uma affiché en premier.
+- Ajout de sélecteurs dédiés et recherchables pour l'Ace et le parent à produire ; recherche multi-mots par nom, carte/costume ou ID.
+- Correction du filtrage des combobox : ouvrir la liste ne réinitialise plus la recherche saisie.
+- Le sélecteur de GP local est lui aussi ordonné alphabétiquement, en conservant le score Uma et l'ID d'entraînement comme critères secondaires.
+- Les presets de course reconnaissent les variantes de romanisation d'hippodrome, notamment `Ooi` dans les presets et `Ohi` dans le MDB Global.
+- Refonte de l'éditeur de pondérations : recherche, filtre des seules modifications, libellés métier, affichage des poids en pourcentage, résumé lisible des courbes de paliers et panneau d'explication.
+- Modifier ou réinitialiser une valeur conserve désormais les sections ouvertes, la sélection et la position de défilement.
+- Les décimaux de l'éditeur acceptent le séparateur français et la notation en pourcentage (`0,22` ou `22 %`).
+
 ## V28 — focused Transfer Helper scope
 
 - Transfer Helper now evaluates only the first five upcoming Champion Meetings and the five Team Trials categories by default.

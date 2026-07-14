@@ -217,9 +217,16 @@ def load_ace_options(master_path: str | Path) -> list[AceOption]:
                     uma_name=uma_name,
                     card_name=card_name,
                     costume_name=costume,
-                    display_name=f"{card_name} — {uma_name} ({card_id})",
+                    display_name=f"{uma_name} — {card_name} ({card_id})",
                 )
             )
+        options.sort(
+            key=lambda option: (
+                option.uma_name.casefold(),
+                option.card_name.casefold(),
+                option.card_id,
+            )
+        )
         return options
     finally:
         connection.close()
@@ -918,6 +925,200 @@ def _branch_affinity(
     }
 
 
+def evaluate_parent_branch(
+    resolver: AffinityResolver,
+    ace: dict[str, Any],
+    veteran: dict[str, Any],
+    *,
+    surface: str,
+    distance: str,
+    style: str,
+    weight_lookup: Callable[[str], float],
+    race_skills: dict[str, list[str]],
+    config: dict[str, Any],
+    g1_bonus_value: int | None = None,
+    affinity_thresholds: Iterable[Iterable[float]] | None = None,
+) -> dict[str, Any]:
+    """Evaluate one complete parent branch with the canonical local scorer.
+
+    A branch is the final parent plus its two visible grandparents. Keeping this
+    logic public lets online candidates use exactly the same formula as local
+    veterans instead of maintaining a second, subtly different implementation.
+    """
+    ace_chara = int(ace.get("chara_id") or 0)
+    if ace_chara <= 0:
+        raise OptimizerError("Ace invalide pour l'évaluation de branche parent.")
+    parent_chara = int(veteran.get("chara_id") or 0)
+    if parent_chara <= 0:
+        raise OptimizerError("Parent invalide pour l'évaluation de branche.")
+    if parent_chara == ace_chara:
+        raise OptimizerError("L'Ace ne peut pas être utilisé comme son propre parent.")
+
+    affinity_cfg = config.get("affinity") or {}
+    resolved_g1_bonus = int(
+        affinity_cfg.get("g1_common_bonus", 3)
+        if g1_bonus_value is None
+        else g1_bonus_value
+    )
+    thresholds = affinity_thresholds or affinity_cfg.get("parent_branch_thresholds") or [[0, 0], [95, 100]]
+    weights = (config.get("mode_weights") or {}).get("parent_final") or {}
+    members = _lineage_members(veteran)
+    affinity = _branch_affinity(resolver, ace_chara, veteran, resolved_g1_bonus)
+    blue, blue_detail = _blue_score(members, distance, config)
+    pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
+    white, white_detail = _white_score(members, weight_lookup, config, "parent_branch")
+    race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_branch")
+    unique, unique_detail = _unique_score(members, config, "parent_branch")
+    components = {
+        "blue": blue,
+        "pink": pink,
+        "white_skill": white,
+        "race_scenario": race,
+        "unique": unique,
+    }
+    affinity_score = _affinity_score(affinity["total"], thresholds)
+    components["affinity"] = affinity_score
+    component_details = {
+        "blue": blue_detail,
+        "pink": pink_detail,
+        "white_skill": white_detail,
+        "race_scenario": race_detail,
+        "unique": unique_detail,
+        "affinity": {
+            "raw_total": affinity["total"],
+            "base": affinity["base"],
+            "g1_bonus": affinity["g1_bonus"],
+            "thresholds": thresholds,
+            "score": affinity_score,
+        },
+    }
+    return {
+        **_candidate_identity(veteran),
+        "veteran": veteran,
+        "affinity": affinity,
+        "components": components,
+        "component_details": component_details,
+        "score": _weighted_total(components, weights),
+        "score_breakdown": _score_breakdown(components, weights),
+    }
+
+
+def evaluate_parent_pair(
+    resolver: AffinityResolver,
+    ace: dict[str, Any],
+    parent_1: dict[str, Any],
+    parent_2: dict[str, Any],
+    *,
+    surface: str,
+    distance: str,
+    style: str,
+    weight_lookup: Callable[[str], float],
+    race_skills: dict[str, list[str]],
+    config: dict[str, Any],
+    parent_1_branch: dict[str, Any] | None = None,
+    parent_2_branch: dict[str, Any] | None = None,
+    g1_bonus_value: int | None = None,
+    affinity_thresholds: Iterable[Iterable[float]] | None = None,
+) -> dict[str, Any]:
+    """Evaluate a final Ace parent pair through the canonical six-member engine.
+
+    The exact affinity includes both Ace↔parent branches, their four parent↔GP
+    links and the parent↔parent link. Factors are scored over the six visible
+    lineage members. This is the same engine used by the local optimizer and by
+    the uma.moe parent search.
+    """
+    chara_1 = int(parent_1.get("chara_id") or 0)
+    chara_2 = int(parent_2.get("chara_id") or 0)
+    if chara_1 <= 0 or chara_2 <= 0:
+        raise OptimizerError("Paire de parents invalide : personnage non résolu.")
+    if chara_1 == chara_2:
+        raise OptimizerError("Les deux parents doivent être deux personnages différents.")
+
+    affinity_cfg = config.get("affinity") or {}
+    resolved_g1_bonus = int(
+        affinity_cfg.get("g1_common_bonus", 3)
+        if g1_bonus_value is None
+        else g1_bonus_value
+    )
+    thresholds = affinity_thresholds or affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
+    weights = (config.get("mode_weights") or {}).get("parent_final") or {}
+
+    left = parent_1_branch or evaluate_parent_branch(
+        resolver, ace, parent_1, surface=surface, distance=distance, style=style,
+        weight_lookup=weight_lookup, race_skills=race_skills, config=config,
+        g1_bonus_value=resolved_g1_bonus,
+    )
+    right = parent_2_branch or evaluate_parent_branch(
+        resolver, ace, parent_2, surface=surface, distance=distance, style=style,
+        weight_lookup=weight_lookup, race_skills=race_skills, config=config,
+        g1_bonus_value=resolved_g1_bonus,
+    )
+
+    parent_pair_base = resolver.pair(chara_1, chara_2)
+    parent_common = sorted(_member_g1(parent_1) & _member_g1(parent_2))
+    parent_pair_g1 = resolved_g1_bonus * len(parent_common)
+    affinity = {
+        "base": int(left["affinity"]["base"]) + int(right["affinity"]["base"]) + parent_pair_base,
+        "g1_bonus": int(left["affinity"]["g1_bonus"]) + int(right["affinity"]["g1_bonus"]) + parent_pair_g1,
+        "total": int(left["affinity"]["total"]) + int(right["affinity"]["total"]) + parent_pair_base + parent_pair_g1,
+        "parent_parent_base": parent_pair_base,
+        "parent_parent_common_g1": parent_common,
+        "parent_parent_common_g1_bonus": parent_pair_g1,
+        "parent_1_branch": left["affinity"],
+        "parent_2_branch": right["affinity"],
+        "formula": (
+            "branch(Ace,parent1,GP1,GP2) + branch(Ace,parent2,GP3,GP4) "
+            "+ pair(parent1,parent2), with the five visible G1 links"
+        ),
+    }
+
+    members = _lineage_members(parent_1) + _lineage_members(parent_2)
+    blue, blue_detail = _blue_score(members, distance, config)
+    pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
+    white, white_detail = _white_score(members, weight_lookup, config, "parent_pair")
+    race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_pair")
+    unique, unique_detail = _unique_score(members, config, "parent_pair")
+    components = {
+        "blue": blue,
+        "pink": pink,
+        "white_skill": white,
+        "race_scenario": race,
+        "unique": unique,
+    }
+    affinity_score = _affinity_score(affinity["total"], thresholds)
+    components["affinity"] = affinity_score
+    component_details = {
+        "blue": blue_detail,
+        "pink": pink_detail,
+        "white_skill": white_detail,
+        "race_scenario": race_detail,
+        "unique": unique_detail,
+        "affinity": {
+            "raw_total": affinity["total"],
+            "base": affinity["base"],
+            "g1_bonus": affinity["g1_bonus"],
+            "thresholds": thresholds,
+            "score": affinity_score,
+            "links": {
+                "parent_1_branch": left["affinity"],
+                "parent_2_branch": right["affinity"],
+                "parent_parent_base": parent_pair_base,
+                "parent_parent_common_g1": parent_common,
+                "parent_parent_common_g1_bonus": parent_pair_g1,
+            },
+        },
+    }
+    return {
+        "parent_1": _candidate_identity(parent_1),
+        "parent_2": _candidate_identity(parent_2),
+        "affinity": affinity,
+        "components": components,
+        "component_details": component_details,
+        "score": _weighted_total(components, weights),
+        "score_breakdown": _score_breakdown(components, weights),
+    }
+
+
 def _candidate_identity(veteran: dict[str, Any]) -> dict[str, Any]:
     lineage = veteran.get("when_used_as_parent") or {}
     return {
@@ -1072,52 +1273,25 @@ def optimize_parents(
         branch_rows: list[dict[str, Any]] = []
         log(f"Évaluation de {len(valid_veterans)} lignées candidates…")
         for index, veteran in enumerate(valid_veterans, 1):
-            members = _lineage_members(veteran)
-            affinity = _branch_affinity(resolver, ace_chara, veteran, g1_bonus_value)
-            blue, blue_detail = _blue_score(members, distance, config)
-            pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
-            white, white_detail = _white_score(members, weight_lookup, config, "parent_branch")
-            race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_branch")
-            unique, unique_detail = _unique_score(members, config, "parent_branch")
             branch_rows.append(
-                {
-                    **_candidate_identity(veteran),
-                    "veteran": veteran,
-                    "affinity": affinity,
-                    "components": {
-                        "blue": blue,
-                        "pink": pink,
-                        "white_skill": white,
-                        "race_scenario": race,
-                        "unique": unique,
-                    },
-                    "component_details": {
-                        "blue": blue_detail,
-                        "pink": pink_detail,
-                        "white_skill": white_detail,
-                        "race_scenario": race_detail,
-                        "unique": unique_detail,
-                    },
-                }
+                evaluate_parent_branch(
+                    resolver,
+                    ace,
+                    veteran,
+                    surface=surface,
+                    distance=distance,
+                    style=style,
+                    weight_lookup=weight_lookup,
+                    race_skills=race_skills,
+                    config=config,
+                    g1_bonus_value=g1_bonus_value,
+                    affinity_thresholds=branch_affinity_thresholds,
+                )
             )
             if index % 50 == 0 or index == len(valid_veterans):
                 log(f"Lignées : {index}/{len(valid_veterans)}")
 
         branch_p95 = _quantile((row["affinity"]["total"] for row in branch_rows), 0.95)
-        parent_weights = (config.get("mode_weights") or {}).get("parent_final") or {}
-        for row in branch_rows:
-            affinity_score = _affinity_score(row["affinity"]["total"], branch_affinity_thresholds)
-            row["components"]["affinity"] = affinity_score
-            row["component_details"]["affinity"] = {
-                "raw_total": row["affinity"]["total"],
-                "base": row["affinity"]["base"],
-                "g1_bonus": row["affinity"]["g1_bonus"],
-                "thresholds": branch_affinity_thresholds,
-                "score": affinity_score,
-            }
-            row["score"] = _weighted_total(row["components"], parent_weights)
-            row["score_breakdown"] = _score_breakdown(row["components"], parent_weights)
-
         branch_rows.sort(key=lambda row: (row["score"], row["affinity"]["total"]), reverse=True)
 
         log("Recherche des meilleures paires de parents…")
@@ -1129,62 +1303,26 @@ def optimize_parents(
                 v2 = right["veteran"]
                 if int(v1.get("chara_id") or 0) == int(v2.get("chara_id") or 0):
                     continue
-                parent_pair_base = resolver.pair(int(v1["chara_id"]), int(v2["chara_id"]))
-                parent_common = sorted(_member_g1(v1) & _member_g1(v2))
-                parent_pair_g1 = g1_bonus_value * len(parent_common)
-                affinity_total = (
-                    int(left["affinity"]["total"])
-                    + int(right["affinity"]["total"])
-                    + parent_pair_base
-                    + parent_pair_g1
-                )
-                members = _lineage_members(v1) + _lineage_members(v2)
-                blue, blue_detail = _blue_score(members, distance, config)
-                pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
-                white, white_detail = _white_score(members, weight_lookup, config, "parent_pair")
-                race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_pair")
-                unique, unique_detail = _unique_score(members, config, "parent_pair")
                 pair_rows.append(
-                    {
-                        "parent_1": _candidate_identity(v1),
-                        "parent_2": _candidate_identity(v2),
-                        "affinity": {
-                            "base": int(left["affinity"]["base"]) + int(right["affinity"]["base"]) + parent_pair_base,
-                            "g1_bonus": int(left["affinity"]["g1_bonus"]) + int(right["affinity"]["g1_bonus"]) + parent_pair_g1,
-                            "total": affinity_total,
-                            "parent_parent_base": parent_pair_base,
-                            "parent_parent_common_g1": parent_common,
-                        },
-                        "components": {
-                            "blue": blue,
-                            "pink": pink,
-                            "white_skill": white,
-                            "race_scenario": race,
-                            "unique": unique,
-                        },
-                        "component_details": {
-                            "blue": blue_detail,
-                            "pink": pink_detail,
-                            "white_skill": white_detail,
-                            "race_scenario": race_detail,
-                            "unique": unique_detail,
-                        },
-                    }
+                    evaluate_parent_pair(
+                        resolver,
+                        ace,
+                        v1,
+                        v2,
+                        surface=surface,
+                        distance=distance,
+                        style=style,
+                        weight_lookup=weight_lookup,
+                        race_skills=race_skills,
+                        config=config,
+                        parent_1_branch=left,
+                        parent_2_branch=right,
+                        g1_bonus_value=g1_bonus_value,
+                        affinity_thresholds=pair_affinity_thresholds,
+                    )
                 )
 
         pair_p95 = _quantile((row["affinity"]["total"] for row in pair_rows), 0.95)
-        for row in pair_rows:
-            affinity_score = _affinity_score(row["affinity"]["total"], pair_affinity_thresholds)
-            row["components"]["affinity"] = affinity_score
-            row["component_details"]["affinity"] = {
-                "raw_total": row["affinity"]["total"],
-                "base": row["affinity"]["base"],
-                "g1_bonus": row["affinity"]["g1_bonus"],
-                "thresholds": pair_affinity_thresholds,
-                "score": affinity_score,
-            }
-            row["score"] = _weighted_total(row["components"], parent_weights)
-            row["score_breakdown"] = _score_breakdown(row["components"], parent_weights)
         pair_rows.sort(key=lambda row: (row["score"], row["affinity"]["total"]), reverse=True)
 
         log("Évaluation des futurs grands-parents…")

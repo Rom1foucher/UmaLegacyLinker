@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -11,6 +12,43 @@ COURSE_CATEGORY_ORDER = {
     "champions_meeting_archive": 2,
     "other": 3,
 }
+
+
+RACECOURSE_ALIASES = {
+    # The Global MDB currently uses "Ohi" while several community datasets
+    # and historical CM references use "Ooi". They designate the same track.
+    "ooi": "ohi",
+    "oi": "ohi",
+}
+
+
+def normalize_racecourse_name(value: object) -> str:
+    """Return a comparison-friendly racecourse name.
+
+    Track combobox labels include a numeric MDB id (for example
+    ``Ohi (10009)``), while preset files usually contain only the venue name.
+    The normalisation also handles the common Ooi/Ohi romanisation mismatch.
+    """
+
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    text = text.lower().strip()
+    text = re.sub(r"\s*\(\d+\)\s*$", "", text)
+    text = re.sub(r"\b(?:racecourse|racetrack|track)\b", "", text)
+    normalized = re.sub(r"[^a-z0-9]+", "", text)
+    return RACECOURSE_ALIASES.get(normalized, normalized)
+
+
+def racecourse_names_match(left: object, right: object) -> bool:
+    left_name = normalize_racecourse_name(left)
+    right_name = normalize_racecourse_name(right)
+    if not left_name or not right_name:
+        return False
+    return (
+        left_name == right_name
+        or left_name.startswith(right_name)
+        or right_name.startswith(left_name)
+    )
 
 
 def resolve_course_overrides_path(

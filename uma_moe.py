@@ -32,12 +32,15 @@ from parent_optimizer import (
     _lineage_members,
     _member_g1,
     _pink_score,
+    _race_skill_map,
     _read_json,
     _score_breakdown,
     _selected_weight_lookup,
     _static_condition_state,
     _white_generation_support_score,
     _white_score,
+    evaluate_parent_branch,
+    evaluate_parent_pair,
 )
 
 DEFAULT_API_BASE = "https://uma.moe/api"
@@ -64,6 +67,23 @@ class OnlineSearchResult:
     evaluated_pair_count: int
     ace: dict[str, Any]
     target_parent: dict[str, Any]
+    api_operation: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class OnlineParentSearchResult:
+    rankings_json_path: Path
+    rankings_csv_path: Path
+    raw_response_path: Path
+    diagnostics_path: Path
+    result_count: int
+    top_results: tuple[dict[str, Any], ...]
+    fixed_parent: dict[str, Any] | None
+    pair_mode: str
+    local_pool_count: int
+    remote_pool_count: int
+    evaluated_pair_count: int
+    ace: dict[str, Any]
     api_operation: dict[str, Any] | None
 
 
@@ -1948,3 +1968,527 @@ def rank_online_grandparent_pairs(
         api_operation=api_operation,
     )
 
+
+
+def _has_complete_parent_branch(member: dict[str, Any]) -> bool:
+    """Return whether a final-parent candidate exposes both visible grandparents."""
+    lineage = member.get("when_used_as_parent") or {}
+    for grandparent in (lineage.get("grandparent_1"), lineage.get("grandparent_2")):
+        if not isinstance(grandparent, dict):
+            return False
+        try:
+            if int(grandparent.get("chara_id") or 0) <= 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    import csv
+
+    fields = [
+        "rank", "score",
+        "local_id", "local_parent", "local_rank_score", "local_branch_score",
+        "local_gp1", "local_gp2",
+        "friend_code", "trainer_name", "remote_parent", "remote_rank_score", "remote_branch_score",
+        "remote_gp1", "remote_gp2",
+        "affinity_total", "affinity_base", "affinity_g1_bonus",
+        "parent_parent_base", "parent_parent_common_g1_count", "parent_parent_common_g1",
+        "affinity_component", "pink", "white", "race_scenario", "blue", "unique",
+        "updated_at", "follow_status",
+    ]
+    with path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, delimiter=";")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fields})
+
+
+def rank_online_parent_pairs(
+    master_path: str | Path,
+    linked_veterans_path: str | Path,
+    manual_weights_path: str | Path,
+    race_factor_catalog_path: str | Path,
+    skill_catalog_path: str | Path,
+    output_dir: str | Path,
+    *,
+    ace_card_id: int,
+    fixed_parent_trained_id: int | None = None,
+    exhaustive_pairs: bool = False,
+    local_pool_size: int = 100,
+    remote_pool_size: int = 100,
+    surface: str,
+    distance: str,
+    style: str,
+    raw_payload: Any,
+    course_weights_path: str | Path | None = None,
+    course_key: str | None = None,
+    course_conditions: dict[str, int | list[int] | tuple[int, ...] | set[int] | None] | None = None,
+    scoring_config_path: str | Path | None = None,
+    top_n: int = 50,
+    api_operation: dict[str, Any] | None = None,
+    required_main_factors: Iterable[dict[str, Any]] | None = None,
+    effective_uql: str = "",
+    logger: Callable[[str], None] | None = None,
+) -> OnlineParentSearchResult:
+    """Rank uma.moe parents paired with a local parent for the selected Ace.
+
+    The candidate Main from uma.moe is normalized to the same veteran structure
+    as a local parent, including its two visible grandparents. Every final pair
+    is then evaluated by :func:`parent_optimizer.evaluate_parent_pair`, which is
+    also the engine used by the all-local optimizer.
+    """
+    log = logger or (lambda _message: None)
+    master_path = Path(master_path).resolve()
+    linked_veterans_path = Path(linked_veterans_path).resolve()
+    manual_weights_path = Path(manual_weights_path).resolve()
+    race_factor_catalog_path = Path(race_factor_catalog_path).resolve()
+    skill_catalog_path = Path(skill_catalog_path).resolve()
+    output_dir = Path(output_dir).resolve()
+    course_weights_path = Path(course_weights_path).resolve() if course_weights_path else None
+    scoring_config_path = (
+        Path(scoring_config_path).resolve()
+        if scoring_config_path
+        else Path(__file__).resolve().parent / "default_parent_scoring.json"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    linked = _read_json(linked_veterans_path)
+    weights = _read_json(manual_weights_path)
+    race_catalog = _read_json(race_factor_catalog_path)
+    skill_catalog = _read_json(skill_catalog_path)
+    course_payload = _read_json(course_weights_path) if course_weights_path and course_weights_path.is_file() else None
+    config = _read_json(scoring_config_path)
+    veterans = list(linked.get("veterans") or [])
+    if not veterans:
+        raise UmaMoeError("Aucun parent local dans veterans_legacy_linked.json.")
+
+    fixed: dict[str, Any] | None = None
+    if fixed_parent_trained_id is not None:
+        fixed = next(
+            (
+                veteran
+                for veteran in veterans
+                if int(veteran.get("trained_chara_id") or 0) == int(fixed_parent_trained_id)
+            ),
+            None,
+        )
+        if fixed is None and not exhaustive_pairs:
+            raise UmaMoeError(f"Parent local introuvable : #{fixed_parent_trained_id}")
+
+    normalizer = OnlineRecordNormalizer(master_path)
+    try:
+        online_candidates, normalization_diag = normalizer.normalize_records(raw_payload)
+    finally:
+        normalizer.close()
+    if not online_candidates:
+        raise UmaMoeError("La réponse uma.moe ne contient aucun parent avec Main/factors exploitables.")
+
+    operation_uql = str((api_operation or {}).get("effective_uql") or effective_uql or "")
+    generated_meta = (api_operation or {}).get("generated_uql_metadata") or {}
+    generated_filters = generated_meta.get("hard_filters") if isinstance(generated_meta, dict) else None
+    strict_main_filters = _normalize_main_factor_filters(
+        list(required_main_factors or []) + list(generated_filters or []),
+        operation_uql,
+    )
+    unfiltered_online_count = len(online_candidates)
+    if strict_main_filters:
+        online_candidates = [
+            candidate
+            for candidate in online_candidates
+            if _member_matches_main_factor_filters(candidate, strict_main_filters)
+        ]
+        filter_text = ", ".join(
+            f"Main {item['factor']} >= {item['minimum_stars']}"
+            for item in strict_main_filters
+        )
+        log(
+            f"Contrôle local strict des pinks : {len(online_candidates)}/{unfiltered_online_count} "
+            f"parents respectent {filter_text}."
+        )
+        normalization_diag["strict_main_factor_filters"] = strict_main_filters
+        normalization_diag["pre_filter_count"] = unfiltered_online_count
+        normalization_diag["post_filter_count"] = len(online_candidates)
+        if not online_candidates:
+            raise UmaMoeError(
+                "Aucun parent uma.moe ne respecte les contraintes Main sélectionnées "
+                f"({filter_text}). Le pool demandé est peut-être trop petit."
+            )
+    else:
+        normalization_diag["strict_main_factor_filters"] = []
+        normalization_diag["pre_filter_count"] = unfiltered_online_count
+        normalization_diag["post_filter_count"] = unfiltered_online_count
+    log(f"uma.moe : {len(online_candidates)} branches parent distantes normalisées.")
+
+    resolver = AffinityResolver(master_path)
+    try:
+        ace = resolver.ace_details(int(ace_card_id), surface, distance, style)
+        ace_chara = int(ace["chara_id"])
+        normalized_conditions = _normalize_course_condition_sets(course_conditions)
+        course_cfg = config.get("course_conditions") or {}
+        weight_lookup, weight_source, condition_diag = _selected_weight_lookup(
+            weights,
+            course_payload,
+            skill_catalog,
+            surface,
+            distance,
+            style,
+            course_key,
+            normalized_conditions,
+            float(course_cfg.get("active_green_floor", 0.12)),
+            {str(key): float(value) for key, value in (course_cfg.get("floors") or {}).items()},
+            {str(key): str(value) for key, value in (course_cfg.get("modes") or {}).items()},
+        )
+        race_skills = _race_skill_map(race_catalog)
+        affinity_cfg = config.get("affinity") or {}
+        g1_bonus_value = int(affinity_cfg.get("g1_common_bonus", 3))
+        branch_thresholds = affinity_cfg.get("parent_branch_thresholds") or [[0, 0], [95, 100]]
+        pair_thresholds = affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
+        pair_weights = (config.get("mode_weights") or {}).get("parent_final") or {}
+
+        def eligible(member: dict[str, Any]) -> bool:
+            chara = int(member.get("chara_id") or 0)
+            return chara > 0 and chara != ace_chara
+
+        branch_cache: dict[tuple[str, int], dict[str, Any]] = {}
+
+        def cache_key(member: dict[str, Any], source: str) -> tuple[str, int]:
+            if source == "local":
+                raw_id = member.get("trained_chara_id")
+            else:
+                raw_id = (member.get("online") or {}).get("inheritance_id") or member.get("trained_chara_id")
+            try:
+                return source, int(raw_id)
+            except (TypeError, ValueError):
+                return source, id(member)
+
+        def branch_score(member: dict[str, Any], source: str) -> dict[str, Any]:
+            key = cache_key(member, source)
+            cached = branch_cache.get(key)
+            if cached is not None:
+                return cached
+            scored = evaluate_parent_branch(
+                resolver,
+                ace,
+                member,
+                surface=surface,
+                distance=distance,
+                style=style,
+                weight_lookup=weight_lookup,
+                race_skills=race_skills,
+                config=config,
+                g1_bonus_value=g1_bonus_value,
+                affinity_thresholds=branch_thresholds,
+            )
+            branch_cache[key] = scored
+            return scored
+
+        remote_compatible = [member for member in online_candidates if eligible(member)]
+        remote_eligible = [member for member in remote_compatible if _has_complete_parent_branch(member)]
+        incomplete_remote_count = len(remote_compatible) - len(remote_eligible)
+        normalization_diag["incomplete_parent_branches_excluded"] = incomplete_remote_count
+        if incomplete_remote_count:
+            log(
+                f"Branches distantes incomplètes exclues : {incomplete_remote_count} "
+                "(les deux grands-parents sont requis pour le calcul à six membres)."
+            )
+        if not remote_eligible:
+            raise UmaMoeError(
+                "Aucun parent distant compatible avec une branche complète "
+                "(Main + deux grands-parents)."
+            )
+
+        if exhaustive_pairs:
+            local_compatible = [member for member in veterans if eligible(member)]
+            local_eligible = [member for member in local_compatible if _has_complete_parent_branch(member)]
+            incomplete_local_count = len(local_compatible) - len(local_eligible)
+            if incomplete_local_count:
+                log(
+                    f"Branches locales incomplètes exclues : {incomplete_local_count} "
+                    "(les deux grands-parents sont requis)."
+                )
+            if not local_eligible:
+                raise UmaMoeError(
+                    "Aucun parent local compatible avec une branche complète "
+                    "(parent + deux grands-parents)."
+                )
+            log(
+                f"Préclassement via le moteur local : {len(local_eligible)} parents locaux et "
+                f"{len(remote_eligible)} parents distants…"
+            )
+            local_pre = sorted(
+                (branch_score(member, "local") for member in local_eligible),
+                key=lambda row: (row["score"], row["affinity"]["total"]),
+                reverse=True,
+            )
+            remote_pre = sorted(
+                (branch_score(member, "remote") for member in remote_eligible),
+                key=lambda row: (row["score"], row["affinity"]["total"]),
+                reverse=True,
+            )
+            selected_locals = [
+                row["veteran"]
+                for row in local_pre[: max(1, min(int(local_pool_size), 250))]
+            ]
+            selected_remotes = [
+                row["veteran"]
+                for row in remote_pre[: max(1, min(int(remote_pool_size), 500))]
+            ]
+            pair_mode = "exhaustive_parent_top_pools"
+        else:
+            if fixed is None:
+                raise UmaMoeError("Sélectionne un parent local ou active le test automatique des paires.")
+            if not eligible(fixed):
+                raise UmaMoeError("Le parent local sélectionné est l'Ace ou n'a pas pu être résolu.")
+            if not _has_complete_parent_branch(fixed):
+                raise UmaMoeError(
+                    "Le parent local sélectionné ne contient pas ses deux grands-parents ; "
+                    "le calcul exact sur six membres est impossible."
+                )
+            incomplete_local_count = 0
+            selected_locals = [fixed]
+            selected_remotes = remote_eligible
+            branch_score(fixed, "local")
+            pair_mode = "fixed_local_parent"
+
+        log(
+            f"Calcul exact des paires de parents : {len(selected_locals)} locaux × "
+            f"{len(selected_remotes)} distants, sur les six membres visibles."
+        )
+
+        def evaluate_pair(local_parent: dict[str, Any], remote_parent: dict[str, Any], *, detailed: bool) -> dict[str, Any]:
+            local_branch = branch_score(local_parent, "local")
+            remote_branch = branch_score(remote_parent, "remote")
+            pair = evaluate_parent_pair(
+                resolver,
+                ace,
+                local_parent,
+                remote_parent,
+                surface=surface,
+                distance=distance,
+                style=style,
+                weight_lookup=weight_lookup,
+                race_skills=race_skills,
+                config=config,
+                parent_1_branch=local_branch,
+                parent_2_branch=remote_branch,
+                g1_bonus_value=g1_bonus_value,
+                affinity_thresholds=pair_thresholds,
+            )
+            row: dict[str, Any] = {
+                "score": float(pair["score"]),
+                "local_trained_id": local_parent.get("trained_chara_id"),
+                "local_card_name": local_parent.get("card_name"),
+                "local_rank_score": local_parent.get("rank_score"),
+                "local_branch_score": float(local_branch["score"]),
+                "remote_inheritance_id": (remote_parent.get("online") or {}).get("inheritance_id"),
+                "remote_card_name": remote_parent.get("card_name"),
+                "remote_rank_score": remote_parent.get("rank_score"),
+                "remote_branch_score": float(remote_branch["score"]),
+                "affinity": pair["affinity"],
+                "components": pair["components"],
+                "score_breakdown": pair["score_breakdown"],
+                "_local_parent": local_parent,
+                "_remote_parent": remote_parent,
+            }
+            if detailed:
+                row.update({
+                    "fixed_parent": _identity(local_parent),
+                    "candidate": _identity(remote_parent),
+                    "component_details": pair["component_details"],
+                    "local_branch": {
+                        "score": local_branch["score"],
+                        "affinity": local_branch["affinity"],
+                        "components": local_branch["components"],
+                        "score_breakdown": local_branch["score_breakdown"],
+                    },
+                    "remote_branch": {
+                        "score": remote_branch["score"],
+                        "affinity": remote_branch["affinity"],
+                        "components": remote_branch["components"],
+                        "score_breakdown": remote_branch["score_breakdown"],
+                    },
+                })
+                row.pop("_local_parent", None)
+                row.pop("_remote_parent", None)
+            return row
+
+        summaries: list[dict[str, Any]] = []
+        total_possible = len(selected_locals) * len(selected_remotes)
+        processed = 0
+        for local_parent in selected_locals:
+            local_chara = int(local_parent.get("chara_id") or 0)
+            for remote_parent in selected_remotes:
+                processed += 1
+                remote_chara = int(remote_parent.get("chara_id") or 0)
+                if local_chara <= 0 or remote_chara <= 0 or local_chara == remote_chara:
+                    continue
+                summaries.append(evaluate_pair(local_parent, remote_parent, detailed=False))
+            if exhaustive_pairs and (
+                processed % max(1, len(selected_remotes) * 10) == 0
+                or processed == total_possible
+            ):
+                log(f"Paires parent évaluées : {processed}/{total_possible} — {len(summaries)} valides.")
+
+        if not summaries:
+            raise UmaMoeError("Aucune paire parent local × parent distant valide.")
+        summaries.sort(
+            key=lambda row: (row["score"], row["affinity"]["total"]),
+            reverse=True,
+        )
+        detail_count = max(1, min(int(top_n), 500))
+        top = [
+            evaluate_pair(row["_local_parent"], row["_remote_parent"], detailed=True)
+            for row in summaries[:detail_count]
+        ]
+    finally:
+        resolver.close()
+
+    generated = datetime.now(timezone.utc).isoformat()
+    raw_response_path = output_dir / "uma_moe_parent_raw_response.json"
+    raw_response_path.write_text(
+        json.dumps(raw_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    rankings_json_path = output_dir / "uma_moe_parent_pairs.json"
+    payload = {
+        "metadata": {
+            "schema_version": 1,
+            "generated_at_utc": generated,
+            "source": "uma.moe public API or imported API response",
+            "search_mode": "parent_for_ace",
+            "api_operation": api_operation,
+            "weight_source": weight_source,
+            "pair_mode": pair_mode,
+            "local_pool_count": len(selected_locals),
+            "remote_pool_count": len(selected_remotes),
+            "evaluated_pair_count": len(summaries),
+            "profile": {
+                "surface": surface,
+                "distance": distance,
+                "style": style,
+                "course_key": course_key,
+                "course_conditions": {
+                    key: sorted(value) for key, value in normalized_conditions.items()
+                },
+            },
+            "normalization": normalization_diag,
+            "complete_branch_validation": {
+                "remote_incomplete_excluded": incomplete_remote_count,
+                "local_incomplete_excluded": incomplete_local_count,
+                "required_visible_members_per_pair": 6,
+            },
+            "condition_diagnostics": condition_diag,
+            "scoring_engine": "parent_optimizer.evaluate_parent_pair",
+            "lineage_model": (
+                "Exact same six-member final-parent pair formula as the local optimizer: "
+                "two complete parent branches, parent-parent compatibility, five G1 links, "
+                "and all factors from both parents plus their four grandparents."
+            ),
+            "important": (
+                "Online records can become stale; verify follow availability and the profile "
+                "on uma.moe before relying on a borrow."
+            ),
+        },
+        "ace": ace,
+        "fixed_parent": (_identity(fixed) if fixed is not None and not exhaustive_pairs else None),
+        "scoring": {
+            "weights": pair_weights,
+            "branch_affinity_thresholds": branch_thresholds,
+            "pair_affinity_thresholds": pair_thresholds,
+            "logic": (
+                "Remote Main records are normalized as complete parent branches, then passed "
+                "unchanged to the same scorer as local parent pairs."
+            ),
+        },
+        "results": top,
+    }
+    rankings_json_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    csv_rows: list[dict[str, Any]] = []
+    for rank, row in enumerate(summaries, 1):
+        local_parent = row["_local_parent"]
+        remote_parent = row["_remote_parent"]
+        online = remote_parent.get("online") or {}
+        local_lineage = local_parent.get("when_used_as_parent") or {}
+        remote_lineage = remote_parent.get("when_used_as_parent") or {}
+        affinity = row["affinity"]
+        common = affinity.get("parent_parent_common_g1") or []
+        components = row["components"]
+        csv_rows.append({
+            "rank": rank,
+            "score": round(float(row["score"]), 3),
+            "local_id": local_parent.get("trained_chara_id"),
+            "local_parent": local_parent.get("card_name"),
+            "local_rank_score": local_parent.get("rank_score"),
+            "local_branch_score": round(float(row["local_branch_score"]), 3),
+            "local_gp1": (local_lineage.get("grandparent_1") or {}).get("card_name"),
+            "local_gp2": (local_lineage.get("grandparent_2") or {}).get("card_name"),
+            "friend_code": online.get("friend_code"),
+            "trainer_name": online.get("trainer_name"),
+            "remote_parent": remote_parent.get("card_name"),
+            "remote_rank_score": remote_parent.get("rank_score"),
+            "remote_branch_score": round(float(row["remote_branch_score"]), 3),
+            "remote_gp1": (remote_lineage.get("grandparent_1") or {}).get("card_name"),
+            "remote_gp2": (remote_lineage.get("grandparent_2") or {}).get("card_name"),
+            "affinity_total": affinity.get("total"),
+            "affinity_base": affinity.get("base"),
+            "affinity_g1_bonus": affinity.get("g1_bonus"),
+            "parent_parent_base": affinity.get("parent_parent_base"),
+            "parent_parent_common_g1_count": len(common),
+            "parent_parent_common_g1": "; ".join(common),
+            "affinity_component": round(float(components.get("affinity") or 0), 2),
+            "pink": round(float(components.get("pink") or 0), 2),
+            "white": round(float(components.get("white_skill") or 0), 2),
+            "race_scenario": round(float(components.get("race_scenario") or 0), 2),
+            "blue": round(float(components.get("blue") or 0), 2),
+            "unique": round(float(components.get("unique") or 0), 2),
+            "updated_at": online.get("updated_at"),
+            "follow_status": online.get("follow_status"),
+        })
+    rankings_csv_path = output_dir / "uma_moe_parent_pairs.csv"
+    _write_parent_pair_csv(rankings_csv_path, csv_rows)
+
+    diagnostics_path = output_dir / "uma_moe_parent_diagnostics.json"
+    diagnostics_path.write_text(
+        json.dumps({
+            "generated_at_utc": generated,
+            "search_mode": "parent_for_ace",
+            "api_operation": api_operation,
+            "normalization": normalization_diag,
+            "complete_branch_validation": {
+                "remote_incomplete_excluded": incomplete_remote_count,
+                "local_incomplete_excluded": incomplete_local_count,
+                "required_visible_members_per_pair": 6,
+            },
+            "input_remote_candidate_count": len(online_candidates),
+            "eligible_remote_candidate_count": len(remote_eligible),
+            "selected_local_pool_count": len(selected_locals),
+            "selected_remote_pool_count": len(selected_remotes),
+            "evaluated_pair_count": len(summaries),
+            "top_count": len(top),
+            "pair_mode": pair_mode,
+            "scoring_engine": "parent_optimizer.evaluate_parent_pair",
+        }, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    return OnlineParentSearchResult(
+        rankings_json_path=rankings_json_path,
+        rankings_csv_path=rankings_csv_path,
+        raw_response_path=raw_response_path,
+        diagnostics_path=diagnostics_path,
+        result_count=len(summaries),
+        top_results=tuple(top),
+        fixed_parent=(_identity(fixed) if fixed is not None and not exhaustive_pairs else None),
+        pair_mode=pair_mode,
+        local_pool_count=len(selected_locals),
+        remote_pool_count=len(selected_remotes),
+        evaluated_pair_count=len(summaries),
+        ace=ace,
+        api_operation=api_operation,
+    )

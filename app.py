@@ -12,11 +12,13 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 import webbrowser
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
+from autocomplete import AutocompleteCombobox
 from legacy_linker import LinkerError, link_veterans, normalize_json_root
 from skill_catalog import generate_skill_catalogs
 from simulator_weights import generate_simulator_weights
@@ -45,6 +47,7 @@ from course_presets import (
     course_preset_label,
     load_course_preset_payload,
     ordered_course_presets,
+    racecourse_names_match,
     resolve_course_overrides_path,
 )
 from i18n import (
@@ -66,6 +69,7 @@ from uma_moe import (
     UmaMoeError,
     generate_auto_uql,
     rank_online_grandparent_pairs,
+    rank_online_parent_pairs,
 )
 
 APP_NAME = "Uma Legacy Linker"
@@ -249,6 +253,8 @@ class Application:
         self._ace_display_to_id: dict[str, int] = {}
         self._ace_id_to_display: dict[int, str] = {}
         self._card_to_chara: dict[int, int] = {}
+        self._ace_options: list[object] = []
+        self._ace_card_details: dict[int, dict[str, object]] = {}
         self._track_display_to_id: dict[str, int | None] = {self._tr(UNSPECIFIED): None}
         self._track_id_to_display: dict[int, str] = {}
         self._course_display_to_key: dict[str, str | None] = {self._tr("Profil générique"): None}
@@ -256,6 +262,9 @@ class Application:
         self._ace_all_values: list[str] = []
         self._track_all_values: list[str] = [self._tr(UNSPECIFIED)]
         self._course_all_values: list[str] = [self._tr("Profil générique")]
+        self.uma_moe_search_mode_var = tk.StringVar(
+            value=(config.get("uma_moe_search_mode", "grandparent") if config.get("uma_moe_search_mode", "grandparent") in {"grandparent", "parent"} else "grandparent")
+        )
         self.uma_moe_base_var = tk.StringVar(value=config.get("uma_moe_base_url", DEFAULT_API_BASE))
         self.uma_moe_query_var = tk.StringVar(value=config.get("uma_moe_query", ""))
         self.uma_moe_response_var = tk.StringVar(value=config.get("uma_moe_response_path", ""))
@@ -581,7 +590,12 @@ class Application:
 
         ttk.Label(tab, text="Ace visé", width=20).grid(row=0, column=0, sticky="w")
         self.ace_combo = ttk.Combobox(tab, textvariable=self.ace_var, state="normal")
-        self.ace_combo.grid(row=0, column=1, columnspan=4, sticky="ew", padx=(0, 8))
+        self.ace_combo.grid(row=0, column=1, columnspan=3, sticky="ew", padx=(0, 8))
+        ttk.Button(
+            tab,
+            text="Choisir…",
+            command=lambda: self._open_ace_picker("ace"),
+        ).grid(row=0, column=4, sticky="ew", padx=(0, 8))
         ttk.Button(
             tab,
             text="Actualiser depuis le MDB",
@@ -590,7 +604,12 @@ class Application:
 
         ttk.Label(tab, text="Parent à produire", width=20).grid(row=1, column=0, sticky="w", pady=(7, 0))
         self.future_parent_combo = ttk.Combobox(tab, textvariable=self.future_parent_var, state="normal")
-        self.future_parent_combo.grid(row=1, column=1, columnspan=4, sticky="ew", padx=(0, 8), pady=(7, 0))
+        self.future_parent_combo.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=(7, 0))
+        ttk.Button(
+            tab,
+            text="Choisir…",
+            command=lambda: self._open_ace_picker("future_parent"),
+        ).grid(row=1, column=4, sticky="ew", padx=(0, 8), pady=(7, 0))
         ttk.Label(
             tab,
             text="Pour le triple Ace × parent × futur GP.",
@@ -765,12 +784,30 @@ class Application:
     def _build_uma_moe_tab(self, tab: ttk.Frame) -> None:
         tab.columnconfigure(0, weight=1)
 
-        mode = ttk.LabelFrame(tab, text="Sélection des grands-parents", padding=8)
+        mode = ttk.LabelFrame(tab, text="Recherche uma.moe", padding=8)
         mode.grid(row=0, column=0, sticky="ew")
         mode.columnconfigure(1, weight=1)
 
+        search_type = ttk.Frame(mode)
+        search_type.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(search_type, text="Type de recherche").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            search_type,
+            text="Grand-parent distant pour produire un parent",
+            value="grandparent",
+            variable=self.uma_moe_search_mode_var,
+            command=self._on_uma_moe_search_mode_changed,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Radiobutton(
+            search_type,
+            text="Parent distant pour l’Ace",
+            value="parent",
+            variable=self.uma_moe_search_mode_var,
+            command=self._on_uma_moe_search_mode_changed,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+
         pair_mode_frame = ttk.Frame(mode)
-        pair_mode_frame.grid(row=0, column=0, columnspan=2, sticky="ew")
+        pair_mode_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         ttk.Checkbutton(
             pair_mode_frame,
             text="Tester automatiquement toutes les paires local × distant",
@@ -791,23 +828,25 @@ class Application:
             width=7,
         ).pack(side=tk.LEFT)
 
-        ttk.Label(mode, text="GP local fixé (manuel)", width=20).grid(row=1, column=0, sticky="w", pady=(7, 0))
+        self.uma_moe_fixed_label = ttk.Label(mode, text="GP local fixé (manuel)", width=24)
+        self.uma_moe_fixed_label.grid(row=2, column=0, sticky="w", pady=(7, 0))
         fixed_gp_frame = ttk.Frame(mode)
-        fixed_gp_frame.grid(row=1, column=1, sticky="ew", pady=(7, 0))
+        fixed_gp_frame.grid(row=2, column=1, sticky="ew", pady=(7, 0))
         fixed_gp_frame.columnconfigure(0, weight=1)
-        self.fixed_gp_combo = ttk.Combobox(fixed_gp_frame, textvariable=self.fixed_gp_var, state="readonly")
+        self.fixed_gp_combo = ttk.Combobox(fixed_gp_frame, textvariable=self.fixed_gp_var, state="normal")
         self.fixed_gp_combo.grid(row=0, column=0, sticky="ew")
         self.fixed_gp_button = ttk.Button(fixed_gp_frame, text="Choisir…", command=self._open_fixed_gp_picker)
         self.fixed_gp_button.grid(row=0, column=1, padx=(7, 0))
+        self._enable_searchable_combo(self.fixed_gp_combo, lambda: self._fixed_gp_all_values)
         ttk.Label(fixed_gp_frame, text="Ignoré en mode automatique.", style="Hint.TLabel").grid(row=0, column=2, padx=(8, 0))
 
-        g1_frame = ttk.Frame(mode)
-        g1_frame.grid(row=2, column=0, columnspan=2, sticky="w", pady=(7, 0))
-        ttk.Label(g1_frame, text="G1 prévues sur le parent").pack(side=tk.LEFT)
-        ttk.Spinbox(g1_frame, from_=0, to=40, increment=1, textvariable=self.uma_moe_parent_g1_budget_var, width=6).pack(side=tk.LEFT, padx=(7, 0))
-        ttk.Label(g1_frame, text="Valeur d'une G1 non commune").pack(side=tk.LEFT, padx=(24, 0))
-        ttk.Spinbox(g1_frame, from_=0.0, to=1.0, increment=0.1, textvariable=self.uma_moe_single_g1_weight_var, width=6).pack(side=tk.LEFT, padx=(7, 0))
-        ttk.Label(g1_frame, text="0,6 = 60 % de la valeur d'une G1 commune", style="Hint.TLabel").pack(side=tk.LEFT, padx=(7, 0))
+        self.uma_moe_g1_frame = ttk.Frame(mode)
+        self.uma_moe_g1_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(7, 0))
+        ttk.Label(self.uma_moe_g1_frame, text="G1 prévues sur le parent").pack(side=tk.LEFT)
+        ttk.Spinbox(self.uma_moe_g1_frame, from_=0, to=40, increment=1, textvariable=self.uma_moe_parent_g1_budget_var, width=6).pack(side=tk.LEFT, padx=(7, 0))
+        ttk.Label(self.uma_moe_g1_frame, text="Valeur d'une G1 non commune").pack(side=tk.LEFT, padx=(24, 0))
+        ttk.Spinbox(self.uma_moe_g1_frame, from_=0.0, to=1.0, increment=0.1, textvariable=self.uma_moe_single_g1_weight_var, width=6).pack(side=tk.LEFT, padx=(7, 0))
+        ttk.Label(self.uma_moe_g1_frame, text="0,6 = 60 % de la valeur d'une G1 commune", style="Hint.TLabel").pack(side=tk.LEFT, padx=(7, 0))
 
         uql = ttk.LabelFrame(tab, text="Requête UQL", padding=8)
         uql.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -822,19 +861,21 @@ class Application:
         ttk.Checkbutton(uql_options, text="Favoriser leur répétition dans la lignée", variable=self.uql_lineage_whites_var).grid(row=0, column=1, sticky="w", padx=(14, 0))
         ttk.Label(uql_options, text="Minimum pink").grid(row=0, column=2, sticky="e", padx=(14, 5))
         ttk.Spinbox(uql_options, from_=1, to=3, increment=1, textvariable=self.uql_pink_min_stars_var, width=5).grid(row=0, column=3, sticky="w")
-        ttk.Checkbutton(uql_options, text="Exiger Dirt sur le GP distant", variable=self.uql_require_dirt_var).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        self.uma_moe_dirt_check = ttk.Checkbutton(uql_options, text="Exiger Dirt sur le candidat distant", variable=self.uql_require_dirt_var)
+        self.uma_moe_dirt_check.grid(row=1, column=0, sticky="w", pady=(5, 0))
         ttk.Checkbutton(uql_options, text="Exiger surface cible", variable=self.uql_require_surface_var).grid(row=1, column=1, sticky="w", padx=(14, 0), pady=(5, 0))
         ttk.Checkbutton(uql_options, text="Exiger distance cible", variable=self.uql_require_distance_var).grid(row=1, column=2, columnspan=2, sticky="w", padx=(14, 0), pady=(5, 0))
         ttk.Checkbutton(uql_options, text="Exiger style cible", variable=self.uql_require_style_var).grid(row=1, column=4, sticky="w", padx=(14, 0), pady=(5, 0))
-        ttk.Label(
+        self.uma_moe_uql_hint = ttk.Label(
             uql,
             text=(
                 "Contraintes strictes : envoyées à uma.moe puis revérifiées localement sur les factors résolus. "
-                "Les contraintes pink s'appliquent au Main de uma.moe, donc au GP distant. Sans case cochée, blue et pink restent ouvertes."
+                "Elles s’appliquent au Main du résultat distant ; blue et pink restent ouvertes sans case cochée."
             ),
             style="Hint.TLabel",
             wraplength=1080,
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        )
+        self.uma_moe_uql_hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         api = ttk.LabelFrame(tab, text="API et import", padding=8)
         api.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -862,7 +903,7 @@ class Application:
         online_actions.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         self.uma_moe_live_button = ttk.Button(
             online_actions,
-            text="Chercher et tester les paires",
+            text="Chercher et classer les paires",
             command=lambda: self._start_uma_moe_search(use_import=False),
         )
         self.uma_moe_live_button.pack(side=tk.LEFT)
@@ -872,20 +913,23 @@ class Application:
             command=lambda: self._start_uma_moe_search(use_import=True),
         )
         self.uma_moe_import_button.pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(
+        self.uma_moe_context_hint = ttk.Label(
             online_actions,
             text="Ace, parent à produire, profil et conditions proviennent de l'onglet Optimisation.",
             style="Hint.TLabel",
-        ).pack(side=tk.LEFT, padx=(14, 0))
-        ttk.Label(
+        )
+        self.uma_moe_context_hint.pack(side=tk.LEFT, padx=(14, 0))
+        self.uma_moe_mode_hint = ttk.Label(
             tab,
             text=(
                 "Mode automatique : préclasse les meilleurs GP locaux et distants, puis évalue chaque paire local × distant. "
-                "Avec 100 × 100, environ 10 000 paires ; le CSV conserve le classement complet."
+                "Le CSV conserve le classement complet."
             ),
             style="Hint.TLabel",
             wraplength=1080,
-        ).grid(row=4, column=0, sticky="w", pady=(7, 0))
+        )
+        self.uma_moe_mode_hint.grid(row=4, column=0, sticky="w", pady=(7, 0))
+        self._on_uma_moe_search_mode_changed()
 
     def _build_scoring_tab(self, tab: ttk.Frame) -> None:
         tab.columnconfigure(0, weight=1)
@@ -1161,6 +1205,15 @@ class Application:
                     raise ValueError("Une chaîne de caractères est attendue.")
                 return parsed
             return raw
+        if isinstance(reference, float):
+            numeric_text = text.replace(",", ".")
+            is_percent = numeric_text.endswith("%")
+            if is_percent:
+                numeric_text = numeric_text[:-1].strip()
+            parsed = json.loads(numeric_text)
+            if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
+                raise ValueError("Un nombre est attendu.")
+            return float(parsed) / 100.0 if is_percent else float(parsed)
         parsed = json.loads(text)
         if isinstance(reference, bool):
             if not isinstance(parsed, bool):
@@ -1170,10 +1223,6 @@ class Application:
             if isinstance(parsed, bool) or not isinstance(parsed, (int, float)) or float(parsed) % 1:
                 raise ValueError("Un entier est attendu.")
             return int(parsed)
-        if isinstance(reference, float):
-            if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
-                raise ValueError("Un nombre est attendu.")
-            return float(parsed)
         if isinstance(reference, list) and not isinstance(parsed, list):
             raise ValueError("Une liste JSON est attendue.")
         if isinstance(reference, dict) and not isinstance(parsed, dict):
@@ -1202,40 +1251,54 @@ class Application:
         current = copy.deepcopy(effective)
         window = tk.Toplevel(self.root)
         window.title(str(self._tr("Pondérations personnalisées")))
-        window.geometry("1320x780")
-        window.minsize(1000, 620)
+        window.geometry("1240x820")
+        window.minsize(960, 650)
         window.transient(self.root)
 
         intro = ttk.Frame(window, padding=(12, 10, 12, 6))
         intro.pack(fill=tk.X)
         ttk.Label(
             intro,
-            text="Double-clique une valeur pour la modifier. Les lignes en gras diffèrent du profil par défaut.",
+            text="Les réglages sont regroupés par rôle. Double-clique une valeur pour la modifier.",
         ).pack(anchor="w")
         ttk.Label(
             intro,
             text=(
-                "Les nombres peuvent dépasser 1. Les poids d’une formule sont renormalisés entre eux. "
-                "Les listes de paliers s’éditent au format JSON, par exemple [[0, 0], [50, 40], [100, 100]]."
+                "Les poids d'un même score sont relatifs et renormalisés automatiquement. "
+                "Tu peux saisir 0,22 ou 22 % pour une valeur décimale."
             ),
             style="Hint.TLabel",
-            wraplength=1240,
+            wraplength=1180,
         ).pack(anchor="w", pady=(3, 0))
 
-        tree_frame = ttk.Frame(window, padding=(12, 4, 12, 6))
+        filters = ttk.Frame(window, padding=(12, 4, 12, 4))
+        filters.pack(fill=tk.X)
+        filters.columnconfigure(1, weight=1)
+        ttk.Label(filters, text="Rechercher").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(filters, textvariable=search_var)
+        search_entry.grid(row=0, column=1, sticky="ew")
+        changed_only_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            filters,
+            text="Uniquement mes modifications",
+            variable=changed_only_var,
+        ).grid(row=0, column=2, sticky="e", padx=(12, 0))
+
+        tree_frame = ttk.Frame(window, padding=(12, 4, 12, 4))
         tree_frame.pack(fill=tk.BOTH, expand=True)
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
-        columns = ("path", "current", "default")
+        columns = ("current", "default", "status")
         tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings", selectmode="browse")
-        tree.heading("#0", text="Paramètre")
-        tree.heading("path", text="Chemin JSON")
+        tree.heading("#0", text="Réglage")
         tree.heading("current", text="Valeur active")
         tree.heading("default", text="Valeur par défaut")
-        tree.column("#0", width=330, minwidth=220, stretch=True)
-        tree.column("path", width=390, minwidth=250, stretch=True)
-        tree.column("current", width=245, minwidth=120, stretch=True)
-        tree.column("default", width=245, minwidth=120, stretch=True)
+        tree.heading("status", text="État")
+        tree.column("#0", width=600, minwidth=320, stretch=True)
+        tree.column("current", width=220, minwidth=120, stretch=True)
+        tree.column("default", width=220, minwidth=120, stretch=True)
+        tree.column("status", width=110, minwidth=90, stretch=False, anchor="center")
         yscroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
         xscroll = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=tree.xview)
         tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
@@ -1244,53 +1307,202 @@ class Application:
         xscroll.grid(row=1, column=0, sticky="ew")
         tree.tag_configure("changed", font=("Segoe UI", 9, "bold"))
         path_by_iid: dict[str, tuple[str, ...]] = {}
+        iid_by_path: dict[tuple[str, ...], str] = {}
 
-        def populate() -> None:
+        detail = ttk.LabelFrame(window, text="Détail du réglage", padding=10)
+        detail.pack(fill=tk.X, padx=12, pady=(4, 4))
+        detail.columnconfigure(0, weight=1)
+        detail_title_var = tk.StringVar(value="Sélectionne un réglage pour voir son rôle.")
+        detail_hint_var = tk.StringVar(value="")
+        detail_path_var = tk.StringVar(value="")
+        ttk.Label(detail, textvariable=detail_title_var, font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            detail,
+            textvariable=detail_hint_var,
+            style="Hint.TLabel",
+            wraplength=1160,
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+        ttk.Label(
+            detail,
+            textvariable=detail_path_var,
+            style="Hint.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(3, 0))
+
+        section_hints = {
+            "mode_weights": "Répartition du score final entre affinité, Sparks bleues/roses/blanches et unique.",
+            "blue_stat_weights_by_distance": "Importance relative de chaque stat bleue selon la distance ciblée.",
+            "blue_star_quality": "Qualité accordée aux Sparks bleues 1★, 2★ et 3★.",
+            "pink_star_quality": "Qualité accordée aux Sparks d'aptitude 1★, 2★ et 3★.",
+            "pink_dimension_weights": "Priorité relative des aptitudes de distance, surface et style.",
+            "pink_need_multiplier": "Bonus appliqué quand l'aptitude de base de l'Uma doit réellement être améliorée.",
+            "white_star_quality": "Gain relatif apporté par le nombre d'étoiles d'une white Spark utile.",
+            "white_saturation": "Vitesse à laquelle l'accumulation de whites utiles atteint un plateau.",
+            "affinity": "Conversion de l'affinité brute et des G1 communes en score utile, avec plateaux.",
+            "course_conditions": "Valeur des green skills lorsque la course sélectionnée les active.",
+            "white_generation": "Valeur du support de lignée pour générer une white Spark sur le futur parent.",
+            "uma_moe_pair": "Répartition du score utilisé pour classer les paires GP1 local + GP2 uma.moe.",
+            "transfer_helper": "Seuils utilisés pour classer les vétérans à conserver, examiner ou transférer.",
+        }
+
+        def normalise(value: object) -> str:
+            text = unicodedata.normalize("NFKD", str(value or ""))
+            text = "".join(character for character in text if not unicodedata.combining(character))
+            return " ".join(text.casefold().split())
+
+        def is_relative_weight(path: tuple[str, ...]) -> bool:
+            return (
+                bool(path)
+                and (
+                    path[0] == "mode_weights"
+                    or "weights" in path
+                    or path[-1].endswith("_weight")
+                )
+            )
+
+        def display_value(value: object, path: tuple[str, ...]) -> str:
+            if isinstance(value, bool):
+                return "Oui" if value else "Non"
+            if isinstance(value, float) and is_relative_weight(path):
+                percentage = value * 100
+                decimals = 0 if abs(percentage - round(percentage)) < 1e-9 else 1
+                return f"{percentage:.{decimals}f} %"
+            if isinstance(value, list):
+                if value and all(isinstance(item, list) and len(item) == 2 for item in value):
+                    first = value[0]
+                    last = value[-1]
+                    return f"{len(value)} paliers · {first[0]}→{first[1]} … {last[0]}→{last[1]}"
+                return f"Liste de {len(value)} valeurs"
+            return self._format_scoring_value(value)
+
+        def path_labels(path: tuple[str, ...]) -> list[str]:
+            return [str(scoring_label(segment, self.language_code)) for segment in path]
+
+        def leaf_visible(path: tuple[str, ...], value: object, default_value: object) -> bool:
+            changed = value != default_value
+            if changed_only_var.get() and not changed:
+                return False
+            query_tokens = normalise(search_var.get()).split()
+            if not query_tokens:
+                return True
+            haystack = normalise(
+                " ".join(
+                    [
+                        *path_labels(path),
+                        ".".join(path),
+                        display_value(value, path),
+                    ]
+                )
+            )
+            return all(token in haystack for token in query_tokens)
+
+        def selected_path() -> tuple[str, ...] | None:
+            selection = tree.selection()
+            return path_by_iid.get(selection[0]) if selection else None
+
+        def visible_descendant_exists(mapping: dict[str, object], prefix: tuple[str, ...]) -> bool:
+            for key, value in mapping.items():
+                if key in SCORING_HIDDEN_KEYS or key.endswith("description"):
+                    continue
+                path = prefix + (str(key),)
+                try:
+                    default_value = get_path_value(default, path)
+                except KeyError:
+                    default_value = None
+                if isinstance(value, dict):
+                    if visible_descendant_exists(value, path):
+                        return True
+                elif leaf_visible(path, value, default_value):
+                    return True
+            return False
+
+        def populate(preferred_path: tuple[str, ...] | None = None) -> None:
+            open_paths = {
+                path_by_iid[iid]
+                for iid in list(path_by_iid)
+                if tree.exists(iid) and bool(tree.item(iid, "open"))
+            }
+            previous_selection = preferred_path or selected_path()
+            yview = tree.yview()
             tree.delete(*tree.get_children())
             path_by_iid.clear()
+            iid_by_path.clear()
+            searching = bool(search_var.get().strip()) or changed_only_var.get()
 
             def add_nodes(parent_iid: str, mapping: dict[str, object], prefix: tuple[str, ...]) -> None:
                 for key, value in mapping.items():
                     if key in SCORING_HIDDEN_KEYS or key.endswith("description"):
                         continue
                     path = prefix + (str(key),)
-                    path_text = ".".join(path)
-                    label = scoring_label(str(key), self.language_code)
                     try:
                         default_value = get_path_value(default, path)
                     except KeyError:
                         default_value = None
                     changed = value != default_value
                     if isinstance(value, dict):
+                        if not visible_descendant_exists(value, path):
+                            continue
                         iid = tree.insert(
                             parent_iid,
                             tk.END,
-                            text=label,
-                            values=(path_text, "", ""),
-                            open=len(path) <= 1,
+                            text=scoring_label(str(key), self.language_code),
+                            values=("", "", "Modifié" if changed else ""),
+                            open=(path in open_paths or len(path) <= 1 or searching),
                             tags=(("changed",) if changed else ()),
                         )
                         path_by_iid[iid] = path
+                        iid_by_path[path] = iid
                         add_nodes(iid, value, path)
-                    else:
+                    elif leaf_visible(path, value, default_value):
                         iid = tree.insert(
                             parent_iid,
                             tk.END,
-                            text=label,
+                            text=scoring_label(str(key), self.language_code),
                             values=(
-                                path_text,
-                                self._format_scoring_value(value),
-                                self._format_scoring_value(default_value),
+                                display_value(value, path),
+                                display_value(default_value, path),
+                                "Modifié" if changed else "Défaut",
                             ),
                             tags=(("changed",) if changed else ()),
                         )
                         path_by_iid[iid] = path
+                        iid_by_path[path] = iid
 
             add_nodes("", current, ())
+            if previous_selection in iid_by_path:
+                iid = iid_by_path[previous_selection]
+                tree.selection_set(iid)
+                tree.see(iid)
+            elif tree.get_children():
+                tree.selection_set(tree.get_children()[0])
+            if yview and not searching:
+                tree.yview_moveto(yview[0])
+            update_detail()
 
-        def selected_path() -> tuple[str, ...] | None:
-            selection = tree.selection()
-            return path_by_iid.get(selection[0]) if selection else None
+        def update_detail(_event=None) -> None:
+            path = selected_path()
+            if not path:
+                detail_title_var.set("Sélectionne un réglage pour voir son rôle.")
+                detail_hint_var.set("")
+                detail_path_var.set("")
+                return
+            labels = path_labels(path)
+            detail_title_var.set(" › ".join(labels))
+            value = get_path_value(current, path)
+            if isinstance(value, dict):
+                detail_hint_var.set(section_hints.get(path[0], "Cette section regroupe plusieurs réglages liés."))
+            elif isinstance(value, list):
+                detail_hint_var.set(
+                    "Courbe de paliers : chaque paire [entrée, score] définit la progression puis le plateau du composant."
+                )
+            elif is_relative_weight(path):
+                detail_hint_var.set(
+                    "Poids relatif : il est comparé aux autres composantes du même groupe puis renormalisé."
+                )
+            else:
+                detail_hint_var.set(section_hints.get(path[0], "Coefficient ou seuil utilisé par le scoring."))
+            detail_path_var.set(f"Clé technique : {'.'.join(path)}")
 
         def edit_selected(_event=None) -> None:
             path = selected_path()
@@ -1298,11 +1510,18 @@ class Application:
                 return
             value = get_path_value(current, path)
             if isinstance(value, dict):
-                tree.item(tree.selection()[0], open=not bool(tree.item(tree.selection()[0], "open")))
+                iid = tree.selection()[0]
+                tree.item(iid, open=not bool(tree.item(iid, "open")))
                 return
+            label = " › ".join(path_labels(path))
+            guidance = ""
+            if isinstance(value, float):
+                guidance = "\nTu peux saisir un nombre décimal ou un pourcentage (ex. 0,22 ou 22 %)."
+            elif isinstance(value, list):
+                guidance = "\nFormat attendu : liste JSON, par exemple [[0, 0], [50, 40], [100, 100]]."
             raw = simpledialog.askstring(
                 str(self._tr("Modifier la pondération")),
-                str(self._tr(f"{'.'.join(path)}\n\nNouvelle valeur :")),
+                str(self._tr(f"{label}{guidance}\n\nNouvelle valeur :")),
                 initialvalue=self._format_scoring_value(value),
                 parent=window,
             )
@@ -1317,7 +1536,7 @@ class Application:
                 set_path_value(current, path, previous)
                 self._show_error(f"Valeur refusée : {exc}", parent=window)
                 return
-            populate()
+            populate(path)
 
         def reset_selected() -> None:
             path = selected_path()
@@ -1328,8 +1547,8 @@ class Application:
             except KeyError:
                 self._show_info("Ce paramètre n’existe pas dans le profil par défaut.", parent=window)
                 return
-            set_path_value(current, path, default_value)
-            populate()
+            set_path_value(current, path, copy.deepcopy(default_value))
+            populate(path)
 
         def reset_all() -> None:
             if not self._ask_yes_no(
@@ -1388,6 +1607,9 @@ class Application:
                 return
             window.destroy()
 
+        search_var.trace_add("write", lambda *_args: populate())
+        changed_only_var.trace_add("write", lambda *_args: populate())
+        tree.bind("<<TreeviewSelect>>", update_detail)
         tree.bind("<Double-1>", edit_selected)
         buttons = ttk.Frame(window, padding=(12, 4, 12, 12))
         buttons.pack(fill=tk.X)
@@ -1400,6 +1622,7 @@ class Application:
         ttk.Button(buttons, text="Enregistrer et activer", command=save_editor).pack(side=tk.RIGHT, padx=(0, 7))
         populate()
         self._apply_translations(window)
+        search_entry.focus_set()
 
     def _import_scoring_profile(self) -> None:
         filename = filedialog.askopenfilename(
@@ -1484,18 +1707,149 @@ class Application:
         return row + 2
 
     def _enable_searchable_combo(self, combo: ttk.Combobox, values_getter) -> None:
-        def refresh(_event=None):
-            all_values = list(values_getter() or [])
-            current = combo.get().strip().lower()
-            if not current:
-                combo.configure(values=all_values)
-                return
-            filtered = [value for value in all_values if current in value.lower()]
-            combo.configure(values=(filtered or all_values))
+        if not hasattr(self, "_autocomplete_widgets"):
+            self._autocomplete_widgets: list[AutocompleteCombobox] = []
+        controller = AutocompleteCombobox(combo, values_getter, max_suggestions=12)
+        self._autocomplete_widgets.append(controller)
 
-        combo.bind("<KeyRelease>", refresh)
-        combo.bind("<FocusIn>", refresh)
-        combo.bind("<Button-1>", lambda _event: combo.configure(values=list(values_getter() or [])))
+    def _open_ace_picker(self, target: str) -> None:
+        if not self._ace_options:
+            self._refresh_optimizer_options(show_errors=True)
+        if not self._ace_options:
+            return
+
+        is_future_parent = target == "future_parent"
+        variable = self.future_parent_var if is_future_parent else self.ace_var
+        title = "Choisir le parent à produire" if is_future_parent else "Choisir l'Ace visée"
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("980x620")
+        dialog.minsize(760, 460)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        outer = ttk.Frame(dialog, padding=12)
+        outer.pack(fill=tk.BOTH, expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            outer,
+            text="Recherche par nom d'Uma, costume/carte ou ID. Plusieurs mots peuvent être saisis.",
+            style="Hint.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        search_var = tk.StringVar()
+        search = ttk.Entry(outer, textvariable=search_var)
+        search.grid(row=1, column=0, sticky="ew", pady=(8, 8))
+
+        table_frame = ttk.Frame(outer)
+        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        columns = ("uma", "card", "id")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        tree.heading("uma", text="Uma")
+        tree.heading("card", text="Costume / carte")
+        tree.heading("id", text="ID carte")
+        tree.column("uma", width=260, anchor="w")
+        tree.column("card", width=520, anchor="w")
+        tree.column("id", width=100, anchor="center")
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+
+        iid_to_option: dict[str, object] = {}
+
+        def normalise(value: object) -> str:
+            text = unicodedata.normalize("NFKD", str(value or ""))
+            text = "".join(character for character in text if not unicodedata.combining(character))
+            return " ".join(text.casefold().split())
+
+        def refill(*_args) -> None:
+            query_tokens = normalise(search_var.get()).split()
+            current_display = variable.get()
+            current_card_id = self._ace_display_to_id.get(current_display)
+            ace_card_id = self._ace_display_to_id.get(self.ace_var.get())
+            ace_chara_id = self._card_to_chara.get(ace_card_id or 0)
+            tree.delete(*tree.get_children())
+            iid_to_option.clear()
+            selected_iid: str | None = None
+            visible_index = 0
+            for option in self._ace_options:
+                card_id = int(getattr(option, "card_id"))
+                chara_id = int(getattr(option, "chara_id"))
+                if is_future_parent and ace_chara_id and chara_id == ace_chara_id:
+                    continue
+                haystack = normalise(
+                    " ".join(
+                        (
+                            str(getattr(option, "uma_name", "")),
+                            str(getattr(option, "card_name", "")),
+                            str(getattr(option, "costume_name", "")),
+                            str(card_id),
+                        )
+                    )
+                )
+                if query_tokens and not all(token in haystack for token in query_tokens):
+                    continue
+                iid = str(visible_index)
+                visible_index += 1
+                iid_to_option[iid] = option
+                tree.insert(
+                    "",
+                    tk.END,
+                    iid=iid,
+                    values=(
+                        getattr(option, "uma_name", ""),
+                        getattr(option, "card_name", ""),
+                        card_id,
+                    ),
+                )
+                if card_id == current_card_id:
+                    selected_iid = iid
+            if selected_iid:
+                tree.selection_set(selected_iid)
+                tree.see(selected_iid)
+            elif tree.get_children():
+                tree.selection_set(tree.get_children()[0])
+
+        def choose(*_args) -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            option = iid_to_option.get(selection[0])
+            if option is None:
+                return
+            display = str(getattr(option, "display_name", ""))
+            variable.set(display)
+            if not is_future_parent:
+                selected_chara_id = int(getattr(option, "chara_id"))
+                future_card_id = self._ace_display_to_id.get(self.future_parent_var.get())
+                if self._card_to_chara.get(future_card_id or 0) == selected_chara_id:
+                    replacement = next(
+                        (
+                            candidate
+                            for candidate in self._ace_options
+                            if int(getattr(candidate, "chara_id")) != selected_chara_id
+                        ),
+                        None,
+                    )
+                    if replacement is not None:
+                        self.future_parent_var.set(str(getattr(replacement, "display_name")))
+            dialog.destroy()
+
+        search_var.trace_add("write", refill)
+        tree.bind("<Double-1>", choose)
+        search.bind("<Return>", choose)
+        buttons = ttk.Frame(outer)
+        buttons.grid(row=3, column=0, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Utiliser cette Uma", command=choose).pack(side=tk.LEFT, padx=(8, 0))
+        refill()
+        self._apply_translations(dialog)
+        search.focus_set()
 
     def _format_rank_score(self, value: object) -> str:
         try:
@@ -1520,11 +1874,45 @@ class Application:
                 continue
         return " / ".join(parts)
 
+    def _on_uma_moe_search_mode_changed(self) -> None:
+        mode = self.uma_moe_search_mode_var.get()
+        parent_mode = mode == "parent"
+        if hasattr(self, "uma_moe_fixed_label"):
+            self.uma_moe_fixed_label.configure(
+                text=self._tr("Parent local fixé (manuel)" if parent_mode else "GP local fixé (manuel)")
+            )
+        if hasattr(self, "uma_moe_g1_frame"):
+            if parent_mode:
+                self.uma_moe_g1_frame.grid_remove()
+            else:
+                self.uma_moe_g1_frame.grid()
+        if hasattr(self, "uma_moe_context_hint"):
+            self.uma_moe_context_hint.configure(
+                text=self._tr(
+                    "Ace, profil et conditions proviennent de l'onglet Optimisation. "
+                    "Le parent distant est associé au parent local sélectionné."
+                    if parent_mode
+                    else "Ace, parent à produire, profil et conditions proviennent de l'onglet Optimisation."
+                )
+            )
+        if hasattr(self, "uma_moe_mode_hint"):
+            self.uma_moe_mode_hint.configure(
+                text=self._tr(
+                    "Mode parent : le Main uma.moe et ses deux ascendants forment une branche complète. "
+                    "La paire avec le parent local est calculée par le même moteur exact sur six membres que l’optimiseur local."
+                    if parent_mode
+                    else "Mode grand-parent : préclasse les meilleurs GP locaux et distants, puis évalue chaque paire local × distant. "
+                    "Le CSV conserve le classement complet."
+                )
+            )
+        self._toggle_uma_moe_pair_mode()
+
+
     def _toggle_uma_moe_pair_mode(self) -> None:
         automatic = bool(self.uma_moe_auto_pairs_var.get())
         state = tk.DISABLED if automatic else tk.NORMAL
         if hasattr(self, "fixed_gp_combo"):
-            self.fixed_gp_combo.configure(state="disabled" if automatic else "readonly")
+            self.fixed_gp_combo.configure(state="disabled" if automatic else "normal")
         if hasattr(self, "fixed_gp_button"):
             self.fixed_gp_button.configure(state=state)
 
@@ -1543,13 +1931,9 @@ class Application:
                     card_id = int(veteran.get("card_id"))
                 except (TypeError, ValueError):
                     continue
-                full_display = self._ace_id_to_display.get(card_id, f"Card {card_id}")
-                if " — " in full_display:
-                    card_name, uma_part = full_display.split(" — ", 1)
-                    uma_name = uma_part.rsplit(" (", 1)[0]
-                else:
-                    card_name = full_display
-                    uma_name = full_display
+                details = self._ace_card_details.get(card_id) or {}
+                uma_name = str(details.get("uma_name") or f"Chara {card_id}")
+                card_name = str(details.get("card_name") or f"Card {card_id}")
                 try:
                     rank_score = int(veteran.get("rank_score") or 0)
                 except (TypeError, ValueError):
@@ -1567,7 +1951,14 @@ class Application:
                 records.append(record)
                 if trained_id == self._saved_fixed_gp_id:
                     selected_display = display
-            records.sort(key=lambda record: (-int(record.get("rank_score") or 0), str(record.get("uma_name") or "").lower(), int(record.get("trained_chara_id") or 0)))
+            records.sort(
+                key=lambda record: (
+                    str(record.get("uma_name") or "").casefold(),
+                    str(record.get("card_name") or "").casefold(),
+                    -int(record.get("rank_score") or 0),
+                    int(record.get("trained_chara_id") or 0),
+                )
+            )
             values = [str(record["display"]) for record in records]
             mapping = {str(record["display"]): int(record["trained_chara_id"]) for record in records}
             self._fixed_gp_records = records
@@ -1584,12 +1975,14 @@ class Application:
 
     def _open_fixed_gp_picker(self) -> None:
         self._refresh_local_veteran_options(show_errors=True)
+        parent_mode = self.uma_moe_search_mode_var.get() == "parent"
+        role_label = "parent" if parent_mode else "GP1"
         if not self._fixed_gp_records:
             self._show_info("Aucun vétéran local disponible dans le data.json sélectionné.")
             return
 
         dialog = tk.Toplevel(self.root)
-        dialog.title("Choisir le GP1 local")
+        dialog.title("Choisir le parent local" if parent_mode else "Choisir le GP1 local")
         dialog.geometry("980x620")
         dialog.minsize(760, 460)
         dialog.transient(self.root)
@@ -1602,7 +1995,7 @@ class Application:
 
         ttk.Label(
             outer,
-            text="Choisis l'exemplaire local qui sera associé aux candidats uma.moe.",
+            text=f"Choisis l'exemplaire local utilisé comme {role_label}, associé aux candidats uma.moe.",
             font=("Segoe UI", 11, "bold"),
         ).grid(row=0, column=0, sticky="w")
         search_var = tk.StringVar()
@@ -1681,7 +2074,11 @@ class Application:
         buttons = ttk.Frame(outer)
         buttons.grid(row=3, column=0, sticky="e", pady=(10, 0))
         ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Utiliser ce GP", command=choose).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            buttons,
+            text="Utiliser ce parent" if parent_mode else "Utiliser ce GP",
+            command=choose,
+        ).pack(side=tk.LEFT, padx=(8, 0))
         refill()
         self._apply_translations(dialog)
         search.focus_set()
@@ -1805,6 +2202,7 @@ class Application:
                 "optimizer_style": profile_code("style", self.style_var.get()),
                 "optimizer_course_key": str(self._course_display_to_key.get(self.course_var.get()) or ""),
                 "optimizer_top_n": str(self.top_n_var.get()),
+                "uma_moe_search_mode": self.uma_moe_search_mode_var.get(),
                 "uma_moe_base_url": self.uma_moe_base_var.get().strip(),
                 "uma_moe_query": self.uma_moe_query_var.get(),
                 "uma_moe_response_path": self.uma_moe_response_var.get().strip(),
@@ -1838,9 +2236,19 @@ class Application:
                     raise OptimizerError("Sélectionne un master.mdb valide avant d'actualiser les Ace.")
                 return
             options = load_ace_options(master)
+            self._ace_options = list(options)
             self._ace_display_to_id = {option.display_name: option.card_id for option in options}
             self._ace_id_to_display = {option.card_id: option.display_name for option in options}
             self._card_to_chara = {option.card_id: option.chara_id for option in options}
+            self._ace_card_details = {
+                option.card_id: {
+                    "uma_name": option.uma_name,
+                    "card_name": option.card_name,
+                    "costume_name": option.costume_name,
+                    "chara_id": option.chara_id,
+                }
+                for option in options
+            }
             values = [option.display_name for option in options]
             self._ace_all_values = values
             self.ace_combo.configure(values=values)
@@ -1872,7 +2280,7 @@ class Application:
             unspecified = str(self._tr(UNSPECIFIED))
             self._track_display_to_id = {unspecified: None}
             self._track_id_to_display = {}
-            for option in tracks:
+            for option in sorted(tracks, key=lambda item: item.name.casefold()):
                 self._track_display_to_id[option.display_name] = option.track_id
                 self._track_id_to_display[option.track_id] = option.display_name
             self._track_all_values = list(self._track_display_to_id)
@@ -1961,8 +2369,7 @@ class Application:
         selected_track = unspecified
         if racecourse and racecourse not in {"variable", "unknown racetrack"}:
             for display in self._track_display_to_id:
-                normalized = display.strip().lower()
-                if normalized == racecourse or normalized.startswith(racecourse) or racecourse.startswith(normalized):
+                if racecourse_names_match(display, racecourse):
                     selected_track = display
                     break
         self.track_var.set(selected_track)
@@ -2092,23 +2499,32 @@ class Application:
             master, output = self._validate_common()
             data_json = Path(self.json_var.get().strip()).expanduser()
             if not data_json.is_file():
-                raise UmaMoeError("Sélectionne un data.json valide pour les grands-parents locaux.")
+                raise UmaMoeError("Sélectionne un data.json valide pour les membres locaux.")
+
+            search_mode = self.uma_moe_search_mode_var.get()
+            parent_search = search_mode == "parent"
             ace_card_id = self._ace_display_to_id.get(self.ace_var.get())
-            target_parent_card_id = self._ace_display_to_id.get(self.future_parent_var.get())
-            if ace_card_id is None or target_parent_card_id is None:
-                raise UmaMoeError("Sélectionne l’Ace et le parent à produire.")
-            if self._card_to_chara.get(ace_card_id) == self._card_to_chara.get(target_parent_card_id):
-                raise UmaMoeError("L’Ace et le parent à produire doivent être différents.")
+            if ace_card_id is None:
+                raise UmaMoeError("Sélectionne l’Ace cible.")
+
+            target_parent_card_id: int | None = None
+            if not parent_search:
+                target_parent_card_id = self._ace_display_to_id.get(self.future_parent_var.get())
+                if target_parent_card_id is None:
+                    raise UmaMoeError("Sélectionne le parent à produire.")
+                if self._card_to_chara.get(ace_card_id) == self._card_to_chara.get(target_parent_card_id):
+                    raise UmaMoeError("L’Ace et le parent à produire doivent être différents.")
 
             automatic_pairs = bool(self.uma_moe_auto_pairs_var.get())
-            fixed_gp_id: int | None = None
+            fixed_local_id: int | None = None
             if not automatic_pairs:
-                fixed_gp_id = self._fixed_gp_display_to_id.get(self.fixed_gp_var.get())
-                if fixed_gp_id is None:
+                fixed_local_id = self._fixed_gp_display_to_id.get(self.fixed_gp_var.get())
+                if fixed_local_id is None:
                     self._refresh_local_veteran_options(show_errors=False)
-                    fixed_gp_id = self._fixed_gp_display_to_id.get(self.fixed_gp_var.get())
-                if fixed_gp_id is None:
-                    raise UmaMoeError("Sélectionne un GP local ou active le test automatique des paires.")
+                    fixed_local_id = self._fixed_gp_display_to_id.get(self.fixed_gp_var.get())
+                if fixed_local_id is None:
+                    role = "parent" if parent_search else "GP"
+                    raise UmaMoeError(f"Sélectionne un {role} local ou active le test automatique des paires.")
 
             response_path = Path(self.uma_moe_response_var.get().strip()).expanduser() if self.uma_moe_response_var.get().strip() else None
             if use_import and (response_path is None or not response_path.is_file()):
@@ -2140,17 +2556,23 @@ class Application:
             return
 
         self._saved_ace_card_id = int(ace_card_id)
-        self._saved_future_parent_card_id = int(target_parent_card_id)
-        if fixed_gp_id is not None:
-            self._saved_fixed_gp_id = int(fixed_gp_id)
+        if target_parent_card_id is not None:
+            self._saved_future_parent_card_id = int(target_parent_card_id)
+        if fixed_local_id is not None:
+            self._saved_fixed_gp_id = int(fixed_local_id)
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self._set_status("Préparation de la recherche uma.moe…")
+        self._set_status(
+            "Préparation de la recherche de parents uma.moe…"
+            if parent_search
+            else "Préparation de la recherche de grands-parents uma.moe…"
+        )
         self.progress_var.set(5)
         threading.Thread(
             target=self._worker_uma_moe,
             args=(
+                search_mode,
                 master,
                 data_json,
                 output,
@@ -2158,8 +2580,8 @@ class Application:
                 scoring_config,
                 skill_priorities,
                 int(ace_card_id),
-                int(target_parent_card_id),
-                fixed_gp_id,
+                (int(target_parent_card_id) if target_parent_card_id is not None else None),
+                fixed_local_id,
                 automatic_pairs,
                 local_pool_size,
                 remote_pool_size,
@@ -2469,6 +2891,7 @@ class Application:
 
     def _worker_uma_moe(
         self,
+        search_mode: str,
         master: Path,
         data_json: Path,
         output: Path,
@@ -2476,8 +2899,8 @@ class Application:
         scoring_config: Path,
         skill_priorities: Path,
         ace_card_id: int,
-        target_parent_card_id: int,
-        fixed_gp_id: int | None,
+        target_parent_card_id: int | None,
+        fixed_local_id: int | None,
         automatic_pairs: bool,
         local_pool_size: int,
         remote_pool_size: int,
@@ -2559,8 +2982,9 @@ class Application:
                     + ", ".join(str(value) for value in main_parent_pink_sparks)
                 )
             if optional_main_white_factors:
+                preference_role = "parent distant" if search_mode == "parent" else "futur parent"
                 self._enqueue_log(
-                    "Préférence white — profil du futur parent (optional_main_white_factors) : "
+                    f"Préférence white — profil du {preference_role} (optional_main_white_factors) : "
                     + ", ".join(str(value) for value in optional_main_white_factors)
                 )
             if optional_white_sparks:
@@ -2600,37 +3024,57 @@ class Application:
                 api_raw_path = output / "uma_moe_api_response.json"
                 api_raw_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                 self.queue.put(("uma_moe_response_path", str(api_raw_path)))
-            mode_text = "toutes les paires local × distant" if automatic_pairs else "le GP local fixé"
+            fixed_role = "parent local fixé" if search_mode == "parent" else "GP local fixé"
+            mode_text = "toutes les paires local × distant" if automatic_pairs else fixed_role
             self.queue.put(("progress", (75, f"Calcul des meilleures paires — {mode_text}…")))
-            result = rank_online_grandparent_pairs(
-                master,
-                linked.json_path,
-                manual_weights.weights_path,
-                linked.skills_catalog_path,
-                output,
-                ace_card_id=ace_card_id,
-                target_parent_card_id=target_parent_card_id,
-                fixed_grandparent_trained_id=fixed_gp_id,
-                exhaustive_pairs=automatic_pairs,
-                local_pool_size=local_pool_size,
-                remote_pool_size=remote_pool_size,
-                surface=surface,
-                distance=distance,
-                style=style,
-                raw_payload=raw_payload,
-                course_weights_path=manual_weights.course_weights_path,
-                course_key=course_key,
-                course_conditions=course_conditions,
-                scoring_config_path=scoring_config,
-                planned_g1_budget=planned_g1_budget,
-                single_g1_weight=single_g1_weight,
-                top_n=top_n,
-                api_operation=operation,
-                required_main_factors=((generated_uql_meta or {}).get("hard_filters") or []),
-                effective_uql=effective_uql,
-                logger=self._enqueue_log,
-            )
-            self.queue.put(("uma_moe_done", result))
+            common_kwargs = {
+                "exhaustive_pairs": automatic_pairs,
+                "local_pool_size": local_pool_size,
+                "remote_pool_size": remote_pool_size,
+                "surface": surface,
+                "distance": distance,
+                "style": style,
+                "raw_payload": raw_payload,
+                "course_weights_path": manual_weights.course_weights_path,
+                "course_key": course_key,
+                "course_conditions": course_conditions,
+                "scoring_config_path": scoring_config,
+                "top_n": top_n,
+                "api_operation": operation,
+                "required_main_factors": ((generated_uql_meta or {}).get("hard_filters") or []),
+                "effective_uql": effective_uql,
+                "logger": self._enqueue_log,
+            }
+            if search_mode == "parent":
+                result = rank_online_parent_pairs(
+                    master,
+                    linked.json_path,
+                    manual_weights.weights_path,
+                    linked.race_factor_skills_path,
+                    linked.skills_catalog_path,
+                    output,
+                    ace_card_id=ace_card_id,
+                    fixed_parent_trained_id=fixed_local_id,
+                    **common_kwargs,
+                )
+                self.queue.put(("uma_moe_parent_done", result))
+            else:
+                if target_parent_card_id is None:
+                    raise UmaMoeError("Le parent à produire est requis pour la recherche de grands-parents.")
+                result = rank_online_grandparent_pairs(
+                    master,
+                    linked.json_path,
+                    manual_weights.weights_path,
+                    linked.skills_catalog_path,
+                    output,
+                    ace_card_id=ace_card_id,
+                    target_parent_card_id=target_parent_card_id,
+                    fixed_grandparent_trained_id=fixed_local_id,
+                    planned_g1_budget=planned_g1_budget,
+                    single_g1_weight=single_g1_weight,
+                    **common_kwargs,
+                )
+                self.queue.put(("uma_moe_done", result))
         except Exception as exc:
             self.queue.put(("error", (str(exc), traceback.format_exc())))
 
@@ -3092,6 +3536,296 @@ class Application:
             tree.selection_set(first)
             update_detail()
         self._apply_translations(window)
+
+    def _show_uma_moe_parent_results(self, result: object) -> None:
+        window = tk.Toplevel(self.root)
+        window.title("uma.moe — recherche de parents")
+        window.geometry("1580x920")
+        window.minsize(1120, 700)
+
+        header = ttk.Frame(window, padding=10)
+        header.pack(fill=tk.X)
+        ttk.Label(
+            header,
+            text=f"Ace : {result.ace['card_name']}",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+        if getattr(result, "pair_mode", "") == "exhaustive_parent_top_pools":
+            mode_text = (
+                f"Mode automatique : {result.local_pool_count} parents locaux × "
+                f"{result.remote_pool_count} parents distants — "
+                f"{result.evaluated_pair_count} paires valides évaluées."
+            )
+        else:
+            fixed = result.fixed_parent or {}
+            mode_text = (
+                f"Parent local fixé : {fixed.get('card_name', '?')} "
+                f"[#{fixed.get('trained_chara_id', '?')}] — {result.result_count} candidats classés."
+            )
+        ttk.Label(header, text=mode_text).pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            header,
+            text=(
+                "Le score et l’affinité proviennent directement du moteur de paire locale : "
+                "deux parents, leurs quatre grands-parents, les cinq liens G1 visibles et tous les Sparks des six membres."
+            ),
+            style="Hint.TLabel",
+            wraplength=1450,
+        ).pack(anchor="w", pady=(3, 0))
+
+        frame = ttk.Frame(window, padding=(10, 0, 10, 10))
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.rowconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        columns = (
+            "rank", "score", "local", "local_eval", "remote", "trainer", "friend", "remote_eval",
+            "affinity", "base", "g1", "parent_link", "pink", "white", "race", "blue", "unique",
+        )
+        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        headings = {
+            "rank": "#",
+            "score": "Score",
+            "local": "Parent local",
+            "local_eval": "Éval. locale",
+            "remote": "Parent distant",
+            "trainer": "Trainer",
+            "friend": "Friend ID",
+            "remote_eval": "Éval. distante",
+            "affinity": "Affinité totale",
+            "base": "Base",
+            "g1": "+G1",
+            "parent_link": "Lien parents",
+            "pink": "Pinks",
+            "white": "Whites",
+            "race": "Race",
+            "blue": "Blues",
+            "unique": "Uniques",
+        }
+        widths = {
+            "local": 270, "remote": 290, "trainer": 120, "friend": 125,
+            "affinity": 105, "parent_link": 105,
+        }
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            width = widths.get(column, 88)
+            tree.column(column, width=width, anchor="w" if width >= 120 else "center")
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        detail = scrolledtext.ScrolledText(
+            frame, wrap=tk.WORD, height=22, font=("Consolas", 10), state=tk.DISABLED
+        )
+        detail.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        row_map: dict[str, dict[str, object]] = {}
+
+        def fmt(value: object, digits: int = 1) -> str:
+            try:
+                return f"{float(value):.{digits}f}"
+            except (TypeError, ValueError):
+                return ""
+
+        for rank, row in enumerate(result.top_results, 1):
+            local = row.get("fixed_parent") or {}
+            remote = row.get("candidate") or {}
+            online = remote.get("online") or {}
+            affinity = row.get("affinity") or {}
+            components = row.get("components") or {}
+            iid = str(rank)
+            row_map[iid] = row
+            tree.insert("", tk.END, iid=iid, values=(
+                rank,
+                fmt(row.get("score"), 2),
+                local.get("card_name"),
+                self._format_rank_score(local.get("rank_score")),
+                remote.get("card_name"),
+                online.get("trainer_name") or "",
+                online.get("friend_code") or "",
+                self._format_rank_score(remote.get("rank_score")),
+                affinity.get("total", 0),
+                affinity.get("base", 0),
+                affinity.get("g1_bonus", 0),
+                affinity.get("parent_parent_base", 0),
+                fmt(components.get("pink")),
+                fmt(components.get("white_skill")),
+                fmt(components.get("race_scenario")),
+                fmt(components.get("blue")),
+                fmt(components.get("unique")),
+            ))
+
+        def lineage_members(parent: dict[str, object]) -> list[tuple[str, dict[str, object]]]:
+            lineage = parent.get("when_used_as_parent") or {}
+            rows: list[tuple[str, dict[str, object]]] = [("Parent", parent)]
+            gp1 = lineage.get("grandparent_1")
+            gp2 = lineage.get("grandparent_2")
+            if isinstance(gp1, dict):
+                rows.append(("Grand-parent 1", gp1))
+            if isinstance(gp2, dict):
+                rows.append(("Grand-parent 2", gp2))
+            return rows
+
+        def member_summary(label: str, member: dict[str, object]) -> str:
+            rank_score = self._format_rank_score(member.get("rank_score"))
+            suffix = f" | score Uma {rank_score}" if rank_score else ""
+            return f"- {label}: {member.get('card_name') or member.get('uma_name') or '?'}{suffix}"
+
+        def factor_lines(parent: dict[str, object], branch_label: str) -> list[str]:
+            lines = [f"Sparks — branche {branch_label} :"]
+            type_labels = {
+                "blue_stat": "Blue", "red_aptitude": "Pink", "white_skill": "White skill",
+                "white_race": "Race", "scenario": "Scénario", "unique": "Unique",
+            }
+            found = False
+            for role, member in lineage_members(parent):
+                factors = (member.get("factors") or {}).get("all") or []
+                if not factors:
+                    continue
+                found = True
+                lines.append(f"  {role} — {member.get('card_name') or member.get('uma_name') or '?'}")
+                for factor in factors:
+                    if not isinstance(factor, dict):
+                        continue
+                    factor_type = type_labels.get(str(factor.get("type") or ""), str(factor.get("type") or "?"))
+                    lines.append(
+                        f"    - {factor_type}: {factor.get('name') or '?'} "
+                        f"{int(factor.get('stars') or 0)}★"
+                    )
+            if not found:
+                lines.append("  - aucun Spark résolu")
+            return lines
+
+        def branch_affinity_lines(label: str, branch: dict[str, object]) -> list[str]:
+            details = branch.get("details") or {}
+            return [
+                f"Branche {label} : {branch.get('total', 0)} = base {branch.get('base', 0)} + G1 {branch.get('g1_bonus', 0)}",
+                f"  - Pair(Ace, parent) : {details.get('ace_parent_pair', 0)}",
+                f"  - Triple avec GP1 : {details.get('ace_parent_gp1_triple', 0)}",
+                f"  - Triple avec GP2 : {details.get('ace_parent_gp2_triple', 0)}",
+                "  - G1 parent↔GP1 : " + (", ".join(details.get("parent_gp1_common_g1") or []) or "aucune"),
+                "  - G1 parent↔GP2 : " + (", ".join(details.get("parent_gp2_common_g1") or []) or "aucune"),
+            ]
+
+        def component_factor_lines(details: dict[str, object]) -> list[str]:
+            lines: list[str] = []
+            for key, label in (
+                ("white_skill", "Whites principales"),
+                ("pink", "Pinks"),
+                ("blue", "Blues"),
+                ("race_scenario", "Race / scénario"),
+                ("unique", "Uniques"),
+            ):
+                info = details.get(key) or {}
+                factors = info.get("top_factors") or info.get("factors") or []
+                lines.extend(["", f"{label} — détail du moteur local :"])
+                if not factors:
+                    lines.append("- aucun")
+                    continue
+                for factor in factors[:30]:
+                    if not isinstance(factor, dict):
+                        continue
+                    role = factor.get("role") or "?"
+                    stars = int(factor.get("stars") or 0)
+                    contribution = float(factor.get("contribution") or 0)
+                    lines.append(
+                        f"- {role}: {factor.get('name') or '?'} {stars}★ "
+                        f"→ contribution brute {contribution:.4f}"
+                    )
+            return lines
+
+        def render_detail(row: dict[str, object]) -> str:
+            local = row.get("fixed_parent") or {}
+            remote = row.get("candidate") or {}
+            online = remote.get("online") or {}
+            affinity = row.get("affinity") or {}
+            components = row.get("components") or {}
+            breakdown = row.get("score_breakdown") or {}
+            details = row.get("component_details") or {}
+            lines = [
+                "PARENT LOCAL ET SA BRANCHE",
+                *[member_summary(label, member) for label, member in lineage_members(local)],
+                "",
+                "PARENT DISTANT ET SA BRANCHE",
+                *[member_summary(label, member) for label, member in lineage_members(remote)],
+                f"Trainer : {online.get('trainer_name') or '-'} | Friend ID : {online.get('friend_code') or '-'}",
+                f"Dernière mise à jour : {online.get('updated_at') or '-'}",
+                "",
+                "AFFINITÉ EXACTE DES SIX MEMBRES",
+            ]
+            lines.extend(branch_affinity_lines("locale", affinity.get("parent_1_branch") or {}))
+            lines.extend(branch_affinity_lines("distante", affinity.get("parent_2_branch") or {}))
+            lines.extend([
+                f"Lien parent local ↔ parent distant : base {affinity.get('parent_parent_base', 0)}",
+                "G1 communes entre les deux parents : "
+                + (", ".join(affinity.get("parent_parent_common_g1") or []) or "aucune"),
+                f"Bonus G1 de ce lien : {affinity.get('parent_parent_common_g1_bonus', 0)}",
+                f"TOTAL : {affinity.get('total', 0)} = base {affinity.get('base', 0)} + bonus G1 {affinity.get('g1_bonus', 0)}",
+                "",
+                "DÉCOMPOSITION DU SCORE FINAL",
+            ])
+            label_map = {
+                "affinity": "Affinité", "pink": "Pinks", "white_skill": "Whites",
+                "race_scenario": "Race / scénario", "blue": "Blues", "unique": "Uniques",
+            }
+            for key, item in (breakdown.get("components") or {}).items():
+                if not isinstance(item, dict):
+                    continue
+                lines.append(
+                    f"- {label_map.get(str(key), str(key))}: "
+                    f"{float(item.get('component_score') or 0):.2f} × "
+                    f"{100 * float(item.get('weight') or 0):.1f}% = "
+                    f"{float(item.get('points') or 0):.2f}"
+                )
+            lines.append(f"= SCORE FINAL {float(row.get('score') or 0):.2f}")
+            lines.extend([
+                "",
+                "Composantes brutes (0–100) : "
+                + ", ".join(
+                    f"{label_map.get(str(key), str(key))} {float(value):.1f}"
+                    for key, value in components.items()
+                ),
+                "",
+            ])
+            lines.extend(factor_lines(local, "locale"))
+            lines.extend([""])
+            lines.extend(factor_lines(remote, "distante"))
+            lines.extend(component_factor_lines(details))
+            return "\n".join(lines)
+
+        def update_detail(_event=None) -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            row = row_map.get(selection[0])
+            if row is None:
+                return
+            detail.configure(state=tk.NORMAL)
+            detail.delete("1.0", tk.END)
+            detail.insert(tk.END, self._tr(render_detail(row)))
+            detail.configure(state=tk.DISABLED)
+            detail.see("1.0")
+
+        tree.bind("<<TreeviewSelect>>", update_detail)
+        if row_map:
+            first = next(iter(row_map))
+            tree.selection_set(first)
+            tree.focus(first)
+            update_detail()
+
+        footer = ttk.Frame(window, padding=(10, 0, 10, 10))
+        footer.pack(fill=tk.X)
+        ttk.Button(
+            footer,
+            text="Ouvrir le dossier de sortie",
+            command=lambda: open_path(result.rankings_json_path.parent),
+        ).pack(side=tk.LEFT)
+        ttk.Button(footer, text="Fermer", command=window.destroy).pack(side=tk.RIGHT)
+        self._apply_translations(window)
+
 
     def _show_optimizer_results(self, result: object) -> None:
         window = tk.Toplevel(self.root)
@@ -3591,6 +4325,19 @@ class Application:
                     self._append_log(f"Diagnostics : {result.diagnostics_path}")
                     self._set_running(False)
                     self._show_uma_moe_results(result)
+                elif kind == "uma_moe_parent_done":
+                    result = payload
+                    self.progress_var.set(100)
+                    self._set_status(
+                        f"Recherche de parents uma.moe terminée — {result.result_count} paires classées."
+                    )
+                    self.last_output_dir = result.rankings_json_path.parent
+                    self._append_log(f"Paires de parents uma.moe : {result.rankings_json_path}")
+                    self._append_log(f"CSV parents uma.moe : {result.rankings_csv_path}")
+                    self._append_log(f"Réponse brute : {result.raw_response_path}")
+                    self._append_log(f"Diagnostics : {result.diagnostics_path}")
+                    self._set_running(False)
+                    self._show_uma_moe_parent_results(result)
                 elif kind == "error":
                     message, details = payload  # type: ignore[misc]
                     self._append_log(details)

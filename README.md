@@ -124,17 +124,21 @@ The exact profiles used for a calculation are exported to the output directory a
 
 ### uma.moe integration
 
-Uma Legacy Linker can query [uma.moe](https://uma.moe/) to search for public grandparents that complement a local lineage.
+Uma Legacy Linker can query [uma.moe](https://uma.moe/) for two distinct workflows: finding a remote grandparent to produce a future parent, or finding a complete remote parent branch for the final Ace.
 
 Available workflows include:
 
 - automatically pairing local and remote candidates;
 - fixing a specific local GP1 and searching for the best remote GP2;
+- fixing a local final parent and searching for the best remote final parent;
+- automatically testing top local-parent × remote-parent pools;
 - generating UQL filters from the selected build profile;
 - using a manually written UQL query;
 - importing a previously saved API response;
 - verifying strict requirements locally after retrieval;
 - exporting ranked pairs, diagnostics and raw responses.
+
+The final-parent workflow uses the exact same six-member scoring engine as the local parent-pair optimiser. The remote Main and its two parents form one complete branch; the local parent and its two parents form the other. Affinity, five G1 links and every factor across the six visible members are therefore evaluated identically for local-only and local × online pairs.
 
 Online retrieval is strictly limited to **2,000 parents per search**.
 
@@ -230,7 +234,7 @@ Analyse the entire local collection, inspect safe same-card replacements, and re
 
 ### uma.moe
 
-Search public parent data, generate or enter UQL filters, combine remote candidates with a local grandparent and inspect detailed pair diagnostics.
+Search public parent data in either grandparent mode or final-parent mode. Remote final parents can be combined with a fixed local parent or with an automatically selected local pool, using the same exact pair calculation as the local optimiser.
 
 ### Legacy Tools
 
@@ -264,7 +268,11 @@ Depending on the selected operation, the output directory may contain:
 | `transfer_helper_summary.txt` | Human-readable safe-transfer summary |
 | `uma_moe_grandparent_pairs.json` | Detailed online pair results |
 | `uma_moe_grandparent_pairs.csv` | Compact online pair ranking |
-| `uma_moe_diagnostics.json` | Search and filtering diagnostics |
+| `uma_moe_diagnostics.json` | Grandparent search and filtering diagnostics |
+| `uma_moe_parent_pairs.json` | Detailed local-parent × remote-parent results |
+| `uma_moe_parent_pairs.csv` | Complete compact online parent-pair ranking |
+| `uma_moe_parent_diagnostics.json` | Parent-search normalization and scoring diagnostics |
+| `uma_moe_parent_raw_response.json` | Raw API/import payload retained for the parent search |
 | `skill_condition_catalog.json` | Parsed skill-condition catalogue |
 | `condition_type_catalog.json` | Condition-variable catalogue |
 | `race_factor_skill_catalog.json` | Race factors that grant skills |

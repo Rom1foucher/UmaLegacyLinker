@@ -36,6 +36,18 @@ from scoring_config import (
     validate_skill_priorities_config,
     write_json_object,
 )
+from i18n import (
+    LANGUAGE_LABELS,
+    language_from_label,
+    language_label,
+    normalise_language,
+    profile_code,
+    profile_label,
+    profile_values,
+    scoring_label,
+    translate_text,
+)
+
 from uma_moe import (
     DEFAULT_API_BASE,
     MAX_FETCH_CANDIDATES,
@@ -53,52 +65,6 @@ ROTATION_OPTIONS = {UNSPECIFIED: None, "Droite": 1, "Gauche": 2}
 SEASON_OPTIONS = {UNSPECIFIED: None, "Printemps": [1, 5], "Été": 2, "Automne": 3, "Hiver": 4}
 WEATHER_OPTIONS = {UNSPECIFIED: None, "Ensoleillé": 1, "Nuageux": 2, "Pluie": 3, "Neige": 4}
 GROUND_OPTIONS = {UNSPECIFIED: None, "Firm": 1, "Good": 2, "Soft": 3, "Heavy": 4}
-
-SCORING_LABELS = {
-    "mode_weights": "Poids des composantes",
-    "parent_final": "Parent final / paire de parents",
-    "future_grandparent": "Futur grand-parent",
-    "blue_stat_weights_by_distance": "Blues — stat favorisée par distance",
-    "blue_star_quality": "Blues — qualité par étoiles",
-    "pink_star_quality": "Pinks — qualité par étoiles",
-    "pink_dimension_weights": "Pinks — type d'aptitude favorisé",
-    "pink_need_multiplier": "Pinks — besoin selon aptitude de base",
-    "unique_star_quality": "Unique verte — qualité par étoiles",
-    "position_transmission": "Transmission selon la position",
-    "white_star_quality": "Whites — qualité par étoiles",
-    "white_saturation": "Whites — saturation",
-    "race_saturation": "Race/scénario — saturation",
-    "race_factor": "Race/scénario — valeur de base",
-    "affinity": "Affinité — bonus et paliers",
-    "course_conditions": "Green skills — conditions de course",
-    "white_generation": "Génération future des white Sparks",
-    "uma_moe_pair": "Classement des paires uma.moe",
-    "weights": "Poids du score final",
-    "preselection_weights": "Poids de présélection",
-    "Speed": "Speed",
-    "Stamina": "Stamina",
-    "Power": "Power",
-    "Guts": "Guts",
-    "Wit": "Wit",
-    "distance": "Distance",
-    "surface": "Surface",
-    "style": "Style de course",
-    "below_a": "Aptitude inférieure à A",
-    "a_or_s": "Aptitude A ou S",
-    "parent": "Parent",
-    "grandparent": "Grand-parent",
-    "affinity": "Affinité",
-    "g1_potential": "Potentiel G1",
-    "blue": "Blues",
-    "pink": "Pinks",
-    "white_skill": "White skills propres",
-    "white_generation": "Support de génération white",
-    "unique": "Unique verte",
-    "race_scenario": "Race / scénario",
-    "final_parent_affinity": "Affinité du futur parent final",
-    "production_run_affinity": "Affinité du run de fabrication",
-    "candidate_affinity": "Affinité du candidat",
-}
 
 SCORING_HIDDEN_KEYS = {"schema_version", "description", "formula_notes", "notes"}
 
@@ -216,6 +182,8 @@ class Application:
         self.running = False
         self.last_output_dir: Path | None = None
         config = load_config()
+        self.language_code = normalise_language(config.get("ui_language"))
+        self.language_var = tk.StringVar(value=language_label(self.language_code))
 
         detected_master = auto_detect_master()
         detected_extractor = auto_detect_extractor()
@@ -239,19 +207,27 @@ class Application:
         self.output_var = tk.StringVar(
             value=config.get("output_dir", str(default_output))
         )
-        self.status_var = tk.StringVar(value="Prêt")
+        self._status_source = "Prêt"
+        self.status_var = tk.StringVar(value=self._tr(self._status_source))
         self.progress_var = tk.DoubleVar(value=0)
         self.ace_var = tk.StringVar(value="")
         self.future_parent_var = tk.StringVar(value="")
-        self.surface_var = tk.StringVar(value=config.get("optimizer_surface", "turf"))
-        self.distance_var = tk.StringVar(value=config.get("optimizer_distance", "medium"))
-        self.style_var = tk.StringVar(value=config.get("optimizer_style", "pace_chaser"))
-        self.track_var = tk.StringVar(value=UNSPECIFIED)
-        self.rotation_var = tk.StringVar(value=config.get("optimizer_rotation", UNSPECIFIED))
-        self.season_var = tk.StringVar(value=config.get("optimizer_season", UNSPECIFIED))
-        self.weather_var = tk.StringVar(value=config.get("optimizer_weather", UNSPECIFIED))
-        self.ground_var = tk.StringVar(value=config.get("optimizer_ground", UNSPECIFIED))
-        self.course_var = tk.StringVar(value="Profil générique")
+        self.surface_var = tk.StringVar(
+            value=profile_label("surface", profile_code("surface", config.get("optimizer_surface", "turf")), self.language_code)
+        )
+        self.distance_var = tk.StringVar(
+            value=profile_label("distance", profile_code("distance", config.get("optimizer_distance", "medium")), self.language_code)
+        )
+        self.style_var = tk.StringVar(
+            value=profile_label("style", profile_code("style", config.get("optimizer_style", "pace_chaser")), self.language_code)
+        )
+        unspecified = self._tr(UNSPECIFIED)
+        self.track_var = tk.StringVar(value=unspecified)
+        self.rotation_var = tk.StringVar(value=self._localise_choice(ROTATION_OPTIONS, config.get("optimizer_rotation", UNSPECIFIED)))
+        self.season_var = tk.StringVar(value=self._localise_choice(SEASON_OPTIONS, config.get("optimizer_season", UNSPECIFIED)))
+        self.weather_var = tk.StringVar(value=self._localise_choice(WEATHER_OPTIONS, config.get("optimizer_weather", UNSPECIFIED)))
+        self.ground_var = tk.StringVar(value=self._localise_choice(GROUND_OPTIONS, config.get("optimizer_ground", UNSPECIFIED)))
+        self.course_var = tk.StringVar(value=self._tr("Profil générique"))
         self.top_n_var = tk.IntVar(value=int(config.get("optimizer_top_n", "30")))
         self._saved_ace_card_id = int(config.get("optimizer_ace_card_id", "0") or 0)
         self._saved_future_parent_card_id = int(config.get("optimizer_future_parent_card_id", "0") or 0)
@@ -259,13 +235,13 @@ class Application:
         self._ace_display_to_id: dict[str, int] = {}
         self._ace_id_to_display: dict[int, str] = {}
         self._card_to_chara: dict[int, int] = {}
-        self._track_display_to_id: dict[str, int | None] = {UNSPECIFIED: None}
+        self._track_display_to_id: dict[str, int | None] = {self._tr(UNSPECIFIED): None}
         self._track_id_to_display: dict[int, str] = {}
-        self._course_display_to_key: dict[str, str | None] = {"Profil générique": None}
+        self._course_display_to_key: dict[str, str | None] = {self._tr("Profil générique"): None}
         self._course_definitions: dict[str, dict[str, object]] = {}
         self._ace_all_values: list[str] = []
-        self._track_all_values: list[str] = [UNSPECIFIED]
-        self._course_all_values: list[str] = ["Profil générique"]
+        self._track_all_values: list[str] = [self._tr(UNSPECIFIED)]
+        self._course_all_values: list[str] = [self._tr("Profil générique")]
         self.uma_moe_base_var = tk.StringVar(value=config.get("uma_moe_base_url", DEFAULT_API_BASE))
         self.uma_moe_query_var = tk.StringVar(value=config.get("uma_moe_query", ""))
         self.uma_moe_response_var = tk.StringVar(value=config.get("uma_moe_response_path", ""))
@@ -298,12 +274,147 @@ class Application:
         self._fixed_gp_display_to_id: dict[str, int] = {}
         self._fixed_gp_all_values: list[str] = []
         self._fixed_gp_records: list[dict[str, object]] = []
+        self._log_entries: list[tuple[str, str]] = []
         self._build_ui()
         self._refresh_scoring_status()
         self._refresh_skill_priorities_status()
         self.root.after(150, lambda: self._refresh_optimizer_options(show_errors=False))
         self.root.after(100, self._drain_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _tr(self, text: object) -> object:
+        return translate_text(text, self.language_code)
+
+    def _set_status(self, text: object) -> None:
+        self._status_source = str(text)
+        self.status_var.set(str(self._tr(self._status_source)))
+
+    def _localise_choice(self, options: dict[str, object], stored: str | None) -> str:
+        stored = stored or UNSPECIFIED
+        if stored in options:
+            return str(self._tr(stored))
+        for source in options:
+            if stored == self._tr(source):
+                return str(self._tr(source))
+        return str(self._tr(UNSPECIFIED))
+
+    def _choice_source(self, options: dict[str, object], displayed: str) -> str:
+        if displayed in options:
+            return displayed
+        for source in options:
+            if displayed == self._tr(source):
+                return source
+        return UNSPECIFIED
+
+    def _choice_value(self, options: dict[str, object], displayed: str) -> object:
+        return options.get(self._choice_source(options, displayed))
+
+    def _apply_translations(self, widget: tk.Misc) -> None:
+        if self.language_code == "fr":
+            return
+        if isinstance(widget, (tk.Tk, tk.Toplevel)):
+            try:
+                widget.title(str(self._tr(widget.title())))
+            except tk.TclError:
+                pass
+        try:
+            text = widget.cget("text")
+        except (tk.TclError, AttributeError):
+            text = None
+        if isinstance(text, str) and text:
+            translated = self._tr(text)
+            if translated != text:
+                try:
+                    widget.configure(text=translated)
+                except tk.TclError:
+                    pass
+        if isinstance(widget, ttk.Notebook):
+            for tab_id in widget.tabs():
+                tab_text = widget.tab(tab_id, "text")
+                widget.tab(tab_id, text=self._tr(tab_text))
+        if isinstance(widget, ttk.Treeview):
+            columns = ["#0", *list(widget.cget("columns"))]
+            for column in columns:
+                try:
+                    heading = widget.heading(column, "text")
+                    if heading:
+                        widget.heading(column, text=self._tr(heading))
+                except tk.TclError:
+                    pass
+        for child in widget.winfo_children():
+            self._apply_translations(child)
+
+    def _show_error(self, message: object, *, parent: tk.Misc | None = None) -> None:
+        messagebox.showerror(APP_NAME, self._tr(str(message)), parent=parent)
+
+    def _show_warning(self, message: object, *, parent: tk.Misc | None = None) -> None:
+        messagebox.showwarning(APP_NAME, self._tr(str(message)), parent=parent)
+
+    def _show_info(self, message: object, *, parent: tk.Misc | None = None) -> None:
+        messagebox.showinfo(APP_NAME, self._tr(str(message)), parent=parent)
+
+    def _ask_yes_no(self, message: object, *, parent: tk.Misc | None = None) -> bool:
+        return bool(messagebox.askyesno(APP_NAME, self._tr(str(message)), parent=parent))
+
+    def _on_language_changed(self, _event=None) -> None:
+        new_code = language_from_label(self.language_var.get())
+        if new_code == self.language_code:
+            return
+        selected_tab = self.notebook.index("current") if hasattr(self, "notebook") else 0
+        condition_sources = {
+            "rotation": self._choice_source(ROTATION_OPTIONS, self.rotation_var.get()),
+            "season": self._choice_source(SEASON_OPTIONS, self.season_var.get()),
+            "weather": self._choice_source(WEATHER_OPTIONS, self.weather_var.get()),
+            "ground": self._choice_source(GROUND_OPTIONS, self.ground_var.get()),
+        }
+        profile_codes = {
+            "surface": profile_code("surface", self.surface_var.get()),
+            "distance": profile_code("distance", self.distance_var.get()),
+            "style": profile_code("style", self.style_var.get()),
+        }
+        old_unspecified = str(self._tr(UNSPECIFIED))
+        old_generic = str(self._tr("Profil générique"))
+        track_was_unspecified = self.track_var.get() == old_unspecified
+        course_was_generic = self.course_var.get() == old_generic
+        self.language_code = new_code
+        self.language_var.set(language_label(new_code))
+        self._set_status(self._status_source)
+        self.rotation_var.set(str(self._tr(condition_sources["rotation"])))
+        self.season_var.set(str(self._tr(condition_sources["season"])))
+        self.weather_var.set(str(self._tr(condition_sources["weather"])))
+        self.ground_var.set(str(self._tr(condition_sources["ground"])))
+        self.surface_var.set(profile_label("surface", profile_codes["surface"], new_code))
+        self.distance_var.set(profile_label("distance", profile_codes["distance"], new_code))
+        self.style_var.set(profile_label("style", profile_codes["style"], new_code))
+
+        new_unspecified = str(self._tr(UNSPECIFIED))
+        if track_was_unspecified:
+            self.track_var.set(new_unspecified)
+        self._track_display_to_id = {
+            (new_unspecified if key == old_unspecified else key): value
+            for key, value in self._track_display_to_id.items()
+        }
+        self._track_all_values = [new_unspecified if value == old_unspecified else value for value in self._track_all_values]
+
+        new_generic = str(self._tr("Profil générique"))
+        if course_was_generic:
+            self.course_var.set(new_generic)
+        self._course_display_to_key = {
+            (new_generic if key == old_generic else key): value
+            for key, value in self._course_display_to_key.items()
+        }
+        self._course_all_values = [new_generic if value == old_generic else value for value in self._course_all_values]
+
+        if hasattr(self, "root_frame"):
+            self.root_frame.destroy()
+        self._saved_ui_tab = selected_tab
+        self._build_ui()
+        self._refresh_scoring_status()
+        self._refresh_skill_priorities_status()
+        self._refresh_course_options()
+        self._render_log_entries()
+        self._set_running(self.running)
+        self._save_current_config()
 
     def _build_ui(self) -> None:
         style = ttk.Style(self.root)
@@ -313,6 +424,7 @@ class Application:
 
         root_frame = ttk.Frame(self.root, padding=(14, 10, 14, 12))
         root_frame.pack(fill=tk.BOTH, expand=True)
+        self.root_frame = root_frame
 
         header = ttk.Frame(root_frame)
         header.pack(fill=tk.X)
@@ -322,6 +434,16 @@ class Application:
             text="Sparks, G1 et lignées résolus depuis le master.mdb courant.",
             style="Hint.TLabel",
         ).pack(side=tk.LEFT, padx=(14, 0), pady=(5, 0))
+        self.language_combo = ttk.Combobox(
+            header,
+            textvariable=self.language_var,
+            values=tuple(LANGUAGE_LABELS.values()),
+            state="readonly",
+            width=11,
+        )
+        self.language_combo.pack(side=tk.RIGHT)
+        self.language_combo.bind("<<ComboboxSelected>>", self._on_language_changed)
+        ttk.Label(header, text="Langue").pack(side=tk.RIGHT, padx=(0, 6))
 
         files = ttk.LabelFrame(root_frame, text="Fichiers", padding=10)
         files.pack(fill=tk.X, pady=(8, 10))
@@ -390,6 +512,7 @@ class Application:
             state=tk.DISABLED,
         )
         self.log.pack(fill=tk.BOTH, expand=True)
+        self._apply_translations(root_frame)
 
     def _build_link_tab(self, tab: ttk.Frame) -> None:
         tab.columnconfigure(1, weight=1)
@@ -458,7 +581,7 @@ class Application:
         self.surface_combo = ttk.Combobox(
             tab,
             textvariable=self.surface_var,
-            values=("turf", "dirt"),
+            values=profile_values("surface", self.language_code),
             state="readonly",
             width=14,
         )
@@ -467,7 +590,7 @@ class Application:
         self.distance_combo = ttk.Combobox(
             tab,
             textvariable=self.distance_var,
-            values=("sprint", "mile", "medium", "long"),
+            values=profile_values("distance", self.language_code),
             state="readonly",
             width=14,
         )
@@ -476,7 +599,7 @@ class Application:
         self.style_combo = ttk.Combobox(
             tab,
             textvariable=self.style_var,
-            values=("front_runner", "pace_chaser", "late_surger", "end_closer"),
+            values=profile_values("style", self.language_code),
             state="readonly",
             width=18,
         )
@@ -489,13 +612,13 @@ class Application:
         self.track_combo = ttk.Combobox(conditions, textvariable=self.track_var, state="normal", width=28)
         self.track_combo.grid(row=0, column=1, sticky="ew", padx=(5, 12))
         ttk.Label(conditions, text="Rotation").grid(row=0, column=2, sticky="e")
-        ttk.Combobox(conditions, textvariable=self.rotation_var, values=tuple(ROTATION_OPTIONS), state="readonly", width=14).grid(row=0, column=3, sticky="w", padx=(5, 12))
+        ttk.Combobox(conditions, textvariable=self.rotation_var, values=tuple(str(self._tr(value)) for value in ROTATION_OPTIONS), state="readonly", width=14).grid(row=0, column=3, sticky="w", padx=(5, 12))
         ttk.Label(conditions, text="Saison").grid(row=0, column=4, sticky="e")
-        ttk.Combobox(conditions, textvariable=self.season_var, values=tuple(SEASON_OPTIONS), state="readonly", width=14).grid(row=0, column=5, sticky="w", padx=(5, 0))
+        ttk.Combobox(conditions, textvariable=self.season_var, values=tuple(str(self._tr(value)) for value in SEASON_OPTIONS), state="readonly", width=14).grid(row=0, column=5, sticky="w", padx=(5, 0))
         ttk.Label(conditions, text="État du terrain").grid(row=1, column=0, sticky="w", pady=(7, 0))
-        ttk.Combobox(conditions, textvariable=self.ground_var, values=tuple(GROUND_OPTIONS), state="readonly", width=18).grid(row=1, column=1, sticky="w", padx=(5, 12), pady=(7, 0))
+        ttk.Combobox(conditions, textvariable=self.ground_var, values=tuple(str(self._tr(value)) for value in GROUND_OPTIONS), state="readonly", width=18).grid(row=1, column=1, sticky="w", padx=(5, 12), pady=(7, 0))
         ttk.Label(conditions, text="Météo").grid(row=1, column=2, sticky="e", pady=(7, 0))
-        ttk.Combobox(conditions, textvariable=self.weather_var, values=tuple(WEATHER_OPTIONS), state="readonly", width=14).grid(row=1, column=3, sticky="w", padx=(5, 12), pady=(7, 0))
+        ttk.Combobox(conditions, textvariable=self.weather_var, values=tuple(str(self._tr(value)) for value in WEATHER_OPTIONS), state="readonly", width=14).grid(row=1, column=3, sticky="w", padx=(5, 12), pady=(7, 0))
         ttk.Label(
             conditions,
             text="Incompatible → green skill à 0 ; correspondante → activée.",
@@ -801,7 +924,7 @@ class Application:
             if self.use_custom_scoring_var.get():
                 _default, overrides, _effective = load_effective_scoring_config(default_path, override_path)
                 override_count = count_override_leaves(overrides)
-                self.scoring_status_var.set(
+                message = (
                     f"Profil personnalisé actif — {override_count} valeur(s) remplacée(s). "
                     f"Surcharges : {override_path}"
                 )
@@ -819,26 +942,22 @@ class Application:
                     if override_count
                     else invalid_suffix
                 )
-                self.scoring_status_var.set(f"Profil par défaut actif : {default_path.name}{suffix}")
+                message = f"Profil par défaut actif : {default_path.name}{suffix}"
         except ScoringConfigError as exc:
-            self.scoring_status_var.set(f"Profil de pondération invalide : {exc}")
+            message = f"Profil de pondération invalide : {exc}"
+        self.scoring_status_var.set(str(self._tr(message)))
 
     def _refresh_skill_priorities_status(self) -> None:
         custom_text = self.skill_priorities_var.get().strip()
         if not custom_text:
-            self.skill_priorities_status_var.set(
-                f"Profil par défaut actif : {default_skill_priorities_path().name}"
-            )
-            return
-        custom_path = Path(custom_text).expanduser()
-        if custom_path.is_file():
-            self.skill_priorities_status_var.set(
-                f"Profil personnalisé actif : {custom_path}"
-            )
+            message = f"Profil par défaut actif : {default_skill_priorities_path().name}"
         else:
-            self.skill_priorities_status_var.set(
-                f"Profil personnalisé introuvable : {custom_path}"
-            )
+            custom_path = Path(custom_text).expanduser()
+            if custom_path.is_file():
+                message = f"Profil personnalisé actif : {custom_path}"
+            else:
+                message = f"Profil personnalisé introuvable : {custom_path}"
+        self.skill_priorities_status_var.set(str(self._tr(message)))
 
     def _on_custom_scoring_toggle(self) -> None:
         if self.use_custom_scoring_var.get():
@@ -846,7 +965,7 @@ class Application:
                 load_effective_scoring_config(default_scoring_path(), user_scoring_overrides_path())
             except ScoringConfigError as exc:
                 self.use_custom_scoring_var.set(False)
-                messagebox.showerror(APP_NAME, str(exc))
+                self._show_error(exc)
         self._refresh_scoring_status()
         self._save_current_config()
 
@@ -879,8 +998,8 @@ class Application:
 
     def _browse_skill_priorities(self) -> None:
         filename = filedialog.askopenfilename(
-            title="Choisir un profil de priorités white",
-            filetypes=(("JSON", "*.json"), ("Tous les fichiers", "*.*")),
+            title=str(self._tr("Choisir un profil de priorités white")),
+            filetypes=(("JSON", "*.json"), (str(self._tr("Tous les fichiers")), "*.*")),
         )
         if not filename:
             return
@@ -889,7 +1008,7 @@ class Application:
             custom_payload = read_json_object(filename)
             validate_skill_priorities_config(deep_merge(default_payload, custom_payload))
         except ScoringConfigError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
         self.skill_priorities_var.set(filename)
         self._save_current_config()
@@ -898,9 +1017,8 @@ class Application:
     def _create_skill_priorities_copy(self) -> None:
         source = default_skill_priorities_path()
         destination = user_skill_priorities_path()
-        if destination.is_file() and not messagebox.askyesno(
-            APP_NAME,
-            f"Écraser la copie personnalisée existante ?\n{destination}",
+        if destination.is_file() and not self._ask_yes_no(
+            f"Écraser la copie personnalisée existante ?\n{destination}"
         ):
             self.skill_priorities_var.set(str(destination))
             self._save_current_config()
@@ -910,7 +1028,7 @@ class Application:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
         except OSError as exc:
-            messagebox.showerror(APP_NAME, f"Impossible de créer la copie : {exc}")
+            self._show_error(f"Impossible de créer la copie : {exc}")
             return
         self.skill_priorities_var.set(str(destination))
         self._save_current_config()
@@ -921,7 +1039,7 @@ class Application:
         custom_text = self.skill_priorities_var.get().strip()
         path = Path(custom_text).expanduser() if custom_text else default_skill_priorities_path()
         if not path.is_file():
-            messagebox.showerror(APP_NAME, f"Fichier introuvable : {path}")
+            self._show_error(f"Fichier introuvable : {path}")
             return
         open_path(path)
 
@@ -982,16 +1100,15 @@ class Application:
                     default_scoring_path(), None
                 )
             except ScoringConfigError:
-                messagebox.showerror(APP_NAME, str(exc))
+                self._show_error(exc)
                 return
-            messagebox.showwarning(
-                APP_NAME,
-                f"Les surcharges enregistrées sont invalides et ont été ignorées pour cet éditeur.\n\n{exc}",
+            self._show_warning(
+                f"Les surcharges enregistrées sont invalides et ont été ignorées pour cet éditeur.\n\n{exc}"
             )
 
         current = copy.deepcopy(effective)
         window = tk.Toplevel(self.root)
-        window.title("Pondérations personnalisées")
+        window.title(str(self._tr("Pondérations personnalisées")))
         window.geometry("1320x780")
         window.minsize(1000, 620)
         window.transient(self.root)
@@ -1045,7 +1162,7 @@ class Application:
                         continue
                     path = prefix + (str(key),)
                     path_text = ".".join(path)
-                    label = SCORING_LABELS.get(str(key), str(key))
+                    label = scoring_label(str(key), self.language_code)
                     try:
                         default_value = get_path_value(default, path)
                     except KeyError:
@@ -1091,8 +1208,8 @@ class Application:
                 tree.item(tree.selection()[0], open=not bool(tree.item(tree.selection()[0], "open")))
                 return
             raw = simpledialog.askstring(
-                "Modifier la pondération",
-                f"{'.'.join(path)}\n\nNouvelle valeur :",
+                str(self._tr("Modifier la pondération")),
+                str(self._tr(f"{'.'.join(path)}\n\nNouvelle valeur :")),
                 initialvalue=self._format_scoring_value(value),
                 parent=window,
             )
@@ -1105,7 +1222,7 @@ class Application:
                 validate_scoring_config(current)
             except (ValueError, json.JSONDecodeError, ScoringConfigError) as exc:
                 set_path_value(current, path, previous)
-                messagebox.showerror(APP_NAME, f"Valeur refusée : {exc}", parent=window)
+                self._show_error(f"Valeur refusée : {exc}", parent=window)
                 return
             populate()
 
@@ -1116,14 +1233,13 @@ class Application:
             try:
                 default_value = get_path_value(default, path)
             except KeyError:
-                messagebox.showinfo(APP_NAME, "Ce paramètre n’existe pas dans le profil par défaut.", parent=window)
+                self._show_info("Ce paramètre n’existe pas dans le profil par défaut.", parent=window)
                 return
             set_path_value(current, path, default_value)
             populate()
 
         def reset_all() -> None:
-            if not messagebox.askyesno(
-                APP_NAME,
+            if not self._ask_yes_no(
                 "Rétablir toutes les valeurs par défaut dans l’éditeur ?",
                 parent=window,
             ):
@@ -1135,8 +1251,8 @@ class Application:
         def import_into_editor() -> None:
             filename = filedialog.askopenfilename(
                 parent=window,
-                title="Importer un profil de pondération",
-                filetypes=(("JSON", "*.json"), ("Tous les fichiers", "*.*")),
+                title=str(self._tr("Importer un profil de pondération")),
+                filetypes=(("JSON", "*.json"), (str(self._tr("Tous les fichiers")), "*.*")),
             )
             if not filename:
                 return
@@ -1145,7 +1261,7 @@ class Application:
                 imported_effective = deep_merge(default, imported)
                 validate_scoring_config(imported_effective)
             except ScoringConfigError as exc:
-                messagebox.showerror(APP_NAME, str(exc), parent=window)
+                self._show_error(exc, parent=window)
                 return
             current.clear()
             current.update(imported_effective)
@@ -1154,7 +1270,7 @@ class Application:
         def export_from_editor() -> None:
             filename = filedialog.asksaveasfilename(
                 parent=window,
-                title="Exporter le profil de pondération",
+                title=str(self._tr("Exporter le profil de pondération")),
                 defaultextension=".json",
                 initialfile="parent_scoring_profile.json",
                 filetypes=(("JSON", "*.json"),),
@@ -1175,7 +1291,7 @@ class Application:
                 self._save_current_config()
                 self._refresh_scoring_status()
             except (OSError, ScoringConfigError) as exc:
-                messagebox.showerror(APP_NAME, str(exc), parent=window)
+                self._show_error(exc, parent=window)
                 return
             window.destroy()
 
@@ -1190,11 +1306,12 @@ class Application:
         ttk.Button(buttons, text="Annuler", command=window.destroy).pack(side=tk.RIGHT)
         ttk.Button(buttons, text="Enregistrer et activer", command=save_editor).pack(side=tk.RIGHT, padx=(0, 7))
         populate()
+        self._apply_translations(window)
 
     def _import_scoring_profile(self) -> None:
         filename = filedialog.askopenfilename(
-            title="Importer un profil de pondération",
-            filetypes=(("JSON", "*.json"), ("Tous les fichiers", "*.*")),
+            title=str(self._tr("Importer un profil de pondération")),
+            filetypes=(("JSON", "*.json"), (str(self._tr("Tous les fichiers")), "*.*")),
         )
         if not filename:
             return
@@ -1213,11 +1330,11 @@ class Application:
             self._save_current_config()
             self._refresh_scoring_status()
         except (OSError, ScoringConfigError) as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
 
     def _export_scoring_profile(self) -> None:
         filename = filedialog.asksaveasfilename(
-            title="Exporter le profil effectif",
+            title=str(self._tr("Exporter le profil effectif")),
             defaultextension=".json",
             initialfile="parent_scoring_profile.json",
             filetypes=(("JSON", "*.json"),),
@@ -1229,22 +1346,21 @@ class Application:
             _default, _overrides, effective = load_effective_scoring_config(default_scoring_path(), override)
             write_json_object(filename, effective)
         except (OSError, ScoringConfigError) as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
 
     def _reset_scoring_overrides(self) -> None:
         path = user_scoring_overrides_path()
         if not path.is_file() and not self.use_custom_scoring_var.get():
             return
-        if not messagebox.askyesno(
-            APP_NAME,
-            "Supprimer toutes les pondérations personnalisées et réactiver le profil par défaut ?",
+        if not self._ask_yes_no(
+            "Supprimer toutes les pondérations personnalisées et réactiver le profil par défaut ?"
         ):
             return
         try:
             if path.is_file():
                 path.unlink()
         except OSError as exc:
-            messagebox.showerror(APP_NAME, f"Impossible de supprimer {path} : {exc}")
+            self._show_error(f"Impossible de supprimer {path} : {exc}")
             return
         self.use_custom_scoring_var.set(False)
         self._save_current_config()
@@ -1371,12 +1487,12 @@ class Application:
                 self.fixed_gp_var.set(selected_display)
         except Exception as exc:
             if show_errors:
-                messagebox.showerror(APP_NAME, f"Impossible de charger les vétérans locaux : {exc}")
+                self._show_error(f"Impossible de charger les vétérans locaux : {exc}")
 
     def _open_fixed_gp_picker(self) -> None:
         self._refresh_local_veteran_options(show_errors=True)
         if not self._fixed_gp_records:
-            messagebox.showinfo(APP_NAME, "Aucun vétéran local disponible dans le data.json sélectionné.")
+            self._show_info("Aucun vétéran local disponible dans le data.json sélectionné.")
             return
 
         dialog = tk.Toplevel(self.root)
@@ -1474,19 +1590,20 @@ class Application:
         ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Utiliser ce GP", command=choose).pack(side=tk.LEFT, padx=(8, 0))
         refill()
+        self._apply_translations(dialog)
         search.focus_set()
 
     def _browse_uma_moe_response(self) -> None:
         path = filedialog.askopenfilename(
-            title="Sélectionner une réponse JSON de l’API uma.moe",
-            filetypes=[("JSON", "*.json"), ("Tous les fichiers", "*")],
+            title=str(self._tr("Sélectionner une réponse JSON de l’API uma.moe")),
+            filetypes=[("JSON", "*.json"), (str(self._tr("Tous les fichiers")), "*")],
         )
         if path:
             self.uma_moe_response_var.set(path)
 
     def _browse_master(self) -> None:
         path = filedialog.askopenfilename(
-            title="Sélectionner master.mdb",
+            title=str(self._tr("Sélectionner master.mdb")),
             filetypes=[("Uma master database", "*.mdb"), ("Tous les fichiers", "*")],
         )
         if path:
@@ -1495,8 +1612,8 @@ class Application:
 
     def _browse_json(self) -> None:
         path = filedialog.askopenfilename(
-            title="Sélectionner data.json",
-            filetypes=[("JSON", "*.json"), ("Tous les fichiers", "*")],
+            title=str(self._tr("Sélectionner data.json")),
+            filetypes=[("JSON", "*.json"), (str(self._tr("Tous les fichiers")), "*")],
         )
         if path:
             self.json_var.set(path)
@@ -1504,7 +1621,7 @@ class Application:
 
     def _browse_batch(self) -> None:
         path = filedialog.askopenfilename(
-            title="Sélectionner le batch Umalator v2",
+            title=str(self._tr("Sélectionner le batch Umalator v2")),
             filetypes=[("JSON Umalator", "*.json"), ("Tous les fichiers", "*")],
         )
         if path:
@@ -1512,8 +1629,8 @@ class Application:
 
     def _browse_course_overrides(self) -> None:
         path = filedialog.askopenfilename(
-            title="Sélectionner les overrides de course",
-            filetypes=[("JSON", "*.json"), ("Tous les fichiers", "*")],
+            title=str(self._tr("Sélectionner les overrides de course")),
+            filetypes=[("JSON", "*.json"), (str(self._tr("Tous les fichiers")), "*")],
         )
         if path:
             self.course_overrides_var.set(path)
@@ -1521,10 +1638,10 @@ class Application:
 
     def _browse_extractor(self) -> None:
         path = filedialog.askopenfilename(
-            title="Sélectionner UmaExtractor",
+            title=str(self._tr("Sélectionner UmaExtractor")),
             filetypes=[
                 ("UmaExtractor", "*.exe *.py"),
-                ("Exécutable Windows", "*.exe"),
+                (str(self._tr("Exécutable Windows")), "*.exe"),
                 ("Script Python", "*.py"),
                 ("Tous les fichiers", "*"),
             ],
@@ -1533,7 +1650,7 @@ class Application:
             self.extractor_var.set(path)
 
     def _browse_output(self) -> None:
-        path = filedialog.askdirectory(title="Sélectionner le dossier de sortie")
+        path = filedialog.askdirectory(title=str(self._tr("Sélectionner le dossier de sortie")))
         if path:
             self.output_var.set(path)
 
@@ -1550,15 +1667,23 @@ class Application:
         if not running:
             self._toggle_uma_moe_pair_mode()
 
-    def _clear_log(self) -> None:
+    def _render_log_entries(self) -> None:
         self.log.configure(state=tk.NORMAL)
         self.log.delete("1.0", tk.END)
+        for timestamp, message in self._log_entries:
+            self.log.insert(tk.END, f"[{timestamp}] {self._tr(message)}\n")
         self.log.configure(state=tk.DISABLED)
+        self.log.see(tk.END)
+
+    def _clear_log(self) -> None:
+        self._log_entries.clear()
+        self._render_log_entries()
 
     def _append_log(self, message: str) -> None:
         timestamp = time.strftime("%H:%M:%S")
+        self._log_entries.append((timestamp, message))
         self.log.configure(state=tk.NORMAL)
-        self.log.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.log.insert(tk.END, f"[{timestamp}] {self._tr(message)}\n")
         self.log.see(tk.END)
         self.log.configure(state=tk.DISABLED)
 
@@ -1577,13 +1702,13 @@ class Application:
                 "optimizer_ace_card_id": str(self._ace_display_to_id.get(self.ace_var.get(), self._saved_ace_card_id or 0)),
                 "optimizer_future_parent_card_id": str(self._ace_display_to_id.get(self.future_parent_var.get(), self._saved_future_parent_card_id or 0)),
                 "optimizer_track_id": str(self._track_display_to_id.get(self.track_var.get()) or 0),
-                "optimizer_rotation": self.rotation_var.get(),
-                "optimizer_season": self.season_var.get(),
-                "optimizer_weather": self.weather_var.get(),
-                "optimizer_ground": self.ground_var.get(),
-                "optimizer_surface": self.surface_var.get(),
-                "optimizer_distance": self.distance_var.get(),
-                "optimizer_style": self.style_var.get(),
+                "optimizer_rotation": self._choice_source(ROTATION_OPTIONS, self.rotation_var.get()),
+                "optimizer_season": self._choice_source(SEASON_OPTIONS, self.season_var.get()),
+                "optimizer_weather": self._choice_source(WEATHER_OPTIONS, self.weather_var.get()),
+                "optimizer_ground": self._choice_source(GROUND_OPTIONS, self.ground_var.get()),
+                "optimizer_surface": profile_code("surface", self.surface_var.get()),
+                "optimizer_distance": profile_code("distance", self.distance_var.get()),
+                "optimizer_style": profile_code("style", self.style_var.get()),
                 "optimizer_top_n": str(self.top_n_var.get()),
                 "uma_moe_base_url": self.uma_moe_base_var.get().strip(),
                 "uma_moe_query": self.uma_moe_query_var.get(),
@@ -1606,6 +1731,7 @@ class Application:
                 "skill_priorities_path": self.skill_priorities_var.get().strip(),
                 "uma_moe_fixed_gp_id": str(self._fixed_gp_display_to_id.get(self.fixed_gp_var.get(), self._saved_fixed_gp_id or 0)),
                 "ui_tab": str(self.notebook.index("current")) if hasattr(self, "notebook") else "0",
+                "ui_language": self.language_code,
             }
         )
 
@@ -1648,23 +1774,25 @@ class Application:
                 self.future_parent_var.set(future_selected)
 
             tracks = load_track_options(master)
-            self._track_display_to_id = {UNSPECIFIED: None}
+            unspecified = str(self._tr(UNSPECIFIED))
+            self._track_display_to_id = {unspecified: None}
             self._track_id_to_display = {}
             for option in tracks:
                 self._track_display_to_id[option.display_name] = option.track_id
                 self._track_id_to_display[option.track_id] = option.display_name
             self._track_all_values = list(self._track_display_to_id)
             self.track_combo.configure(values=self._track_all_values)
-            self.track_var.set(self._track_id_to_display.get(self._saved_track_id, UNSPECIFIED))
+            self.track_var.set(self._track_id_to_display.get(self._saved_track_id, unspecified))
             self._refresh_course_options()
             self._refresh_local_veteran_options(show_errors=False)
         except Exception as exc:
             if show_errors:
-                messagebox.showerror(APP_NAME, str(exc))
+                self._show_error(exc)
 
     def _refresh_course_options(self) -> None:
         current_key = self._course_display_to_key.get(self.course_var.get())
-        self._course_display_to_key = {"Profil générique": None}
+        generic_profile = str(self._tr("Profil générique"))
+        self._course_display_to_key = {generic_profile: None}
         self._course_definitions = {}
         overrides_text = self.course_overrides_var.get().strip()
         if overrides_text:
@@ -1674,7 +1802,7 @@ class Application:
                 for key, course in sorted((payload.get("courses") or {}).items()):
                     profile = course.get("profile") or {}
                     self._course_definitions[str(key)] = course
-                    if profile.get("surface") != self.surface_var.get() or profile.get("distance") != self.distance_var.get():
+                    if profile.get("surface") != profile_code("surface", self.surface_var.get()) or profile.get("distance") != profile_code("distance", self.distance_var.get()):
                         continue
                     label = str(course.get("label") or key)
                     display = f"{label} [{key}]"
@@ -1685,7 +1813,7 @@ class Application:
         self._course_all_values = values
         self.course_combo.configure(values=values)
         matching_display = next((display for display, key in self._course_display_to_key.items() if key == current_key), None)
-        self.course_var.set(matching_display or "Profil générique")
+        self.course_var.set(matching_display or generic_profile)
 
     def _selected_course_conditions(self) -> dict[str, object]:
         conditions: dict[str, object] = {}
@@ -1693,10 +1821,10 @@ class Application:
         if track_id is not None:
             conditions["track_id"] = int(track_id)
         for key, value in (
-            ("rotation", ROTATION_OPTIONS.get(self.rotation_var.get())),
-            ("season", SEASON_OPTIONS.get(self.season_var.get())),
-            ("weather", WEATHER_OPTIONS.get(self.weather_var.get())),
-            ("ground_condition", GROUND_OPTIONS.get(self.ground_var.get())),
+            ("rotation", self._choice_value(ROTATION_OPTIONS, self.rotation_var.get())),
+            ("season", self._choice_value(SEASON_OPTIONS, self.season_var.get())),
+            ("weather", self._choice_value(WEATHER_OPTIONS, self.weather_var.get())),
+            ("ground_condition", self._choice_value(GROUND_OPTIONS, self.ground_var.get())),
         ):
             if value is not None:
                 conditions[key] = value
@@ -1728,7 +1856,7 @@ class Application:
             scoring_config = self._active_scoring_config_path(output)
             skill_priorities = self._active_skill_priorities_path(output)
         except (LinkerError, OptimizerError, ScoringConfigError, ValueError) as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
         self._saved_ace_card_id = int(ace_card_id)
         self._saved_future_parent_card_id = int(future_parent_card_id)
@@ -1736,7 +1864,7 @@ class Application:
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self.status_var.set("Préparation de l'optimisation de lignée…")
+        self._set_status("Préparation de l'optimisation de lignée…")
         self.progress_var.set(5)
         threading.Thread(
             target=self._worker_optimizer,
@@ -1749,9 +1877,9 @@ class Application:
                 skill_priorities,
                 int(ace_card_id),
                 int(future_parent_card_id),
-                self.surface_var.get(),
-                self.distance_var.get(),
-                self.style_var.get(),
+                profile_code("surface", self.surface_var.get()),
+                profile_code("distance", self.distance_var.get()),
+                profile_code("style", self.style_var.get()),
                 self._course_display_to_key.get(self.course_var.get()),
                 course_conditions,
                 top_n,
@@ -1810,7 +1938,7 @@ class Application:
             scoring_config = self._active_scoring_config_path(output)
             skill_priorities = self._active_skill_priorities_path(output)
         except (LinkerError, UmaMoeError, ScoringConfigError, ValueError) as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
 
         self._saved_ace_card_id = int(ace_card_id)
@@ -1820,7 +1948,7 @@ class Application:
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self.status_var.set("Préparation de la recherche uma.moe…")
+        self._set_status("Préparation de la recherche uma.moe…")
         self.progress_var.set(5)
         threading.Thread(
             target=self._worker_uma_moe,
@@ -1837,9 +1965,9 @@ class Application:
                 automatic_pairs,
                 local_pool_size,
                 remote_pool_size,
-                self.surface_var.get(),
-                self.distance_var.get(),
-                self.style_var.get(),
+                profile_code("surface", self.surface_var.get()),
+                profile_code("distance", self.distance_var.get()),
+                profile_code("style", self.style_var.get()),
                 self._course_display_to_key.get(self.course_var.get()),
                 course_conditions,
                 int(self.top_n_var.get()),
@@ -1877,12 +2005,12 @@ class Application:
                     "Sélectionne umaextractor.exe, ou utilise un data.json existant."
                 )
         except LinkerError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self.status_var.set("Extraction en cours…")
+        self._set_status("Extraction en cours…")
         self.progress_var.set(3)
         threading.Thread(
             target=self._worker_extract_and_link,
@@ -1899,12 +2027,12 @@ class Application:
             if not data_json.is_file():
                 raise LinkerError("Sélectionne un data.json valide.")
         except LinkerError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self.status_var.set("Liaison en cours…")
+        self._set_status("Liaison en cours…")
         self.progress_var.set(15)
         threading.Thread(
             target=self._worker_link,
@@ -1918,12 +2046,12 @@ class Application:
         try:
             master, output = self._validate_common()
         except LinkerError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self.status_var.set("Génération du catalogue skills…")
+        self._set_status("Génération du catalogue skills…")
         self.progress_var.set(20)
         threading.Thread(
             target=self._worker_catalog_only,
@@ -1948,12 +2076,12 @@ class Application:
             if course_overrides is not None and not course_overrides.is_file():
                 raise LinkerError("Sélectionne un fichier d'overrides de course valide.")
         except LinkerError as exc:
-            messagebox.showerror(APP_NAME, str(exc))
+            self._show_error(exc)
             return
         self._save_current_config()
         self._clear_log()
         self._set_running(True)
-        self.status_var.set("Import et normalisation des poids Umalator…")
+        self._set_status("Import et normalisation des poids Umalator…")
         self.progress_var.set(15)
         threading.Thread(
             target=self._worker_simulator_weights,
@@ -2469,7 +2597,7 @@ class Application:
                 return
             detail.configure(state=tk.NORMAL)
             detail.delete("1.0", tk.END)
-            detail.insert(tk.END, render_detail(row))
+            detail.insert(tk.END, self._tr(render_detail(row)))
             detail.configure(state=tk.DISABLED)
             detail.see("1.0")
 
@@ -2478,6 +2606,7 @@ class Application:
             first = next(iter(row_map))
             tree.selection_set(first)
             update_detail()
+        self._apply_translations(window)
 
     def _show_optimizer_results(self, result: object) -> None:
         window = tk.Toplevel(self.root)
@@ -2809,7 +2938,7 @@ class Application:
                     return
                 detail.configure(state=tk.NORMAL)
                 detail.delete("1.0", tk.END)
-                detail.insert(tk.END, detail_renderer(payload))
+                detail.insert(tk.END, self._tr(detail_renderer(payload)))
                 detail.configure(state=tk.DISABLED)
                 detail.see("1.0")
 
@@ -2856,6 +2985,7 @@ class Application:
             {"rank": "#", "score": "Score", "candidate": "Candidat", "triple": "Triple", "branch_total": "Base branche", "g1": "G1 diff.", "aff_score": "Score aff.", "pink": "Roses", "white": "Whites propres", "generation": "Bonus lignée", "blue": "Bleues"},
             future_payloads, future_values, render_future_detail,
         )
+        self._apply_translations(window)
 
     def _drain_queue(self) -> None:
         try:
@@ -2866,7 +2996,7 @@ class Application:
                 elif kind == "progress":
                     percent, status = payload  # type: ignore[misc]
                     self.progress_var.set(float(percent))
-                    self.status_var.set(str(status))
+                    self._set_status(status)
                 elif kind == "json_path":
                     self.json_var.set(str(payload))
                     self._refresh_local_veteran_options(show_errors=False)
@@ -2879,9 +3009,7 @@ class Application:
                 elif kind == "done":
                     result = payload
                     self.progress_var.set(100)
-                    self.status_var.set(
-                        f"Terminé — {result.veteran_count} vétérans liés."
-                    )
+                    self._set_status(f"Terminé — {result.veteran_count} vétérans liés.")
                     self.last_output_dir = result.json_path.parent
                     self._append_log(f"JSON : {result.json_path}")
                     self._append_log(f"CSV : {result.csv_path}")
@@ -2903,7 +3031,7 @@ class Application:
                 elif kind == "catalog_done":
                     result = payload
                     self.progress_var.set(100)
-                    self.status_var.set(
+                    self._set_status(
                         f"Catalogue terminé — {result.skill_count} skills, "
                         f"{result.condition_variable_count} variables."
                     )
@@ -2916,7 +3044,7 @@ class Application:
                 elif kind == "simulator_done":
                     result = payload
                     self.progress_var.set(100)
-                    self.status_var.set(
+                    self._set_status(
                         f"Poids terminés — {result.simulated_skill_count}/{result.skill_count} "
                         f"skills simulées, {result.review_item_count} à vérifier."
                     )
@@ -2943,7 +3071,7 @@ class Application:
                 elif kind == "optimizer_done":
                     result = payload
                     self.progress_var.set(100)
-                    self.status_var.set(
+                    self._set_status(
                         f"Optimisation terminée — {len(result.top_parent_pairs)} paires affichées."
                     )
                     self.last_output_dir = result.rankings_json_path.parent
@@ -2956,7 +3084,7 @@ class Application:
                 elif kind == "uma_moe_done":
                     result = payload
                     self.progress_var.set(100)
-                    self.status_var.set(f"Recherche uma.moe terminée — {result.result_count} paires classées.")
+                    self._set_status(f"Recherche uma.moe terminée — {result.result_count} paires classées.")
                     self.last_output_dir = result.rankings_json_path.parent
                     self._append_log(f"Classement uma.moe : {result.rankings_json_path}")
                     self._append_log(f"CSV uma.moe : {result.rankings_csv_path}")
@@ -2968,9 +3096,9 @@ class Application:
                     message, details = payload  # type: ignore[misc]
                     self._append_log(details)
                     self.progress_var.set(0)
-                    self.status_var.set("Échec — consulter le journal.")
+                    self._set_status("Échec — consulter le journal.")
                     self._set_running(False)
-                    messagebox.showerror(APP_NAME, str(message))
+                    self._show_error(message)
         except queue.Empty:
             pass
         self.root.after(100, self._drain_queue)
@@ -2980,7 +3108,7 @@ class Application:
         if path.is_dir():
             open_path(path)
         else:
-            messagebox.showinfo(APP_NAME, "Aucun dossier de sortie disponible.")
+            self._show_info("Aucun dossier de sortie disponible.")
 
     def _on_close(self) -> None:
         self._save_current_config()

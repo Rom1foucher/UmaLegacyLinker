@@ -1,5 +1,14 @@
 # Changelog
 
+## V24 — interface bilingue français / anglais
+
+- Ajout d’un sélecteur **Français / English** dans l’en-tête, avec changement immédiat sans redémarrage.
+- Langue mémorisée dans la configuration utilisateur et restaurée au lancement.
+- Traduction des onglets, contrôles, dialogues, fenêtres de résultats, messages de validation, statuts et journal d’activité.
+- Le journal conserve les messages sources et les rerend dans la langue active après une bascule, sans mélange entre les deux langues.
+- Les valeurs métier restent canoniques dans la configuration : changer la langue ne modifie ni les profils de course, ni les calculs, ni les exports.
+- Libellés de l’éditeur de pondérations centralisés dans le module d’internationalisation.
+
 ## V23 — pondérations personnalisables
 
 - Nouvel onglet **Pondérations** avec éditeur arborescent de l'ensemble de

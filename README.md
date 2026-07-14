@@ -10,6 +10,12 @@ The application is designed for players who want more than a simple compatibilit
 
 ## Main features
 
+### English and French interface
+
+The desktop interface is available in **English** and **French**. Use the language selector in the top-right corner of the application to switch instantly. The selected language is saved in the user configuration and restored on the next launch.
+
+The language setting applies to the main interface, dialogs, result windows, status messages, validation errors and the activity log. Internal profile keys and exported data remain language-independent so changing the interface language does not alter calculations or saved scoring profiles.
+
 ### Local veteran linking
 
 - Links an exported `data.json` to the current game database.
@@ -161,6 +167,8 @@ Or launch it manually from PowerShell:
 ```powershell
 py app.py
 ```
+
+Choose **English** or **Français** from the selector in the top-right corner. The choice is persisted automatically.
 
 ### 4. Select the input files
 

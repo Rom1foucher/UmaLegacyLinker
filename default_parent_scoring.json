@@ -1,0 +1,428 @@
+{
+  "schema_version": 9,
+  "description": "Manual-priority scoring. Direct white-skill value is driven first by the strategic priority of the skill; white Spark stars use a moderate inheritance-comfort curve (1★=1.00, 2★=1.35, 3★=1.80) instead of a linear quality scale. Online GP-pair affinity estimates the future parent branch with the Ace, stopping at the selected grandparents; deeper ancestors are used only for parent-generation diagnostics and white-gene support.",
+  "mode_weights": {
+    "parent_final": {
+      "affinity": 0.22,
+      "pink": 0.28,
+      "white_skill": 0.36,
+      "race_scenario": 0.03,
+      "blue": 0.05,
+      "unique": 0.06
+    },
+    "future_grandparent": {
+      "affinity": 0.15,
+      "g1_potential": 0.11,
+      "blue": 0.13,
+      "pink": 0.25,
+      "white_skill": 0.13,
+      "white_generation": 0.21,
+      "unique": 0.02
+    }
+  },
+  "blue_stat_weights_by_distance": {
+    "sprint": {
+      "Speed": 1.0,
+      "Stamina": 0.2,
+      "Power": 1.0,
+      "Guts": 0.45,
+      "Wit": 0.8
+    },
+    "mile": {
+      "Speed": 1.0,
+      "Stamina": 0.35,
+      "Power": 0.9,
+      "Guts": 0.45,
+      "Wit": 0.8
+    },
+    "medium": {
+      "Speed": 1.0,
+      "Stamina": 0.75,
+      "Power": 0.82,
+      "Guts": 0.5,
+      "Wit": 0.8
+    },
+    "long": {
+      "Speed": 1.0,
+      "Stamina": 1.0,
+      "Power": 0.72,
+      "Guts": 0.6,
+      "Wit": 0.78
+    }
+  },
+  "blue_star_quality": {
+    "1": 0.12,
+    "2": 0.78,
+    "3": 1.0
+  },
+  "pink_star_quality": {
+    "1": 0.55,
+    "2": 0.72,
+    "3": 1.0
+  },
+  "pink_dimension_weights": {
+    "distance": 1.0,
+    "surface": 0.72,
+    "style": 0.55
+  },
+  "pink_need_multiplier": {
+    "below_a": 1.1,
+    "a_or_s": 1.0
+  },
+  "unique_star_quality": {
+    "1": 0.82,
+    "2": 0.91,
+    "3": 1.0
+  },
+  "position_transmission": {
+    "parent": 1.0,
+    "grandparent": 0.5
+  },
+  "star_quality": {
+    "1": 0.3333333333,
+    "2": 0.6666666667,
+    "3": 1.0
+  },
+  "white_saturation": {
+    "future_grandparent": 3.96,
+    "parent_branch": 9.0,
+    "parent_pair": 16.2
+  },
+  "race_saturation": {
+    "parent_branch": 1.7,
+    "parent_pair": 3.0
+  },
+  "race_factor": {
+    "base_per_star_quality": 0.025,
+    "granted_skill_multiplier": 0.2,
+    "scenario_per_star_quality": 0.06
+  },
+  "affinity": {
+    "g1_common_bonus": 3,
+    "same_character_compatibility": 0,
+    "parent_pair_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        30,
+        15
+      ],
+      [
+        50,
+        45
+      ],
+      [
+        100,
+        75
+      ],
+      [
+        151,
+        100
+      ],
+      [
+        250,
+        100
+      ]
+    ],
+    "parent_branch_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        20,
+        20
+      ],
+      [
+        40,
+        50
+      ],
+      [
+        70,
+        80
+      ],
+      [
+        95,
+        100
+      ],
+      [
+        150,
+        100
+      ]
+    ],
+    "future_branch_base_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        20,
+        20
+      ],
+      [
+        30,
+        55
+      ],
+      [
+        40,
+        85
+      ],
+      [
+        48,
+        100
+      ],
+      [
+        70,
+        100
+      ]
+    ],
+    "future_g1_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        6,
+        30
+      ],
+      [
+        12,
+        65
+      ],
+      [
+        16,
+        85
+      ],
+      [
+        20,
+        100
+      ],
+      [
+        30,
+        100
+      ]
+    ]
+  },
+  "course_conditions": {
+    "active_green_floor": 0.12,
+    "floors": {
+      "season": 0.65,
+      "rotation_right": 0.32,
+      "rotation_left": 0.52,
+      "track_id": 0.26,
+      "weather": 0.12,
+      "ground_condition": 0.14,
+      "time": 0.12
+    },
+    "description": "Season greens are valuable when active; left-handed is rarer and scores above right-handed. Weather and ground-condition greens are minor bonuses. Race sparks granting these skills remain discounted by race_factor.granted_skill_multiplier.",
+    "modes": {
+      "season": "floor",
+      "rotation_right": "override",
+      "rotation_left": "override",
+      "track_id": "override",
+      "weather": "override",
+      "ground_condition": "override",
+      "time": "override"
+    }
+  },
+  "white_generation": {
+    "bonus_per_lineage_copy": 0.025,
+    "max_lineage_copies": 6,
+    "saturation": 0.18,
+    "description": "Production-only score. Every lineage member carrying the same white skill Spark adds the same +2.5 percentage-point generation bonus. Base chance and learned basic/gold form are intentionally ignored. Race/scenario Sparks are excluded."
+  },
+  "uma_moe_pair": {
+    "description": "Rank local + remote grandparent pairs. Direct useful white Sparks on the selected grandparents are weighted above projected final-parent affinity; affinity remains important because it helps transmit those Sparks, while lineage white-generation support remains a major component.",
+    "weights": {
+      "final_parent_affinity": 0.22,
+      "production_run_affinity": 0.04,
+      "pink": 0.24,
+      "white_skill": 0.26,
+      "white_generation": 0.18,
+      "blue": 0.06
+    },
+    "final_branch_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        20,
+        20
+      ],
+      [
+        30,
+        55
+      ],
+      [
+        40,
+        85
+      ],
+      [
+        48,
+        100
+      ],
+      [
+        70,
+        100
+      ]
+    ],
+    "production_affinity_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        50,
+        20
+      ],
+      [
+        100,
+        50
+      ],
+      [
+        150,
+        75
+      ],
+      [
+        200,
+        90
+      ],
+      [
+        250,
+        100
+      ],
+      [
+        350,
+        100
+      ]
+    ],
+    "candidate_g1_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        6,
+        30
+      ],
+      [
+        12,
+        65
+      ],
+      [
+        16,
+        85
+      ],
+      [
+        20,
+        100
+      ],
+      [
+        30,
+        100
+      ]
+    ],
+    "planned_g1_budget_default": 24,
+    "final_parent_potential_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        49,
+        18
+      ],
+      [
+        75,
+        38
+      ],
+      [
+        100,
+        62
+      ],
+      [
+        125,
+        82
+      ],
+      [
+        151,
+        100
+      ],
+      [
+        220,
+        100
+      ]
+    ],
+    "production_run_affinity_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        50,
+        20
+      ],
+      [
+        100,
+        50
+      ],
+      [
+        150,
+        75
+      ],
+      [
+        200,
+        90
+      ],
+      [
+        250,
+        100
+      ],
+      [
+        350,
+        100
+      ]
+    ],
+    "formula_notes": {
+      "final_parent": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2) + planned G1(parent↔GP1/GP2). The unknown other final parent is excluded.",
+      "planned_g1": "Within the race budget, G1s shared by both grandparents count at full double-link value. One-sided G1s remain useful but are discounted by the configurable realization factor (default 60%).",
+      "production_run": "The deeper GP ancestors only affect the run that creates the future parent; they do not remain in the final Ace lineage.",
+      "weighting_priority": "Direct white Sparks on GP1/GP2 are more valuable than projected final affinity. Final affinity facilitates inheritance but cannot replace already carrying the desired genes; lineage support remains strongly weighted."
+    },
+    "preselection_weights": {
+      "candidate_affinity": 0.18,
+      "pink": 0.3,
+      "white_skill": 0.24,
+      "white_generation": 0.18,
+      "blue": 0.06,
+      "g1_potential": 0.04
+    },
+    "gp_triple_preselection_thresholds": [
+      [
+        0,
+        0
+      ],
+      [
+        8,
+        35
+      ],
+      [
+        16,
+        70
+      ],
+      [
+        24,
+        100
+      ]
+    ],
+    "single_g1_weight_default": 0.6
+  },
+  "white_star_quality": {
+    "1": 1.0,
+    "2": 1.35,
+    "3": 1.8
+  }
+}

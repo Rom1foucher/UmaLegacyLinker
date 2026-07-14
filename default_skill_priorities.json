@@ -1,0 +1,859 @@
+{
+  "schema_version": 2,
+  "description": "Manual white-spark priorities based on community parent-farming guidance. Values directly include strategic importance and practical desirability; no separate scarcity/rarity multiplier is applied.",
+  "default_weight": 0.04,
+  "skills": {
+    "tail_held_high": {
+      "base": 0.95,
+      "style": {
+        "front_runner": 0.78,
+        "pace_chaser": 0.95,
+        "late_surger": 1.0,
+        "end_closer": 1.0
+      },
+      "notes": "Major general mid-race speed; valued as a sought parent spark."
+    },
+    "playtime_s_over": {
+      "base": 0.93,
+      "style": {
+        "front_runner": 0.78,
+        "pace_chaser": 0.95,
+        "late_surger": 0.98,
+        "end_closer": 0.98
+      }
+    },
+    "uma_stan": {
+      "base": 1.08,
+      "style": {
+        "front_runner": 0.28,
+        "pace_chaser": 0.94,
+        "late_surger": 1.16,
+        "end_closer": 1.18
+      },
+      "distance": {
+        "sprint": 0.86,
+        "mile": 1.0,
+        "medium": 1.12,
+        "long": 1.18
+      },
+      "notes": "Multi-proc potential and practical scarcity; intentionally high outside Front."
+    },
+    "slipstream": {
+      "base": 0.83,
+      "style": {
+        "front_runner": 0.4,
+        "pace_chaser": 0.88,
+        "late_surger": 0.9,
+        "end_closer": 0.9
+      }
+    },
+    "nimble_navigator": {
+      "base": 1.02,
+      "style": {
+        "front_runner": 0.02,
+        "pace_chaser": 0.9,
+        "late_surger": 1.08,
+        "end_closer": 1.1
+      },
+      "distance": {
+        "sprint": 0.72,
+        "mile": 0.9,
+        "medium": 1.06,
+        "long": 1.1
+      }
+    },
+    "ramp_up": {
+      "base": 0.8,
+      "style": {
+        "front_runner": 0.32,
+        "pace_chaser": 0.83,
+        "late_surger": 0.88,
+        "end_closer": 0.88
+      }
+    },
+    "corner_adept": {
+      "base": 0.75
+    },
+    "straightaway_adept": {
+      "base": 0.62
+    },
+    "corner_recovery": {
+      "base": 0.58,
+      "distance": {
+        "sprint": 0.18,
+        "mile": 0.36,
+        "medium": 0.65,
+        "long": 0.78
+      }
+    },
+    "straightaway_recovery": {
+      "base": 0.45,
+      "distance": {
+        "sprint": 0.1,
+        "mile": 0.28,
+        "medium": 0.52,
+        "long": 0.64
+      }
+    },
+    "focus": {
+      "base": 0.48,
+      "style": {
+        "front_runner": 0.68,
+        "pace_chaser": 0.45,
+        "late_surger": 0.4,
+        "end_closer": 0.4
+      }
+    },
+    "go_with_the_flow": {
+      "base": 0.62,
+      "style": {
+        "front_runner": 0.2,
+        "pace_chaser": 0.64,
+        "late_surger": 0.72,
+        "end_closer": 0.74
+      }
+    },
+    "inside_scoop": {
+      "base": 0.62,
+      "style": {
+        "front_runner": 0.72,
+        "pace_chaser": 0.68,
+        "late_surger": 0.58,
+        "end_closer": 0.5
+      }
+    },
+    "straightaway_acceleration": {
+      "base": 0.38,
+      "notes": "Course dependent; exact-course overrides should raise it when valid."
+    },
+    "corner_acceleration": {
+      "base": 0.22,
+      "notes": "Highly course dependent."
+    },
+    "homestretch_haste": {
+      "base": 0.18
+    },
+    "groundwork": {
+      "base": 0.12,
+      "style": {
+        "front_runner": 1.25,
+        "pace_chaser": 0.48,
+        "late_surger": 0.12,
+        "end_closer": 0.08
+      }
+    },
+    "prudent_positioning": {
+      "base": 0.1,
+      "style": {
+        "front_runner": 1.02,
+        "pace_chaser": 0.36,
+        "late_surger": 0.1,
+        "end_closer": 0.08
+      }
+    },
+    "dodging_danger": {
+      "base": 0.08,
+      "style": {
+        "front_runner": 0.94,
+        "pace_chaser": 0.28,
+        "late_surger": 0.08,
+        "end_closer": 0.06
+      }
+    },
+    "ignited_spirit_wit": {
+      "base": 0.08,
+      "style": {
+        "front_runner": 1.22,
+        "pace_chaser": 0.25,
+        "late_surger": 0.08,
+        "end_closer": 0.08
+      }
+    },
+    "leader_s_pride": {
+      "base": 0.3,
+      "style": {
+        "front_runner": 0.94,
+        "pace_chaser": 0.52,
+        "late_surger": 0.28,
+        "end_closer": 0.22
+      }
+    },
+    "early_lead": {
+      "base": 0.22,
+      "style": {
+        "front_runner": 0.88,
+        "pace_chaser": 0.36,
+        "late_surger": 0.12,
+        "end_closer": 0.08
+      }
+    },
+    "fast_paced": {
+      "base": 0.2,
+      "style": {
+        "front_runner": 0.86,
+        "pace_chaser": 0.28,
+        "late_surger": 0.1,
+        "end_closer": 0.08
+      }
+    },
+    "front_runner_savvy": {
+      "base": 0.04,
+      "style": {
+        "front_runner": 0.4,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "second_wind": {
+      "base": 0.08,
+      "style": {
+        "front_runner": 0.18,
+        "pace_chaser": 0.08,
+        "late_surger": 0.04,
+        "end_closer": 0.04
+      }
+    },
+    "keeping_the_lead": {
+      "base": 0.08,
+      "style": {
+        "front_runner": 0.18,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "head_on": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 1.04,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "straight_descent": {
+      "base": 0.2,
+      "style": {
+        "front_runner": 0.08,
+        "pace_chaser": 0.42,
+        "late_surger": 0.25,
+        "end_closer": 0.22
+      },
+      "notes": "Course-dependent downhill acceleration."
+    },
+    "prepared_to_pass": {
+      "base": 0.18,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.72,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "ignited_spirit_pwr": {
+      "base": 0.72,
+      "style": {
+        "front_runner": 0.2,
+        "pace_chaser": 0.92,
+        "late_surger": 1.02,
+        "end_closer": 1.02
+      }
+    },
+    "pace_chaser_savvy": {
+      "base": 0.04,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.25,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "moxie": {
+      "base": 0.12,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.58,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      },
+      "distance": {
+        "sprint": 0.1,
+        "mile": 0.3,
+        "medium": 0.58,
+        "long": 0.7
+      }
+    },
+    "preferred_position": {
+      "base": 0.1,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.4,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "slick_surge": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 1.1,
+        "end_closer": 0.0
+      }
+    },
+    "ignited_spirit_guts": {
+      "base": 0.65,
+      "style": {
+        "front_runner": 0.16,
+        "pace_chaser": 0.7,
+        "late_surger": 0.82,
+        "end_closer": 0.82
+      }
+    },
+    "highlander": {
+      "base": 0.18,
+      "style": {
+        "front_runner": 0.12,
+        "pace_chaser": 0.22,
+        "late_surger": 0.42,
+        "end_closer": 0.38
+      },
+      "distance": {
+        "sprint": 0.12,
+        "mile": 0.18,
+        "medium": 0.26,
+        "long": 0.42
+      },
+      "notes": "Course-dependent uphill acceleration."
+    },
+    "position_pilfer": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.88,
+        "end_closer": 0.0
+      }
+    },
+    "outer_swell": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.82,
+        "end_closer": 0.0
+      }
+    },
+    "fighter": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.46,
+        "end_closer": 0.0
+      }
+    },
+    "late_surger_savvy": {
+      "base": 0.04,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.25,
+        "end_closer": 0.0
+      }
+    },
+    "straightaway_spurt": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.72
+      },
+      "notes": "Meta-defining only on valid courses; course override may lift to S+."
+    },
+    "end_closer_savvy": {
+      "base": 0.04,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.25
+      }
+    },
+    "masterful_gambit": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.2
+      }
+    },
+    "standing_by": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.42
+      },
+      "distance": {
+        "sprint": 0.08,
+        "mile": 0.22,
+        "medium": 0.44,
+        "long": 0.55
+      }
+    },
+    "after_school_stroll": {
+      "base": 0.06,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.38
+      }
+    },
+    "pressure": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.12
+      }
+    },
+    "early_start": {
+      "base": 0.05,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.08
+      }
+    },
+    "ignited_spirit_spd": {
+      "base": 0.58
+    },
+    "ignited_spirit_sta": {
+      "base": 0.35,
+      "distance": {
+        "sprint": 0.12,
+        "mile": 0.25,
+        "medium": 0.48,
+        "long": 0.7
+      }
+    },
+    "sprinting_gear": {
+      "base": 0.05,
+      "distance": {
+        "sprint": 0.72,
+        "mile": 0.0,
+        "medium": 0.0,
+        "long": 0.0
+      }
+    },
+    "gap_closer": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.78,
+        "mile": 0.0,
+        "medium": 0.0,
+        "long": 0.0
+      },
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.2,
+        "late_surger": 0.82,
+        "end_closer": 0.86
+      }
+    },
+    "shifting_gears": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.82,
+        "medium": 0.0,
+        "long": 0.0
+      },
+      "style": {
+        "front_runner": 0.84,
+        "pace_chaser": 0.84,
+        "late_surger": 0.28,
+        "end_closer": 0.18
+      }
+    },
+    "speed_eater": {
+      "base": 0.03,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.78,
+        "medium": 0.0,
+        "long": 0.0
+      },
+      "style": {
+        "front_runner": 0.94,
+        "pace_chaser": 0.35,
+        "late_surger": 0.1,
+        "end_closer": 0.08
+      }
+    },
+    "acceleration": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.52,
+        "medium": 0.0,
+        "long": 0.0
+      }
+    },
+    "up_tempo": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.0,
+        "medium": 0.84,
+        "long": 0.0
+      },
+      "style": {
+        "front_runner": 0.7,
+        "pace_chaser": 0.84,
+        "late_surger": 0.28,
+        "end_closer": 0.2
+      }
+    },
+    "rosy_outlook": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.0,
+        "medium": 0.48,
+        "long": 0.0
+      },
+      "style": {
+        "front_runner": 0.48,
+        "pace_chaser": 0.48,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "soft_step": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.0,
+        "medium": 0.35,
+        "long": 0.0
+      }
+    },
+    "deep_breaths": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.0,
+        "medium": 0.0,
+        "long": 0.72
+      }
+    },
+    "feature_act": {
+      "base": 0.04,
+      "distance": {
+        "sprint": 0.0,
+        "mile": 0.0,
+        "medium": 0.0,
+        "long": 0.74
+      }
+    },
+    "stamina_eater": {
+      "base": 0.22,
+      "distance": {
+        "sprint": 0.04,
+        "mile": 0.12,
+        "medium": 0.35,
+        "long": 0.68
+      }
+    },
+    "top_pick": {
+      "base": 0.03,
+      "surface": {
+        "turf": 0.0,
+        "dirt": 0.72
+      },
+      "style": {
+        "front_runner": 0.8,
+        "pace_chaser": 0.4,
+        "late_surger": 0.14,
+        "end_closer": 0.1
+      }
+    },
+    "dirt_savvy": {
+      "base": 0.03,
+      "surface": {
+        "turf": 0.0,
+        "dirt": 0.3
+      }
+    },
+    "triple_7s": {
+      "base": 0.28,
+      "notes": "Generic B; can become S on specific Christmas Oguri timing builds."
+    },
+    "lay_low": {
+      "base": 0.3
+    },
+    "intense_gaze": {
+      "base": 0.18,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.35
+      }
+    },
+    "hesitant_front_runners": {
+      "base": 0.24
+    },
+    "hesitant_pace_chasers": {
+      "base": 0.24
+    },
+    "hesitant_late_surgers": {
+      "base": 0.24
+    },
+    "hesitant_end_closers": {
+      "base": 0.24
+    },
+    "flustered_front_runners": {
+      "base": 0.1
+    },
+    "flustered_pace_chasers": {
+      "base": 0.1
+    },
+    "flustered_late_surgers": {
+      "base": 0.1
+    },
+    "flustered_end_closers": {
+      "base": 0.1
+    },
+    "subdued_front_runners": {
+      "base": 0.1
+    },
+    "subdued_pace_chasers": {
+      "base": 0.1
+    },
+    "subdued_late_surgers": {
+      "base": 0.1
+    },
+    "subdued_end_closers": {
+      "base": 0.1
+    },
+    "frenzied_front_runners": {
+      "base": 0.1
+    },
+    "frenzied_pace_chasers": {
+      "base": 0.1
+    },
+    "frenzied_late_surgers": {
+      "base": 0.1
+    },
+    "frenzied_end_closers": {
+      "base": 0.1
+    },
+    "front_runner_corners": {
+      "base": 0.0,
+      "style": {
+        "front_runner": 0.84
+      }
+    },
+    "pace_chaser_corners": {
+      "base": 0.0,
+      "style": {
+        "pace_chaser": 0.84
+      }
+    },
+    "late_surger_corners": {
+      "base": 0.0,
+      "style": {
+        "late_surger": 0.84
+      }
+    },
+    "end_closer_corners": {
+      "base": 0.0,
+      "style": {
+        "end_closer": 0.84
+      }
+    },
+    "front_runner_straightaways": {
+      "base": 0.0,
+      "style": {
+        "front_runner": 0.7
+      }
+    },
+    "pace_chaser_straightaways": {
+      "base": 0.0,
+      "style": {
+        "pace_chaser": 0.7
+      }
+    },
+    "late_surger_straightaways": {
+      "base": 0.0,
+      "style": {
+        "late_surger": 0.7
+      }
+    },
+    "end_closer_straightaways": {
+      "base": 0.0,
+      "style": {
+        "end_closer": 0.7
+      }
+    },
+    "sprint_corners": {
+      "base": 0.0,
+      "distance": {
+        "sprint": 0.84
+      }
+    },
+    "mile_corners": {
+      "base": 0.0,
+      "distance": {
+        "mile": 0.84
+      }
+    },
+    "medium_corners": {
+      "base": 0.0,
+      "distance": {
+        "medium": 0.84
+      }
+    },
+    "long_corners": {
+      "base": 0.0,
+      "distance": {
+        "long": 0.84
+      }
+    },
+    "sprint_straightaways": {
+      "base": 0.0,
+      "distance": {
+        "sprint": 0.7
+      }
+    },
+    "mile_straightaways": {
+      "base": 0.0,
+      "distance": {
+        "mile": 0.7
+      }
+    },
+    "medium_straightaways": {
+      "base": 0.0,
+      "distance": {
+        "medium": 0.7
+      }
+    },
+    "long_straightaways": {
+      "base": 0.0,
+      "distance": {
+        "long": 0.7
+      }
+    },
+    "dirt_corners": {
+      "base": 0.0,
+      "surface": {
+        "dirt": 0.84,
+        "turf": 0.0
+      }
+    },
+    "dirt_straightaways": {
+      "base": 0.0,
+      "surface": {
+        "dirt": 0.7,
+        "turf": 0.0
+      }
+    },
+    "spring_runner": {
+      "base": 0.05
+    },
+    "summer_runner": {
+      "base": 0.05
+    },
+    "fall_runner": {
+      "base": 0.05
+    },
+    "winter_runner": {
+      "base": 0.05
+    },
+    "left_handed": {
+      "base": 0.05
+    },
+    "right_handed": {
+      "base": 0.05
+    },
+    "firm_conditions": {
+      "base": 0.04
+    },
+    "wet_conditions": {
+      "base": 0.04
+    },
+    "standard_distance": {
+      "base": 0.04
+    },
+    "non_standard_distance": {
+      "base": 0.04
+    },
+    "sunny_days": {
+      "base": 0.03
+    },
+    "cloudy_days": {
+      "base": 0.03
+    },
+    "rainy_days": {
+      "base": 0.03
+    },
+    "snowy_days": {
+      "base": 0.03
+    },
+    "tokyo_racecourse": {
+      "base": 0.04
+    },
+    "nakayama_racecourse": {
+      "base": 0.04
+    },
+    "hanshin_racecourse": {
+      "base": 0.04
+    },
+    "kyoto_racecourse": {
+      "base": 0.04
+    },
+    "chukyo_racecourse": {
+      "base": 0.04
+    },
+    "sapporo_racecourse": {
+      "base": 0.04
+    },
+    "hakodate_racecourse": {
+      "base": 0.04
+    },
+    "fukushima_racecourse": {
+      "base": 0.04
+    },
+    "niigata_racecourse": {
+      "base": 0.04
+    },
+    "kokura_racecourse": {
+      "base": 0.04
+    },
+    "oi_racecourse": {
+      "base": 0.04
+    },
+    "inner_post_proficiency": {
+      "base": 0.03
+    },
+    "outer_post_proficiency": {
+      "base": 0.03
+    },
+    "sympathy": {
+      "base": 0.03
+    },
+    "maverick": {
+      "base": 0.03
+    }
+  }
+}

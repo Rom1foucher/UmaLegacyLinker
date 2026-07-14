@@ -1,0 +1,200 @@
+{
+  "metadata": {
+    "schema_version": 2,
+    "purpose": "Documented corrections for material Umalator modeling limitations, plus a small independent positioning component. Rules are matched by stable catalog_key, never by MDB ID.",
+    "operations": {
+      "override": "Replace the automatic performance weight.",
+      "multiplier": "Multiply the automatic performance weight.",
+      "floor": "Raise the automatic performance weight to at least this value.",
+      "cap": "Lower the automatic performance weight to at most this value.",
+      "positioning_rules": "Add a small strategic positioning bonus after performance scoring; total positioning bonus is capped at 0.30."
+    }
+  },
+  "skills": {
+    "nimble_navigator": {
+      "review_priority": "high",
+      "notes": "Umalator strongly overestimates Front Runner blocking. The skill remains strong enough elsewhere that moderate over-weighting outside Front is acceptable.",
+      "rules": [
+        {
+          "match": {"styles": ["front_runner"]},
+          "operation": "cap",
+          "value": 0.1,
+          "reason": "Front Runners aim to lead and are rarely blocked in the last spurt."
+        }
+      ]
+    },
+    "uma_stan": {
+      "review_priority": "critical",
+      "notes": "Umalator does not model repeated activations reliably. Uma Stan has a short cooldown and can proc several times; it is strong outside Front Runner.",
+      "rules": [
+        {
+          "match": {"styles": ["front_runner"]},
+          "operation": "cap",
+          "value": 0.2,
+          "reason": "Front Runners spend less time packed close to at least three other runners."
+        },
+        {
+          "match": {"styles": ["pace_chaser", "late_surger", "end_closer"], "distances": ["sprint"]},
+          "operation": "floor",
+          "value": 0.7,
+          "reason": "At least one useful activation is common; the simulator misses repeat value."
+        },
+        {
+          "match": {"styles": ["pace_chaser", "late_surger", "end_closer"], "distances": ["mile"]},
+          "operation": "floor",
+          "value": 0.85,
+          "reason": "Longer race duration increases the opportunity for repeated activations."
+        },
+        {
+          "match": {"styles": ["pace_chaser", "late_surger", "end_closer"], "distances": ["medium"]},
+          "operation": "floor",
+          "value": 1.0,
+          "reason": "Multi-proc potential makes the skill a top inheritance target."
+        },
+        {
+          "match": {"styles": ["pace_chaser", "late_surger", "end_closer"], "distances": ["long"]},
+          "operation": "floor",
+          "value": 1.05,
+          "reason": "Long races maximize repeat-proc potential and pack interaction time."
+        }
+      ]
+    },
+    "groundwork": {
+      "review_priority": "critical",
+      "notes": "The simulator returns a false zero because it does not provide the early skill activation chain required by Groundwork. It is a major Front Runner inheritance target when the build can trigger it.",
+      "rules": [
+        {"match": {"style": "front_runner", "distance": "sprint"}, "operation": "floor", "value": 0.75, "reason": "Important opening acceleration, with a demanding trigger."},
+        {"match": {"style": "front_runner", "distance": "mile"}, "operation": "floor", "value": 0.85, "reason": "Core Front Runner opening acceleration when three early skills are planned."},
+        {"match": {"style": "front_runner", "distance": "medium"}, "operation": "floor", "value": 0.95, "reason": "Commonly build-defining for competitive Front Runner setups."},
+        {"match": {"style": "front_runner", "distance": "long"}, "operation": "floor", "value": 0.95, "reason": "Commonly build-defining for competitive Front Runner setups."}
+      ],
+      "positioning_rules": [
+        {"match": {"style": "front_runner"}, "value": 0.08, "reason": "Early acceleration helps establish and protect the lead beyond its direct simulated time gain."}
+      ]
+    },
+    "dodging_danger": {
+      "review_priority": "high",
+      "notes": "Lane movement and surrounding behavior are disabled/simplified in the batch, producing a false zero. This is a Front Runner positioning tool.",
+      "rules": [
+        {"match": {"style": "front_runner"}, "operation": "floor", "value": 0.58, "reason": "Reliable strategic value when a Front Runner risks being surrounded early."}
+      ],
+      "positioning_rules": [
+        {"match": {"style": "front_runner"}, "value": 0.14, "reason": "Avoiding early enclosure protects the intended race position."}
+      ]
+    },
+    "prudent_positioning": {
+      "review_priority": "high",
+      "notes": "Navigation value is not translated into time gain by the simulator. It is mainly valuable for Front Runner opening consistency.",
+      "rules": [
+        {"match": {"style": "front_runner", "distance": "sprint"}, "operation": "floor", "value": 0.5, "reason": "Short races leave little time to recover from poor early navigation."},
+        {"match": {"style": "front_runner", "distances": ["mile", "medium", "long"]}, "operation": "floor", "value": 0.55, "reason": "Improves opening lane and position consistency for Front Runner."}
+      ],
+      "positioning_rules": [
+        {"match": {"style": "front_runner"}, "value": 0.14, "reason": "Direct strategic positioning value not represented by lengths gained."}
+      ]
+    },
+    "tail_held_high": {
+      "review_priority": "high",
+      "notes": "The batch does not activate enough mid-race skills, causing a false zero. The skill is a useful generic mid-race velocity option when the build has the required activation density.",
+      "rules": [
+        {"match": {"distance": "sprint"}, "operation": "floor", "value": 0.25, "reason": "The trigger is less reliable in a short race."},
+        {"match": {"distance": "mile"}, "operation": "floor", "value": 0.58, "reason": "Strong when paired with a normal mid-race skill package."},
+        {"match": {"distance": "medium"}, "operation": "floor", "value": 0.65, "reason": "Longer mid-race gives both trigger reliability and useful duration."},
+        {"match": {"distance": "long"}, "operation": "floor", "value": 0.7, "reason": "High trigger opportunity in skill-dense long builds."}
+      ]
+    },
+    "updrafters": {
+      "review_priority": "high",
+      "notes": "Umalator currently gives a false zero. The skill is a viable Mile late-race passing/acceleration option for runners positioned toward the back.",
+      "rules": [
+        {"match": {"distance": "mile", "style": "pace_chaser"}, "operation": "floor", "value": 0.2, "reason": "Can trigger, but Pace Chaser is not reliably in the back half."},
+        {"match": {"distance": "mile", "style": "late_surger"}, "operation": "floor", "value": 0.65, "reason": "Good fit for the expected late-race position."},
+        {"match": {"distance": "mile", "style": "end_closer"}, "operation": "floor", "value": 0.75, "reason": "Very good fit for the expected late-race position."}
+      ]
+    },
+    "leader_s_pride": {
+      "review_priority": "medium",
+      "notes": "The simulator captures some velocity gain but not the full value of winning early Front Runner position contests.",
+      "positioning_rules": [
+        {"match": {"style": "front_runner"}, "value": 0.12, "reason": "Helps win or defend early/mid-race Front Runner positioning."
+        }
+      ]
+    },
+    "ramp_up": {
+      "review_priority": "medium",
+      "notes": "Passing mid-race can improve access to the desired acceleration position beyond the direct velocity gain.",
+      "positioning_rules": [
+        {"match": {"style": "front_runner"}, "value": 0.04, "reason": "Limited passing opportunities but occasional position-contest value."},
+        {"match": {"styles": ["pace_chaser", "late_surger", "end_closer"]}, "value": 0.08, "reason": "Passing mid-race contributes to reaching the intended late-race position."}
+      ]
+    },
+    "sprint_corners": {
+      "review_priority": "medium",
+      "notes": "Corner velocity can be strategically important for entering the acceleration zone in the correct position, especially in Sprint.",
+      "positioning_rules": [
+        {"match": {"distance": "sprint"}, "value": 0.12, "reason": "Sprint position is difficult to recover after the final corner."}
+      ]
+    },
+    "mile_corners": {
+      "review_priority": "medium",
+      "notes": "Adds a small position-before-acceleration component not fully captured by raw time gain.",
+      "positioning_rules": [
+        {"match": {"distance": "mile"}, "value": 0.1, "reason": "Useful for securing the desired position before the decisive phase."}
+      ]
+    },
+    "medium_corners": {
+      "review_priority": "medium",
+      "notes": "Adds a small position-before-acceleration component not fully captured by raw time gain.",
+      "positioning_rules": [
+        {"match": {"distance": "medium"}, "value": 0.08, "reason": "Useful for securing the desired position before the decisive phase."}
+      ]
+    },
+    "long_corners": {
+      "review_priority": "medium",
+      "notes": "Adds a small position-before-acceleration component; lower than shorter distances because recovery opportunities are greater.",
+      "positioning_rules": [
+        {"match": {"distance": "long"}, "value": 0.06, "reason": "Useful positioning support, but less decisive globally than in shorter races."}
+      ]
+    },
+    "front_runner_corners": {
+      "review_priority": "medium",
+      "notes": "Style corner skill receives the same small strategic positioning component as distance corner skills.",
+      "positioning_rules": [
+        {"match": {"style": "front_runner", "distance": "sprint"}, "value": 0.12, "reason": "Important Sprint position retention."},
+        {"match": {"style": "front_runner", "distance": "mile"}, "value": 0.1, "reason": "Helps retain the desired position before acceleration."},
+        {"match": {"style": "front_runner", "distance": "medium"}, "value": 0.08, "reason": "Helps retain the desired position before acceleration."},
+        {"match": {"style": "front_runner", "distance": "long"}, "value": 0.06, "reason": "Useful but less globally decisive in Long."}
+      ]
+    },
+    "pace_chaser_corners": {
+      "review_priority": "medium",
+      "notes": "Style corner skill receives the same small strategic positioning component as distance corner skills.",
+      "positioning_rules": [
+        {"match": {"style": "pace_chaser", "distance": "sprint"}, "value": 0.12, "reason": "Important Sprint position retention."},
+        {"match": {"style": "pace_chaser", "distance": "mile"}, "value": 0.1, "reason": "Helps secure the desired position before acceleration."},
+        {"match": {"style": "pace_chaser", "distance": "medium"}, "value": 0.08, "reason": "Helps secure the desired position before acceleration."},
+        {"match": {"style": "pace_chaser", "distance": "long"}, "value": 0.06, "reason": "Useful but less globally decisive in Long."}
+      ]
+    },
+    "late_surger_corners": {
+      "review_priority": "medium",
+      "notes": "Style corner skill receives the same small strategic positioning component as distance corner skills.",
+      "positioning_rules": [
+        {"match": {"style": "late_surger", "distance": "sprint"}, "value": 0.12, "reason": "Important Sprint positioning before acceleration."},
+        {"match": {"style": "late_surger", "distance": "mile"}, "value": 0.1, "reason": "Helps reach the desired position before acceleration."},
+        {"match": {"style": "late_surger", "distance": "medium"}, "value": 0.08, "reason": "Helps reach the desired position before acceleration."},
+        {"match": {"style": "late_surger", "distance": "long"}, "value": 0.06, "reason": "Useful but less globally decisive in Long."}
+      ]
+    },
+    "end_closer_corners": {
+      "review_priority": "medium",
+      "notes": "Style corner skill receives the same small strategic positioning component as distance corner skills.",
+      "positioning_rules": [
+        {"match": {"style": "end_closer", "distance": "sprint"}, "value": 0.12, "reason": "Important Sprint positioning before acceleration."},
+        {"match": {"style": "end_closer", "distance": "mile"}, "value": 0.1, "reason": "Helps reach the desired position before acceleration."},
+        {"match": {"style": "end_closer", "distance": "medium"}, "value": 0.08, "reason": "Helps reach the desired position before acceleration."},
+        {"match": {"style": "end_closer", "distance": "long"}, "value": 0.06, "reason": "Useful but less globally decisive in Long."}
+      ]
+    }
+  }
+}

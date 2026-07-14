@@ -1,0 +1,116 @@
+{
+  "metadata": {
+    "schema_version": 1,
+    "purpose": "Optional exact-course overlays. Generic surface/distance/style weights remain the default; these presets only correct known track-timing effects documented in CM9-CM16 guides.",
+    "operations": ["override", "multiplier", "floor", "cap", "bonus"]
+  },
+  "courses": {
+    "cm16_nakayama_1200_turf": {
+      "label": "CM16 — Nakayama Turf 1200 m",
+      "profile": {"surface": "turf", "distance": "sprint"},
+      "race": {"racecourse": "Nakayama", "distance_m": 1200, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm16-guide",
+      "notes": "Position before the acceleration zone is unusually important. Nimble Navigator is intentionally left unchanged outside Front: some over-weighting is acceptable because the skill remains strong.",
+      "skills": {
+        "sprint_corners": {
+          "rules": [{"operation": "bonus", "value": 0.08, "reason": "Guide emphasizes corner velocity for entering the acceleration phase in position."}]
+        },
+        "front_runner_corners": {
+          "rules": [{"match": {"style": "front_runner"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific position retention value."}]
+        },
+        "pace_chaser_corners": {
+          "rules": [{"match": {"style": "pace_chaser"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific pre-acceleration position value."}]
+        },
+        "late_surger_corners": {
+          "rules": [{"match": {"style": "late_surger"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific pre-acceleration position value."}]
+        },
+        "end_closer_corners": {
+          "rules": [{"match": {"style": "end_closer"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific pre-acceleration position value."}]
+        }
+      }
+    },
+    "cm15_hanshin_2200_turf": {
+      "label": "CM15 — Hanshin Turf 2200 m",
+      "profile": {"surface": "turf", "distance": "medium"},
+      "race": {"racecourse": "Hanshin", "distance_m": 2200, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm15-guide",
+      "notes": "Groundwork, Dodging Danger, Prudent Positioning and Uma Stan are handled by the global corrections; no additional track-only rule is required.",
+      "skills": {}
+    },
+    "cm14_tokyo_1600_turf": {
+      "label": "CM14 — Tokyo Turf 1600 m",
+      "profile": {"surface": "turf", "distance": "mile"},
+      "race": {"racecourse": "Tokyo", "distance_m": 1600, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm14-guide",
+      "notes": "Final Push has useful track timing despite a generic false zero. Nimble remains generic because a moderate over-weight is acceptable.",
+      "skills": {
+        "final_push": {
+          "rules": [{"match": {"style": "front_runner"}, "operation": "floor", "value": 0.55, "reason": "Final-corner timing is usable on Tokyo 1600 for Front Runner."}]
+        }
+      }
+    },
+    "cm13_tokyo_2400_turf": {
+      "label": "CM13 — Tokyo Turf 2400 m",
+      "profile": {"surface": "turf", "distance": "medium"},
+      "race": {"racecourse": "Tokyo", "distance_m": 2400, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm13-guide",
+      "notes": "The multiple uphill sections make 1,500,000 CC materially more reliable for Late Surger than on a generic Medium course.",
+      "skills": {
+        "1_500_000_cc": {
+          "rules": [{"match": {"style": "late_surger"}, "operation": "floor", "value": 0.9, "reason": "Tokyo 2400 provides several favorable uphill activation windows."}]
+        }
+      }
+    },
+    "cm12_nakayama_2000_turf": {
+      "label": "CM12 — Nakayama Turf 2000 m",
+      "profile": {"surface": "turf", "distance": "medium"},
+      "race": {"racecourse": "Nakayama", "distance_m": 2000, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm12-guide",
+      "notes": "Generic Medium weights and the global Nimble correction are adequate for this prototype.",
+      "skills": {}
+    },
+    "cm11_hanshin_3200_turf": {
+      "label": "CM11 — Hanshin Turf 3200 m",
+      "profile": {"surface": "turf", "distance": "long"},
+      "race": {"racecourse": "Hanshin", "distance_m": 3200, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm11-guide",
+      "notes": "The generic batch uses a shorter Long representative course and underestimates Nimble's available late-race blocking window.",
+      "skills": {
+        "nimble_navigator": {
+          "rules": [
+            {"match": {"style": "pace_chaser"}, "operation": "floor", "value": 0.75, "reason": "Long 3200 m race gives more late-race traffic opportunities."},
+            {"match": {"style": "late_surger"}, "operation": "floor", "value": 0.85, "reason": "Long 3200 m race gives more late-race traffic opportunities."},
+            {"match": {"style": "end_closer"}, "operation": "floor", "value": 0.9, "reason": "Long 3200 m race gives more late-race traffic opportunities."}
+          ]
+        }
+      }
+    },
+    "cm10_tokyo_1600_dirt": {
+      "label": "CM10 — Tokyo Dirt 1600 m",
+      "profile": {"surface": "dirt", "distance": "mile"},
+      "race": {"racecourse": "Tokyo", "distance_m": 1600, "surface": "dirt"},
+      "source": "https://uma.guide/guides/cm10-guide",
+      "notes": "The uphill overlaps a useful acceleration window, making Highlander much better than its generic representative-course score.",
+      "skills": {
+        "highlander": {
+          "rules": [{"operation": "floor", "value": 0.7, "reason": "Tokyo Dirt 1600 uphill timing makes the skill a viable acceleration option."}]
+        }
+      }
+    },
+    "cm9_chukyo_1200_turf": {
+      "label": "CM9 — Chukyo Turf 1200 m",
+      "profile": {"surface": "turf", "distance": "sprint"},
+      "race": {"racecourse": "Chukyo", "distance_m": 1200, "surface": "turf"},
+      "source": "https://uma.guide/guides/cm9-guide",
+      "notes": "Chukyo's uphill timing makes Highlander valuable; corners also receive an extra course-specific positioning bonus.",
+      "skills": {
+        "highlander": {
+          "rules": [{"operation": "floor", "value": 0.8, "reason": "The only uphill lies in a favorable acceleration window."}]
+        },
+        "sprint_corners": {
+          "rules": [{"operation": "bonus", "value": 0.08, "reason": "Guide emphasizes corner velocity and carryover into the decisive section."}]
+        }
+      }
+    }
+  }
+}

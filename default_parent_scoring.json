@@ -1,5 +1,5 @@
 {
-  "schema_version": 9,
+  "schema_version": 10,
   "description": "Manual-priority scoring. Direct white-skill value is driven first by the strategic priority of the skill; white Spark stars use a moderate inheritance-comfort curve (1★=1.00, 2★=1.35, 3★=1.80) instead of a linear quality scale. Online GP-pair affinity estimates the future parent branch with the Ace, stopping at the selected grandparents; deeper ancestors are used only for parent-generation diagnostics and white-gene support.",
   "mode_weights": {
     "parent_final": {
@@ -424,5 +424,23 @@
     "1": 1.0,
     "2": 1.35,
     "3": 1.8
+  },
+  "transfer_helper": {
+    "description": "Distribution-aware local-veteran cleanup analysis. Utility combines absolute score, proximity to the context leader, and a small percentile component. Keep requires elite utility or repeated competitive utility across multiple contexts and course profiles.",
+    "competitive_score_floor": 67.5,
+    "dominance_tolerance": 0.75,
+    "dominance_mean_margin": 1.0,
+    "include_course_presets": true,
+    "upcoming_cm_limit": 5,
+    "include_team_trials": true,
+    "include_generic_profiles": false,
+    "minimum_competitive_contexts": 3,
+    "minimum_distinct_profiles": 2,
+    "competitive_utility_floor": 0.82,
+    "elite_utility_floor": 0.92,
+    "minimum_absolute_floor_ratio": 0.8,
+    "utility_absolute_weight": 0.5,
+    "utility_leader_weight": 0.4,
+    "utility_percentile_weight": 0.1
   }
 }

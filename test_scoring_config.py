@@ -52,6 +52,17 @@ class ScoringConfigTests(unittest.TestCase):
             reloaded = read_json_object(effective_path)
         self.assertEqual(reloaded, current)
 
+    def test_transfer_helper_scope_is_validated(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["upcoming_cm_limit"] = 2.5
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["include_team_trials"] = "yes"
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
     def test_negative_weight_is_rejected(self) -> None:
         default = read_json_object(DEFAULT_SCORING)
         invalid = deep_merge(default, {"pink_dimension_weights": {"distance": -1}})

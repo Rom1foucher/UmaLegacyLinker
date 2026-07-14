@@ -22,6 +22,10 @@ from skill_catalog import generate_skill_catalogs
 from simulator_weights import generate_simulator_weights
 from manual_weights import generate_manual_skill_weights
 from parent_optimizer import OptimizerError, load_ace_options, load_track_options, optimize_parents
+from transfer_helper import (
+    TransferHelperError,
+    analyze_transfer_candidates,
+)
 from scoring_config import (
     ScoringConfigError,
     build_overrides,
@@ -35,6 +39,13 @@ from scoring_config import (
     validate_scoring_config,
     validate_skill_priorities_config,
     write_json_object,
+)
+from course_presets import (
+    course_preset_conditions,
+    course_preset_label,
+    load_course_preset_payload,
+    ordered_course_presets,
+    resolve_course_overrides_path,
 )
 from i18n import (
     LANGUAGE_LABELS,
@@ -200,9 +211,11 @@ class Application:
         )
         self.batch_var = tk.StringVar(value=config.get("umalator_batch_path", ""))
         default_course_overrides = app_base_dir() / "default_course_overrides.json"
+        resolved_course_overrides = resolve_course_overrides_path(
+            config.get("course_overrides_path"), default_course_overrides
+        )
         self.course_overrides_var = tk.StringVar(
-            value=config.get("course_overrides_path")
-            or (str(default_course_overrides) if default_course_overrides.is_file() else "")
+            value=str(resolved_course_overrides) if resolved_course_overrides else ""
         )
         self.output_var = tk.StringVar(
             value=config.get("output_dir", str(default_output))
@@ -228,6 +241,7 @@ class Application:
         self.weather_var = tk.StringVar(value=self._localise_choice(WEATHER_OPTIONS, config.get("optimizer_weather", UNSPECIFIED)))
         self.ground_var = tk.StringVar(value=self._localise_choice(GROUND_OPTIONS, config.get("optimizer_ground", UNSPECIFIED)))
         self.course_var = tk.StringVar(value=self._tr("Profil générique"))
+        self._saved_course_key = str(config.get("optimizer_course_key", "") or "")
         self.top_n_var = tk.IntVar(value=int(config.get("optimizer_top_n", "30")))
         self._saved_ace_card_id = int(config.get("optimizer_ace_card_id", "0") or 0)
         self._saved_future_parent_card_id = int(config.get("optimizer_future_parent_card_id", "0") or 0)
@@ -278,6 +292,9 @@ class Application:
         self._build_ui()
         self._refresh_scoring_status()
         self._refresh_skill_priorities_status()
+        # Presets are independent from master.mdb and must be visible even when
+        # the game database has not been detected yet.
+        self._refresh_course_options()
         self.root.after(150, lambda: self._refresh_optimizer_options(show_errors=False))
         self.root.after(100, self._drain_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -468,17 +485,20 @@ class Application:
 
         link_tab = ttk.Frame(notebook, padding=12)
         optimizer_tab = ttk.Frame(notebook, padding=12)
+        transfer_tab = ttk.Frame(notebook, padding=12)
         online_tab = ttk.Frame(notebook, padding=12)
         scoring_tab = ttk.Frame(notebook, padding=12)
         legacy_tab = ttk.Frame(notebook, padding=12)
         notebook.add(link_tab, text="Liaison & catalogue")
         notebook.add(optimizer_tab, text="Optimisation de lignée")
+        notebook.add(transfer_tab, text="Transfer Helper")
         notebook.add(online_tab, text="uma.moe")
         notebook.add(legacy_tab, text="Outils legacy")
         notebook.add(scoring_tab, text="Pondérations")
 
         self._build_link_tab(link_tab)
         self._build_optimizer_tab(optimizer_tab)
+        self._build_transfer_tab(transfer_tab)
         self._build_uma_moe_tab(online_tab)
         self._build_legacy_tab(legacy_tab)
         self._build_scoring_tab(scoring_tab)
@@ -641,7 +661,7 @@ class Application:
 
         row = self._path_row(
             tab, 5, "Overrides de course", self.course_overrides_var, self._browse_course_overrides,
-            "Facultatif — corrections liées au tracé exact ; le fichier fourni contient CM9 à CM16.",
+            "Facultatif — CM16 à CM46, profils Team Trials et archive CM9 à CM15.",
             entry_span=3,
         )
 
@@ -661,13 +681,86 @@ class Application:
             wraplength=720,
         ).grid(row=row, column=3, columnspan=3, sticky="w", padx=(12, 0), pady=(8, 0))
 
-        for combo in (self.surface_combo, self.distance_combo, self.style_combo):
-            combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_course_options())
+        for combo in (self.surface_combo, self.distance_combo):
+            combo.bind("<<ComboboxSelected>>", self._on_profile_changed)
+        self.course_combo.bind("<<ComboboxSelected>>", self._on_course_selected)
 
         self._enable_searchable_combo(self.ace_combo, lambda: self._ace_all_values)
         self._enable_searchable_combo(self.future_parent_combo, lambda: self._ace_all_values)
         self._enable_searchable_combo(self.track_combo, lambda: self._track_all_values)
         self._enable_searchable_combo(self.course_combo, lambda: self._course_all_values)
+
+    def _build_transfer_tab(self, tab: ttk.Frame) -> None:
+        tab.columnconfigure(0, weight=1)
+
+        intro = ttk.LabelFrame(tab, text="Nettoyage conservateur des vétérans", padding=10)
+        intro.grid(row=0, column=0, sticky="ew")
+        intro.columnconfigure(0, weight=1)
+        ttk.Label(
+            intro,
+            text=(
+                "Analyse chaque vétéran local sur les cinq prochaines Champion Meetings et les cinq "
+                "catégories Team Trials, pour les quatre styles, séparément comme parent et comme futur "
+                "grand-parent."
+            ),
+            wraplength=1050,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            intro,
+            text=(
+                "Un transfert n'est marqué comme sûr que si un autre exemplaire de la même carte et de la "
+                "même unique n'est moins bon dans aucune niche globalement viable, y compris pour le support "
+                "G1 en paire."
+            ),
+            style="Hint.TLabel",
+            wraplength=1050,
+        ).grid(row=1, column=0, sticky="w", pady=(5, 0))
+
+        verdicts = ttk.LabelFrame(tab, text="Verdicts", padding=10)
+        verdicts.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        verdicts.columnconfigure(1, weight=1)
+        ttk.Label(verdicts, text="Transfert sûr", width=20).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            verdicts,
+            text="Remplaçant strict de la même carte détecté dans toutes les niches parent et/ou grand-parent réellement viables.",
+        ).grid(row=0, column=1, sticky="w")
+        ttk.Label(verdicts, text="À examiner", width=20).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        ttk.Label(
+            verdicts,
+            text="Aucun rôle compétitif détecté, mais pas de remplacement strict : vérification manuelle requise.",
+        ).grid(row=1, column=1, sticky="w", pady=(5, 0))
+        ttk.Label(verdicts, text="Conserver", width=20).grid(row=2, column=0, sticky="w", pady=(5, 0))
+        ttk.Label(
+            verdicts,
+            text="Au moins une niche parent ou grand-parent reste compétitive, ou l'exemplaire est irremplaçable.",
+        ).grid(row=2, column=1, sticky="w", pady=(5, 0))
+
+        settings = ttk.LabelFrame(tab, text="Paramètres", padding=10)
+        settings.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        settings.columnconfigure(0, weight=1)
+        ttk.Label(
+            settings,
+            text=(
+                "Les seuils de compétitivité et le périmètre (nombre de CM, Team Trials et profils génériques) "
+                "se règlent dans Pondérations → transfer_helper."
+            ),
+            style="Hint.TLabel",
+            wraplength=1050,
+        ).grid(row=0, column=0, sticky="w")
+
+        actions = ttk.Frame(tab)
+        actions.grid(row=3, column=0, sticky="w", pady=(12, 0))
+        self.transfer_helper_button = ttk.Button(
+            actions,
+            text="Analyser les vétérans locaux",
+            command=self._start_transfer_helper,
+        )
+        self.transfer_helper_button.pack(side=tk.LEFT)
+        ttk.Label(
+            actions,
+            text="Aucune suppression automatique : seuls un JSON, un CSV et un résumé sont générés.",
+            style="Hint.TLabel",
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
     def _build_uma_moe_tab(self, tab: ttk.Frame) -> None:
         tab.columnconfigure(0, weight=1)
@@ -1662,6 +1755,7 @@ class Application:
         self.catalog_button.configure(state=state)
         self.simulator_button.configure(state=state)
         self.optimize_button.configure(state=state)
+        self.transfer_helper_button.configure(state=state)
         self.uma_moe_live_button.configure(state=state)
         self.uma_moe_import_button.configure(state=state)
         if not running:
@@ -1709,6 +1803,7 @@ class Application:
                 "optimizer_surface": profile_code("surface", self.surface_var.get()),
                 "optimizer_distance": profile_code("distance", self.distance_var.get()),
                 "optimizer_style": profile_code("style", self.style_var.get()),
+                "optimizer_course_key": str(self._course_display_to_key.get(self.course_var.get()) or ""),
                 "optimizer_top_n": str(self.top_n_var.get()),
                 "uma_moe_base_url": self.uma_moe_base_var.get().strip(),
                 "uma_moe_query": self.uma_moe_query_var.get(),
@@ -1790,33 +1885,97 @@ class Application:
                 self._show_error(exc)
 
     def _refresh_course_options(self) -> None:
-        current_key = self._course_display_to_key.get(self.course_var.get())
+        current_key = self._course_display_to_key.get(self.course_var.get()) or self._saved_course_key or None
         generic_profile = str(self._tr("Profil générique"))
         self._course_display_to_key = {generic_profile: None}
         self._course_definitions = {}
-        overrides_text = self.course_overrides_var.get().strip()
-        if overrides_text:
-            path = Path(overrides_text).expanduser()
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else {}
-                for key, course in sorted((payload.get("courses") or {}).items()):
-                    profile = course.get("profile") or {}
-                    self._course_definitions[str(key)] = course
-                    if profile.get("surface") != profile_code("surface", self.surface_var.get()) or profile.get("distance") != profile_code("distance", self.distance_var.get()):
-                        continue
-                    label = str(course.get("label") or key)
-                    display = f"{label} [{key}]"
-                    self._course_display_to_key[display] = str(key)
-            except (OSError, json.JSONDecodeError):
-                pass
+
+        bundled = app_base_dir() / "default_course_overrides.json"
+        resolved_path = resolve_course_overrides_path(self.course_overrides_var.get().strip(), bundled)
+        if resolved_path is not None and self.course_overrides_var.get().strip() != str(resolved_path):
+            # Heal stale absolute paths saved by earlier versions.
+            self.course_overrides_var.set(str(resolved_path))
+        payload = load_course_preset_payload(resolved_path)
+        for key, course in ordered_course_presets(payload):
+            self._course_definitions[key] = course
+            display = course_preset_label(key, course, self.language_code)
+            if display in self._course_display_to_key:
+                display = f"{display} [{key}]"
+            self._course_display_to_key[display] = key
+
         values = list(self._course_display_to_key)
         self._course_all_values = values
-        self.course_combo.configure(values=values)
-        matching_display = next((display for display, key in self._course_display_to_key.items() if key == current_key), None)
+        if hasattr(self, "course_combo"):
+            self.course_combo.configure(values=values)
+        matching_display = next(
+            (display for display, key in self._course_display_to_key.items() if key == current_key),
+            None,
+        )
         self.course_var.set(matching_display or generic_profile)
+        self._saved_course_key = str(current_key or "") if matching_display else ""
+
+    def _on_profile_changed(self, _event=None) -> None:
+        # A manual surface/distance change invalidates an exact preset. Keeping
+        # it selected would create a profile mismatch at calculation time.
+        self._saved_course_key = ""
+        self.course_var.set(str(self._tr("Profil générique")))
+        self._refresh_course_options()
+
+    def _set_choice_from_canonical_value(
+        self, options: dict[str, object], variable: tk.StringVar, value: object | None
+    ) -> None:
+        source = UNSPECIFIED
+        if value is not None:
+            for candidate, canonical in options.items():
+                if canonical == value:
+                    source = candidate
+                    break
+                if isinstance(canonical, list) and isinstance(value, list):
+                    if {int(item) for item in canonical} == {int(item) for item in value}:
+                        source = candidate
+                        break
+        variable.set(str(self._tr(source)))
+
+    def _on_course_selected(self, _event=None) -> None:
+        course_key = self._course_display_to_key.get(self.course_var.get())
+        self._saved_course_key = str(course_key or "")
+        if not course_key:
+            return
+        course = self._course_definitions.get(course_key) or {}
+        profile = course.get("profile") or {}
+        surface = str(profile.get("surface") or "")
+        distance = str(profile.get("distance") or "")
+        if surface:
+            self.surface_var.set(profile_label("surface", surface, self.language_code))
+        if distance:
+            self.distance_var.set(profile_label("distance", distance, self.language_code))
+
+        conditions = course_preset_conditions(course)
+        self._set_choice_from_canonical_value(ROTATION_OPTIONS, self.rotation_var, conditions.get("rotation"))
+        self._set_choice_from_canonical_value(SEASON_OPTIONS, self.season_var, conditions.get("season"))
+        self._set_choice_from_canonical_value(WEATHER_OPTIONS, self.weather_var, conditions.get("weather"))
+        self._set_choice_from_canonical_value(GROUND_OPTIONS, self.ground_var, conditions.get("ground_condition"))
+
+        racecourse = str(((course.get("race") or {}).get("racecourse")) or "").strip().lower()
+        unspecified = str(self._tr(UNSPECIFIED))
+        selected_track = unspecified
+        if racecourse and racecourse not in {"variable", "unknown racetrack"}:
+            for display in self._track_display_to_id:
+                normalized = display.strip().lower()
+                if normalized == racecourse or normalized.startswith(racecourse) or racecourse.startswith(normalized):
+                    selected_track = display
+                    break
+        self.track_var.set(selected_track)
 
     def _selected_course_conditions(self) -> dict[str, object]:
         conditions: dict[str, object] = {}
+        course_key = self._course_display_to_key.get(self.course_var.get())
+        if course_key:
+            course = self._course_definitions.get(course_key) or {}
+            conditions.update(course_preset_conditions(course))
+
+        # Explicit controls override preset defaults, allowing quick what-if
+        # adjustments without editing the JSON file.
         track_id = self._track_display_to_id.get(self.track_var.get())
         if track_id is not None:
             conditions["track_id"] = int(track_id)
@@ -1883,6 +2042,45 @@ class Application:
                 self._course_display_to_key.get(self.course_var.get()),
                 course_conditions,
                 top_n,
+            ),
+            daemon=True,
+        ).start()
+
+    def _start_transfer_helper(self) -> None:
+        if self.running:
+            return
+        try:
+            master, output = self._validate_common()
+            data_json = Path(self.json_var.get().strip()).expanduser()
+            if not data_json.is_file():
+                raise TransferHelperError("Sélectionne un data.json valide.")
+            course_overrides_text = self.course_overrides_var.get().strip()
+            course_overrides = (
+                Path(course_overrides_text).expanduser()
+                if course_overrides_text
+                else None
+            )
+            if course_overrides is not None and not course_overrides.is_file():
+                raise TransferHelperError("Le fichier d'overrides de course est invalide.")
+            scoring_config = self._active_scoring_config_path(output)
+            skill_priorities = self._active_skill_priorities_path(output)
+        except (LinkerError, TransferHelperError, ScoringConfigError, ValueError) as exc:
+            self._show_error(exc)
+            return
+        self._save_current_config()
+        self._clear_log()
+        self._set_running(True)
+        self._set_status("Préparation du Transfer Helper…")
+        self.progress_var.set(5)
+        threading.Thread(
+            target=self._worker_transfer_helper,
+            args=(
+                master,
+                data_json,
+                output,
+                course_overrides,
+                scoring_config,
+                skill_priorities,
             ),
             daemon=True,
         ).start()
@@ -2231,6 +2429,44 @@ class Application:
         except Exception as exc:
             self.queue.put(("error", (str(exc), traceback.format_exc())))
 
+    def _worker_transfer_helper(
+        self,
+        master: Path,
+        data_json: Path,
+        output: Path,
+        course_overrides: Path | None,
+        scoring_config: Path,
+        skill_priorities: Path,
+    ) -> None:
+        try:
+            self._enqueue_log(f"Profil de pondération utilisé : {scoring_config}")
+            self._enqueue_log(f"Priorités white skills utilisées : {skill_priorities}")
+            self.queue.put(("progress", (10, "Liaison des vétérans avec le MDB courant…")))
+            linked = link_veterans(master, data_json, output, self._enqueue_log)
+            self.queue.put(("progress", (38, "Génération des pondérations manuelles des white skills…")))
+            manual_weights = generate_manual_skill_weights(
+                linked.skills_catalog_path,
+                skill_priorities,
+                output,
+                course_overrides_path=course_overrides,
+                logger=self._enqueue_log,
+            )
+            self.queue.put(("progress", (58, "Analyse de tous les rôles et profils…")))
+            result = analyze_transfer_candidates(
+                master,
+                linked.json_path,
+                manual_weights.weights_path,
+                linked.race_factor_skills_path,
+                linked.skills_catalog_path,
+                output,
+                course_weights_path=manual_weights.course_weights_path,
+                scoring_config_path=scoring_config,
+                logger=self._enqueue_log,
+            )
+            self.queue.put(("transfer_helper_done", result))
+        except Exception as exc:
+            self.queue.put(("error", (str(exc), traceback.format_exc())))
+
     def _worker_uma_moe(
         self,
         master: Path,
@@ -2397,6 +2633,255 @@ class Application:
             self.queue.put(("uma_moe_done", result))
         except Exception as exc:
             self.queue.put(("error", (str(exc), traceback.format_exc())))
+
+    def _show_transfer_helper_results(self, result: object) -> None:
+        window = tk.Toplevel(self.root)
+        window.title("Transfer Helper — résultats")
+        window.geometry("1500x900")
+        window.minsize(1080, 680)
+
+        header = ttk.Frame(window, padding=10)
+        header.pack(fill=tk.X)
+        ttk.Label(
+            header,
+            text=(
+                f"Transfert sûr : {result.safe_transfer_count}  |  "
+                f"À examiner : {result.review_count}  |  "
+                f"Probablement conserver : {result.likely_keep_count}  |  "
+                f"Conserver : {result.keep_count}"
+            ),
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            header,
+            text=(
+                "Le verdict « transfert sûr » exige un remplaçant de la même carte/unique, "
+                "non inférieur dans chaque niche globalement viable. Les contextes où toutes "
+                "les copies sont surclassées par le pool global sont ignorés."
+            ),
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(3, 0))
+
+        body = ttk.Panedwindow(window, orient=tk.VERTICAL)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+        table_frame = ttk.Frame(body)
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
+        columns = (
+            "status",
+            "veteran",
+            "id",
+            "rank",
+            "game_score",
+            "copies",
+            "parent",
+            "parent_rank",
+            "gp",
+            "gp_rank",
+            "replacement",
+            "lead",
+            "refs",
+        )
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "status": "Verdict",
+            "veteran": "Vétéran",
+            "id": "ID",
+            "rank": "Rang jeu",
+            "game_score": "Score jeu",
+            "copies": "Copies",
+            "parent": "Meilleur parent",
+            "parent_rank": "Meilleur rang parent",
+            "gp": "Meilleur GP",
+            "gp_rank": "Meilleur rang GP",
+            "replacement": "Remplaçant",
+            "lead": "Avance moy.",
+            "refs": "Référencé par",
+        }
+        widths = {
+            "status": 120,
+            "veteran": 270,
+            "id": 90,
+            "rank": 80,
+            "game_score": 95,
+            "copies": 70,
+            "parent": 105,
+            "parent_rank": 120,
+            "gp": 105,
+            "gp_rank": 110,
+            "replacement": 270,
+            "lead": 90,
+            "refs": 90,
+        }
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(
+                column,
+                width=widths[column],
+                anchor="w" if column in {"status", "veteran", "replacement"} else "center",
+            )
+        vsb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
+        hsb = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        body.add(table_frame, weight=3)
+
+        detail = scrolledtext.ScrolledText(
+            body,
+            wrap=tk.WORD,
+            font=("Consolas", 10),
+            height=16,
+            state=tk.DISABLED,
+        )
+        body.add(detail, weight=2)
+
+        status_labels = {
+            "safe_transfer": "Transfert sûr",
+            "review": "À examiner",
+            "likely_keep": "Probablement conserver",
+            "keep": "Conserver",
+        }
+        row_map: dict[str, dict[str, object]] = {}
+        for index, record in enumerate(result.records):
+            dominated = record.get("dominated_by") or {}
+            iid = tree.insert(
+                "",
+                tk.END,
+                values=(
+                    self._tr(status_labels.get(record.get("status"), record.get("status"))),
+                    record.get("card_name") or record.get("uma_name"),
+                    record.get("trained_chara_id"),
+                    record.get("rank") if record.get("rank") is not None else "—",
+                    self._format_rank_score(record.get("rank_score")) or "—",
+                    record.get("same_card_copy_count"),
+                    f"{float(record.get('best_parent_score') or 0):.1f}",
+                    f"top {float(record.get('best_parent_percentile') or 100):.1f}%",
+                    f"{float(record.get('best_grandparent_score') or 0):.1f}",
+                    f"top {float(record.get('best_grandparent_percentile') or 100):.1f}%",
+                    dominated.get("card_name") or "—",
+                    (
+                        f"+{float(dominated.get('mean_score_lead')):.2f}"
+                        if dominated.get("mean_score_lead") is not None
+                        else "—"
+                    ),
+                    record.get("referenced_by_local_veterans") or 0,
+                ),
+            )
+            row_map[iid] = record
+
+        def localised_profile_name(profile: dict[str, object]) -> str:
+            context_key = str(profile.get("context_key") or "")
+            parts = context_key.split(":")
+            if len(parts) == 4 and parts[0] == "generic":
+                return (
+                    f"{self._tr('Profil générique')} · "
+                    f"{profile_label('surface', parts[1], self.language_code)} / "
+                    f"{profile_label('distance', parts[2], self.language_code)} / "
+                    f"{profile_label('style', parts[3], self.language_code)}"
+                )
+            if len(parts) >= 3 and parts[0] == "course":
+                raw_label = str(profile.get("profile") or context_key)
+                course_label = raw_label.rsplit(" · ", 1)[0]
+                return f"{course_label} · {profile_label('style', parts[-1], self.language_code)}"
+            return str(profile.get("profile") or context_key)
+
+        def profile_lines(title: str, profiles: list[dict[str, object]]) -> list[str]:
+            lines = [title]
+            if not profiles:
+                lines.append("  —")
+                return lines
+            for profile in profiles[:6]:
+                lines.append(
+                    f"  - {localised_profile_name(profile)}: {float(profile.get('score') or 0):.2f} "
+                    f"(top {float(profile.get('percentile') or 100):.1f}%)"
+                )
+            return lines
+
+        def update_detail(_event=None) -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            record = row_map[selection[0]]
+            dominated = record.get("dominated_by") or {}
+            reason_map = {
+                "strictly_dominated_same_card": (
+                    "Un autre exemplaire de la même carte/unique est au moins aussi bon dans toutes les "
+                    "niches globalement viables, avec une avance moyenne suffisante et sans perte de support "
+                    "G1 en paire. Les contextes où toutes les copies sont globalement surclassées sont ignorés."
+                ),
+                "no_competitive_role_detected": (
+                    "Aucun profil parent ou grand-parent n'atteint les seuils de score ou de classement. "
+                    "Ce verdict reste manuel : aucune copie strictement dominante n'a été trouvée."
+                ),
+                "grandparent_niche": "Faible comme parent, mais au moins une niche de futur grand-parent reste compétitive.",
+                "parent_niche": "Faible comme futur grand-parent, mais au moins une niche de parent reste compétitive.",
+                "competitive_in_multiple_roles": "Le vétéran reste compétitif dans plusieurs rôles ou profils.",
+            }
+            lines = [
+                f"{record.get('card_name')} — {record.get('uma_name')}",
+                f"Veteran ID: {record.get('trained_chara_id')} | Card ID: {record.get('card_id')}",
+                f"Rang en jeu: {record.get('rank') if record.get('rank') is not None else '—'} | "
+                f"Score en jeu: {self._format_rank_score(record.get('rank_score')) or '—'}",
+                f"Stats: {self._format_stats(record.get('stats') or {}) or '—'}",
+                f"Grands-parents: {record.get('grandparent_1') or '—'} / {record.get('grandparent_2') or '—'}",
+                f"Verdict: {status_labels.get(record.get('status'), record.get('status'))}",
+                f"Raison: {reason_map.get(record.get('reason_code'), record.get('reason_code'))}",
+                f"Copies comparables: {record.get('same_card_copy_count')}",
+                f"Référencé comme parent direct par {record.get('referenced_by_local_veterans')} vétéran(s) local(aux).",
+                "",
+                f"Meilleur potentiel parent: {float(record.get('best_parent_score') or 0):.2f} "
+                f"(top {float(record.get('best_parent_percentile') or 100):.2f}%)",
+                f"Meilleur potentiel grand-parent: {float(record.get('best_grandparent_score') or 0):.2f} "
+                f"(top {float(record.get('best_grandparent_percentile') or 100):.2f}%)",
+            ]
+            if dominated:
+                lines.extend(
+                    [
+                        "",
+                        "Remplaçant retenu",
+                        f"  {dominated.get('card_name')} [{dominated.get('trained_chara_id')}]",
+                        f"  Rang/score en jeu: {dominated.get('rank') if dominated.get('rank') is not None else '—'} / "
+                        f"{self._format_rank_score(dominated.get('rank_score')) or '—'}",
+                        f"  Avance moyenne: +{float(dominated.get('mean_score_lead') or 0):.3f}",
+                        f"  Pire écart observé: {float(dominated.get('worst_context_delta') or 0):+.3f}",
+                        f"  Meilleur écart observé: {float(dominated.get('best_context_delta') or 0):+.3f}",
+                        f"  Comparaisons parent viables: {int(dominated.get('viable_parent_comparisons') or 0)}",
+                        f"  Comparaisons GP viables: {int(dominated.get('viable_grandparent_comparisons') or 0)}",
+                    ]
+                )
+            lines.extend([""] + profile_lines("Meilleurs profils parent", record.get("top_parent_profiles") or []))
+            lines.extend([""] + profile_lines("Meilleurs profils grand-parent", record.get("top_grandparent_profiles") or []))
+            lines.extend(
+                [
+                    "",
+                    "Attention: l'outil ne modifie pas data.json et ne supprime rien en jeu. "
+                    "Les entrées « À examiner » ne sont jamais des recommandations automatiques de transfert.",
+                ]
+            )
+            detail.configure(state=tk.NORMAL)
+            detail.delete("1.0", tk.END)
+            detail.insert(tk.END, self._tr("\n".join(lines)))
+            detail.configure(state=tk.DISABLED)
+
+        tree.bind("<<TreeviewSelect>>", update_detail)
+        if row_map:
+            first = next(iter(row_map))
+            tree.selection_set(first)
+            tree.focus(first)
+            update_detail()
+
+        footer = ttk.Frame(window, padding=(10, 0, 10, 10))
+        footer.pack(fill=tk.X)
+        ttk.Button(
+            footer,
+            text="Ouvrir le dossier de sortie",
+            command=lambda: open_path(result.report_json_path.parent),
+        ).pack(side=tk.LEFT)
+        ttk.Button(footer, text="Fermer", command=window.destroy).pack(side=tk.RIGHT)
+        self._apply_translations(window)
 
     def _show_uma_moe_results(self, result: object) -> None:
         window = tk.Toplevel(self.root)
@@ -3081,6 +3566,20 @@ class Application:
                     self._append_log(f"Futurs grands-parents : {result.future_grandparents_csv_path}")
                     self._set_running(False)
                     self._show_optimizer_results(result)
+                elif kind == "transfer_helper_done":
+                    result = payload
+                    self.progress_var.set(100)
+                    self._set_status(
+                        f"Transfer Helper terminé — {result.safe_transfer_count} transfert(s) sûr(s), "
+                        f"{result.review_count} à examiner, "
+                        f"{result.likely_keep_count} probablement à conserver."
+                    )
+                    self.last_output_dir = result.report_json_path.parent
+                    self._append_log(f"Rapport Transfer Helper : {result.report_json_path}")
+                    self._append_log(f"CSV Transfer Helper : {result.candidates_csv_path}")
+                    self._append_log(f"Résumé Transfer Helper : {result.summary_txt_path}")
+                    self._set_running(False)
+                    self._show_transfer_helper_results(result)
                 elif kind == "uma_moe_done":
                     result = payload
                     self.progress_var.set(100)
@@ -3117,6 +3616,67 @@ class Application:
 
 def run_cli(args: argparse.Namespace) -> int:
     try:
+        if args.transfer_helper:
+            if not args.json:
+                raise TransferHelperError("--transfer-helper requiert --json.")
+            linked = link_veterans(
+                args.master,
+                args.json,
+                args.output,
+                logger=lambda message: print(message, flush=True),
+            )
+            default_course_overrides = app_base_dir() / "default_course_overrides.json"
+            course_overrides = args.course_overrides or (
+                str(default_course_overrides) if default_course_overrides.is_file() else None
+            )
+            default_priorities = read_json_object(default_skill_priorities_path())
+            effective_priorities = default_priorities
+            if args.skill_priorities:
+                custom_priorities = read_json_object(args.skill_priorities)
+                effective_priorities = deep_merge(default_priorities, custom_priorities)
+            validate_skill_priorities_config(effective_priorities)
+            priorities = write_json_object(
+                Path(args.output).expanduser().resolve() / "active_skill_priorities.json",
+                effective_priorities,
+            )
+            manual_weights = generate_manual_skill_weights(
+                linked.skills_catalog_path,
+                priorities,
+                args.output,
+                course_overrides_path=course_overrides,
+                logger=lambda message: print(message, flush=True),
+            )
+            default_payload = read_json_object(default_scoring_path())
+            effective_payload = default_payload
+            if args.scoring_config:
+                custom_payload = read_json_object(args.scoring_config)
+                effective_payload = deep_merge(default_payload, custom_payload)
+            validate_scoring_config(effective_payload)
+            scoring = write_json_object(
+                Path(args.output).expanduser().resolve() / "active_parent_scoring.json",
+                effective_payload,
+            )
+            result = analyze_transfer_candidates(
+                args.master,
+                linked.json_path,
+                manual_weights.weights_path,
+                linked.race_factor_skills_path,
+                linked.skills_catalog_path,
+                args.output,
+                course_weights_path=manual_weights.course_weights_path,
+                scoring_config_path=scoring,
+                logger=lambda message: print(message, flush=True),
+            )
+            print(f"Rapport : {result.report_json_path}")
+            print(f"CSV : {result.candidates_csv_path}")
+            print(f"Résumé : {result.summary_txt_path}")
+            print(
+                f"Verdicts : {result.safe_transfer_count} transfert(s) sûr(s), "
+                f"{result.review_count} à examiner, "
+                f"{result.likely_keep_count} probablement à conserver, "
+                f"{result.keep_count} à conserver."
+            )
+            return 0
         if args.rank_parents:
             if not args.json or not args.ace_card_id or not args.future_parent_card_id:
                 raise OptimizerError("--rank-parents requiert --json, --ace-card-id et --future-parent-card-id.")
@@ -3227,7 +3787,7 @@ def run_cli(args: argparse.Namespace) -> int:
             args.output,
             logger=lambda message: print(message, flush=True),
         )
-    except (LinkerError, OptimizerError, OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:  # type: ignore[name-defined]
+    except (LinkerError, OptimizerError, TransferHelperError, OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:  # type: ignore[name-defined]
         print(f"Erreur : {exc}", file=sys.stderr)
         return 1
     print(f"JSON : {result.json_path}")
@@ -3260,6 +3820,11 @@ def parse_args() -> argparse.Namespace:
         help="Fichier JSON facultatif d'overrides liés au tracé exact.",
     )
     parser.add_argument("--rank-parents", action="store_true", help="Lance le classement complet des lignées.")
+    parser.add_argument(
+        "--transfer-helper",
+        action="store_true",
+        help="Analyse les vétérans locaux et identifie les doublons strictement dominés.",
+    )
     parser.add_argument("--ace-card-id", type=int, help="Card ID de l'Ace cible.")
     parser.add_argument("--future-parent-card-id", type=int, help="Card ID du parent à produire pour le calcul exact des futurs grands-parents.")
     parser.add_argument("--track-id", type=int, help="Hippodrome cible (track_id MDB).")
@@ -3289,7 +3854,7 @@ def main() -> int:
         if not args.master:
             print("--master est requis en mode CLI.", file=sys.stderr)
             return 2
-        if not args.catalog_only and not args.umalator_batch and not args.rank_parents and not args.json:
+        if not args.catalog_only and not args.umalator_batch and not args.rank_parents and not args.transfer_helper and not args.json:
             print(
                 "--json est requis sauf avec --catalog-only ou --umalator-batch.",
                 file=sys.stderr,

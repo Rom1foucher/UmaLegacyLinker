@@ -1,5 +1,46 @@
 # Changelog
 
+## V28 — focused Transfer Helper scope
+
+- Transfer Helper now evaluates only the first five upcoming Champion Meetings and the five Team Trials categories by default.
+- With the current bundled catalogue, the CM scope is CM16 through CM20; CM21+ and archived CM9-CM15 remain available for manual lineage optimisation only.
+- Generic Turf/Dirt × distance profiles are no longer included in cleanup verdicts by default.
+- The ten selected race profiles are still evaluated across all four running styles, for a total of 40 parent/grandparent contexts.
+- Added configurable `upcoming_cm_limit`, `include_team_trials`, and `include_generic_profiles` settings under `transfer_helper`.
+- Transfer reports now record the exact course keys and context count used by the audit.
+
+## V27 — expanded course presets and Team Trials profiles
+
+- Fixed the preset selector remaining on **Generic profile** when `master.mdb` was unavailable or when the saved preset path pointed to an older installation.
+- Course presets now load independently from the game database and stale bundled paths automatically fall back to the current `default_course_overrides.json`.
+- The selector now exposes every preset instead of filtering the list to the current surface/distance. Selecting a preset automatically applies its surface, distance, racecourse when known, direction, season, weather and ground condition.
+- Added CM16 through CM46 from the supplied schedule, while retaining CM9-CM15 as an archive. Future CMs are displayed first.
+- Added generic Team Trials presets for Turf Sprint, Turf Mile, Turf Medium, Turf Long and Dirt Mile.
+- Course conditions and category metadata are preserved in generated `course_skill_weights.json`; using a course key from the CLI now also applies its bundled static conditions.
+- Transfer Helper includes upcoming CMs and Team Trials with their static conditions, but excludes archived CM9-CM15 from automatic cleanup weighting.
+
+## V26 — global niche viability for Transfer Helper
+
+- Same-card comparisons now use the complete local veteran pool to determine whether a parent or grandparent context is genuinely viable.
+- A context where every copy of a card is globally outclassed is ignored for dominance; being the “least bad” copy in an unsuitable niche no longer forces a keep.
+- Parent and grandparent roles are filtered independently. A replacement can therefore be proven from only the viable role when the card has no realistic use in the other one.
+- Transfer reports now expose the number of viable parent and grandparent comparisons supporting each safe-transfer verdict.
+- Updated bilingual interface explanations, report safety notes and README documentation.
+
+## V25 — Transfer Helper
+
+- Nouvel onglet **Transfer Helper** pour auditer toute la liste de vétérans locaux avant nettoyage.
+- Évaluation exhaustive des profils génériques Turf/Dirt × Sprint/Mile/Medium/Long × quatre styles, avec ajout facultatif des presets de course.
+- Analyse séparée des rôles **parent** et **futur grand-parent** : une mauvaise branche parent peut donc rester protégée grâce à une excellente niche GP.
+- Le rôle parent utilise la branche actuelle complète et son affinité face aux Ace disponibles ; le rôle GP utilise les factors propres du candidat et sa lignée actuelle pour le support de génération des whites.
+- Comparaison de remplacement volontairement limitée à la même card et à la même unique héritée ; les costumes alternatifs ne sont jamais considérés comme interchangeables.
+- Verdicts distincts : **transfert sûr**, **à examiner**, **conserver**. Seul le premier exige un remplaçant unique non inférieur dans tous les contextes testés et sans perte de support G1 en paire.
+- Aucun changement automatique de `data.json` et aucune suppression en jeu.
+- Nouveaux exports `transfer_helper_report.json`, `transfer_helper_candidates.csv` et `transfer_helper_summary.txt`.
+- Seuils configurables dans `default_parent_scoring.json > transfer_helper` et dans l’éditeur de pondérations.
+- Nouveau mode CLI `--transfer-helper`.
+- Interface et fenêtre de résultats disponibles en français et en anglais.
+
 ## V24 — interface bilingue français / anglais
 
 - Ajout d’un sélecteur **Français / English** dans l’en-tête, avec changement immédiat sans redémarrage.
@@ -136,3 +177,35 @@
 - Corrections des faux zéros (Groundwork, Dodging Danger, Prudent Positioning, Tail Held High, Updrafters) ; Nimble Navigator plafonnée en Front Runner ; Uma Stan relevée hors Front.
 - Sous-score de positionnement indépendant ; presets de course exacts CM9–CM16 dans `default_course_overrides.json` ; sortie `course_skill_weights.json`.
 - JSON distinguant `auto_weight`, `performance_weight`, `positioning_bonus`, `weight`.
+
+## V28.1 — Transfer Helper condition hotfix
+
+- Fixed a crash when course presets supplied scalar static-condition values (for example `rotation: 1`) to the Transfer Helper.
+- Static condition comparison now accepts scalar and collection values consistently across GUI, CLI and preset-driven analyses.
+- Added regression coverage for scalar preset conditions.
+
+## V29 — Selective Transfer Helper
+
+- Reworked Transfer Helper retention rules to avoid keeping veterans for a single lucky Ace/context combination.
+- Added four verdicts: Safe transfer, Review, Likely keep, and Keep.
+- Keep now requires either an elite global result or repeated competitiveness across multiple contexts and at least two distinct course profiles.
+- Added configurable thresholds: `elite_top_percent`, `minimum_competitive_contexts`, and `minimum_distinct_profiles`.
+- Tightened default competitiveness thresholds and slightly relaxed same-card dominance tolerance.
+- Added parent/grandparent evidence counts to JSON and CSV reports.
+
+## V30 — In-game veteran identification
+
+- Added in-game rank and evaluation score columns to the Transfer Helper results window.
+- Added full stat line and both grandparents to the selected veteran details.
+- Added rank and evaluation score for the recommended replacement.
+- Expanded `transfer_helper_candidates.csv` with rank, evaluation score, five stats, and both grandparents.
+- The JSON report already exposed the veteran identity fields and now also embeds the replacement's in-game identity fields.
+
+## V31 — Distribution-aware Transfer Helper
+
+- Replaced percentile-only Transfer Helper viability with a composite utility score.
+- Utility now combines absolute score, proximity to the best score in the context, and a small percentile component.
+- Added configurable competitive and elite utility thresholds.
+- Added a minimum absolute-score ratio so the least-bad candidate in a weak field is not protected.
+- Parent and grandparent profile exports now include utility, leader score, relative-to-leader score, and score gap to the leader.
+- Percentile remains available for diagnostics but no longer grants competitiveness by itself.

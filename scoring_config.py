@@ -233,6 +233,57 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) <= 0:
             raise ScoringConfigError(f"{'.'.join(path)} doit être strictement positif.")
 
+    transfer = _require_dict(config, ("transfer_helper",))
+    for key in (
+        "competitive_score_floor",
+        "competitive_utility_floor",
+        "elite_utility_floor",
+        "minimum_absolute_floor_ratio",
+        "utility_absolute_weight",
+        "utility_leader_weight",
+        "utility_percentile_weight",
+        "dominance_tolerance",
+        "dominance_mean_margin",
+    ):
+        value = transfer.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ScoringConfigError(f"transfer_helper.{key} doit être numérique.")
+        if not math.isfinite(float(value)) or float(value) < 0:
+            raise ScoringConfigError(
+                f"transfer_helper.{key} doit être un nombre fini positif ou nul."
+            )
+    for key in ("competitive_utility_floor", "elite_utility_floor", "minimum_absolute_floor_ratio", "utility_absolute_weight", "utility_leader_weight", "utility_percentile_weight"):
+        if float(transfer[key]) > 1:
+            raise ScoringConfigError(f"transfer_helper.{key} ne peut pas dépasser 1.")
+    if float(transfer["elite_utility_floor"]) < float(transfer["competitive_utility_floor"]):
+        raise ScoringConfigError("transfer_helper.elite_utility_floor doit être supérieur ou égal au seuil compétitif.")
+    if sum(float(transfer[key]) for key in ("utility_absolute_weight", "utility_leader_weight", "utility_percentile_weight")) <= 0:
+        raise ScoringConfigError("Les poids d'utilité du Transfer Helper ne peuvent pas tous être nuls.")
+    for key in ("minimum_competitive_contexts", "minimum_distinct_profiles"):
+        value = transfer.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ScoringConfigError(
+                f"transfer_helper.{key} doit être un entier strictement positif."
+            )
+    for key in (
+        "include_course_presets",
+        "include_team_trials",
+        "include_generic_profiles",
+    ):
+        if not isinstance(transfer.get(key), bool):
+            raise ScoringConfigError(
+                f"transfer_helper.{key} doit valoir true ou false."
+            )
+    upcoming_cm_limit = transfer.get("upcoming_cm_limit")
+    if (
+        isinstance(upcoming_cm_limit, bool)
+        or not isinstance(upcoming_cm_limit, int)
+        or upcoming_cm_limit < 0
+    ):
+        raise ScoringConfigError(
+            "transfer_helper.upcoming_cm_limit doit être un entier positif ou nul."
+        )
+
 
 def validate_skill_priorities_config(config: dict[str, Any]) -> None:
     if not isinstance(config, dict):

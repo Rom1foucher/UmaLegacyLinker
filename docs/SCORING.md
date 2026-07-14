@@ -1,4 +1,4 @@
-# Modèle de score — état courant (V23)
+# Modèle de score — état courant (V25)
 
 La source de vérité est `default_parent_scoring.json` (pondérations, paliers, courbes) et
 `default_skill_priorities.json` (valeur des white skills par profil). Ce document décrit le
@@ -170,3 +170,49 @@ calculée comme diagnostic, à 4 % du classement.
 
 Les contraintes UQL cochées (Dirt, surface, distance, style, minimum pink) sont strictes :
 envoyées à l'API puis revérifiées localement sur les factors résolus avec le `master.mdb`.
+
+## Transfer Helper
+
+Le Transfer Helper ne produit pas un nouveau score universel. Il réutilise les deux modèles
+existants sur un périmètre volontairement proche des usages à venir :
+
+- les cinq premières Champion Meetings classées comme à venir dans le catalogue ;
+- les cinq catégories génériques Team Trials ;
+- chacun de ces dix profils décliné sur les quatre styles, soit 40 contextes ;
+- toutes les variantes d'Ace distinctes utiles pour l'affinité et le besoin en pinks ;
+- rôle parent avec la branche actuelle complète ;
+- rôle futur grand-parent avec factors propres et support de génération issu de sa lignée.
+
+Les profils génériques `surface × distance × style`, les CM plus lointaines et les CM archivées
+restent utilisables dans l'optimiseur normal, mais ne participent pas aux verdicts de nettoyage
+par défaut.
+
+Le potentiel GP utilise une affinité constante optimiste à 100. Ce choix volontaire évite de
+classer comme inutile un personnage dont la niche de compatibilité ne correspond simplement
+pas à une cible sélectionnée : le classement relatif mesure donc surtout sa valeur intrinsèque
+comme GP.
+
+Un vétéran est marqué **transfert sûr** uniquement si un autre exemplaire du même `card_id` et
+de la même unique héritée :
+
+1. n'est inférieur au candidat dans aucun contexte parent testé, à la tolérance configurée ;
+2. n'est inférieur dans aucun contexte futur GP ;
+3. conserve au moins autant de G1 communes avec chaque partenaire local potentiel ;
+4. dépasse la marge moyenne minimale `dominance_mean_margin`.
+
+Les costumes alternatifs ne sont jamais regroupés. Un verdict **à examiner** signifie seulement
+que le vétéran ne dépasse ni `competitive_score_floor`, ni le top percentile
+`competitive_top_percent` dans aucun des deux rôles. Il ne s'agit pas d'une suppression sûre.
+
+Paramètres disponibles dans `transfer_helper` :
+
+| Paramètre | Défaut | Rôle |
+|---|---:|---|
+| `competitive_top_percent` | 20 | meilleur percentile suffisant pour protéger une niche |
+| `competitive_score_floor` | 65 | score absolu suffisant pour protéger une niche |
+| `dominance_tolerance` | 0,25 | recul maximal accepté dans un contexte lors d'une comparaison |
+| `dominance_mean_margin` | 1,5 | avance moyenne minimale du remplaçant |
+| `include_course_presets` | `true` | active l'utilisation du catalogue de presets |
+| `upcoming_cm_limit` | 5 | nombre de prochaines CM évaluées, dans l'ordre du catalogue |
+| `include_team_trials` | `true` | ajoute les cinq catégories Team Trials |
+| `include_generic_profiles` | `false` | ajoute les 32 profils génériques surface × distance × style |

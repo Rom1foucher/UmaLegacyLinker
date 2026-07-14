@@ -369,19 +369,36 @@ def _lineage_members(veteran: dict[str, Any]) -> list[tuple[dict[str, Any], str,
     return result
 
 
-def _compare_condition(selected_values: set[int], operator: str, expected: int | float) -> bool:
+def _condition_values(selected_values: Any) -> tuple[int | float, ...]:
+    """Normalize GUI, preset and CLI condition values to an iterable.
+
+    Course presets commonly store a single integer while the optimizer's normal
+    path materializes values as sets. Keeping normalization at the comparison
+    boundary makes every caller safe, including Transfer Helper contexts.
+    """
+    if selected_values is None or selected_values == "":
+        return ()
+    if isinstance(selected_values, (list, tuple, set, frozenset)):
+        return tuple(selected_values)
+    return (selected_values,)
+
+
+def _compare_condition(selected_values: Any, operator: str, expected: int | float) -> bool:
+    values = _condition_values(selected_values)
+    if not values:
+        return False
     if operator == "==":
-        return any(value == expected for value in selected_values)
+        return any(value == expected for value in values)
     if operator == "!=":
-        return all(value != expected for value in selected_values)
+        return all(value != expected for value in values)
     if operator == ">=":
-        return all(value >= expected for value in selected_values)
+        return all(value >= expected for value in values)
     if operator == "<=":
-        return all(value <= expected for value in selected_values)
+        return all(value <= expected for value in values)
     if operator == ">":
-        return all(value > expected for value in selected_values)
+        return all(value > expected for value in values)
     if operator == "<":
-        return all(value < expected for value in selected_values)
+        return all(value < expected for value in values)
     return True
 
 
@@ -1002,14 +1019,27 @@ def optimize_parents(
                 values = {int(raw_value)}
             if values:
                 normalized_conditions[str(key)] = values
-        if course_key and course_payload and "track_id" not in normalized_conditions:
+        if course_key and course_payload:
             selected_course = (course_payload.get("courses") or {}).get(course_key) or {}
-            racecourse = str(((selected_course.get("race") or {}).get("racecourse")) or "").strip().lower()
-            if racecourse:
-                for track_name, track_id in resolver.track_name_to_id.items():
-                    if track_name == racecourse or track_name.startswith(racecourse) or racecourse.startswith(track_name):
-                        normalized_conditions["track_id"] = {int(track_id)}
-                        break
+            # A course key is sufficient on its own: static green conditions
+            # bundled with the preset are applied unless explicitly overridden
+            # by GUI/CLI inputs.
+            for key, raw_value in (selected_course.get("conditions") or {}).items():
+                if str(key) in normalized_conditions or raw_value is None or raw_value == "":
+                    continue
+                if isinstance(raw_value, (list, tuple, set)):
+                    values = {int(value) for value in raw_value}
+                else:
+                    values = {int(raw_value)}
+                if values:
+                    normalized_conditions[str(key)] = values
+            if "track_id" not in normalized_conditions:
+                racecourse = str(((selected_course.get("race") or {}).get("racecourse")) or "").strip().lower()
+                if racecourse and racecourse not in {"variable", "unknown racetrack"}:
+                    for track_name, track_id in resolver.track_name_to_id.items():
+                        if track_name == racecourse or track_name.startswith(racecourse) or racecourse.startswith(track_name):
+                            normalized_conditions["track_id"] = {int(track_id)}
+                            break
         course_condition_config = config.get("course_conditions") or {}
         active_green_floor = float(course_condition_config.get("active_green_floor", 0.12))
         green_floors = {

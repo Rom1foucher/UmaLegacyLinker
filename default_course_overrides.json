@@ -1,116 +1,1429 @@
 {
   "metadata": {
-    "schema_version": 1,
-    "purpose": "Optional exact-course overlays. Generic surface/distance/style weights remain the default; these presets only correct known track-timing effects documented in CM9-CM16 guides.",
-    "operations": ["override", "multiplier", "floor", "cap", "bonus"]
+    "schema_version": 2,
+    "purpose": "Selectable race profiles. CM9-CM16 retain documented exact-course skill corrections; CM17-CM46 provide exact static race conditions; Team Trials entries provide generic distance profiles.",
+    "operations": [
+      "override",
+      "multiplier",
+      "floor",
+      "cap",
+      "bonus"
+    ],
+    "display_order": [
+      "CM16-CM46 (next Global Champion Meetings)",
+      "Team Trials generic profiles",
+      "CM9-CM15 archive"
+    ]
   },
   "courses": {
     "cm16_nakayama_1200_turf": {
-      "label": "CM16 — Nakayama Turf 1200 m",
-      "profile": {"surface": "turf", "distance": "sprint"},
-      "race": {"racecourse": "Nakayama", "distance_m": 1200, "surface": "turf"},
+      "label": "CM16 — Leo Cup — Nakayama Turf 1200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 16,
+      "event_name": "Leo Cup",
+      "event_window": {
+        "start": "13 Aug 2022, 05:00",
+        "end": "19 Aug 2022, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "sprint"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 1200,
+        "surface": "turf",
+        "distance_label": "Sprint",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Summer",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 2,
+        "weather": 1,
+        "ground_condition": 1
+      },
       "source": "https://uma.guide/guides/cm16-guide",
       "notes": "Position before the acceleration zone is unusually important. Nimble Navigator is intentionally left unchanged outside Front: some over-weighting is acceptable because the skill remains strong.",
       "skills": {
         "sprint_corners": {
-          "rules": [{"operation": "bonus", "value": 0.08, "reason": "Guide emphasizes corner velocity for entering the acceleration phase in position."}]
+          "rules": [
+            {
+              "operation": "bonus",
+              "value": 0.08,
+              "reason": "Guide emphasizes corner velocity for entering the acceleration phase in position."
+            }
+          ]
         },
         "front_runner_corners": {
-          "rules": [{"match": {"style": "front_runner"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific position retention value."}]
+          "rules": [
+            {
+              "match": {
+                "style": "front_runner"
+              },
+              "operation": "bonus",
+              "value": 0.06,
+              "reason": "Additional course-specific position retention value."
+            }
+          ]
         },
         "pace_chaser_corners": {
-          "rules": [{"match": {"style": "pace_chaser"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific pre-acceleration position value."}]
+          "rules": [
+            {
+              "match": {
+                "style": "pace_chaser"
+              },
+              "operation": "bonus",
+              "value": 0.06,
+              "reason": "Additional course-specific pre-acceleration position value."
+            }
+          ]
         },
         "late_surger_corners": {
-          "rules": [{"match": {"style": "late_surger"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific pre-acceleration position value."}]
+          "rules": [
+            {
+              "match": {
+                "style": "late_surger"
+              },
+              "operation": "bonus",
+              "value": 0.06,
+              "reason": "Additional course-specific pre-acceleration position value."
+            }
+          ]
         },
         "end_closer_corners": {
-          "rules": [{"match": {"style": "end_closer"}, "operation": "bonus", "value": 0.06, "reason": "Additional course-specific pre-acceleration position value."}]
+          "rules": [
+            {
+              "match": {
+                "style": "end_closer"
+              },
+              "operation": "bonus",
+              "value": 0.06,
+              "reason": "Additional course-specific pre-acceleration position value."
+            }
+          ]
         }
       }
     },
     "cm15_hanshin_2200_turf": {
       "label": "CM15 — Hanshin Turf 2200 m",
-      "profile": {"surface": "turf", "distance": "medium"},
-      "race": {"racecourse": "Hanshin", "distance_m": 2200, "surface": "turf"},
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 2200,
+        "surface": "turf"
+      },
       "source": "https://uma.guide/guides/cm15-guide",
       "notes": "Groundwork, Dodging Danger, Prudent Positioning and Uma Stan are handled by the global corrections; no additional track-only rule is required.",
-      "skills": {}
+      "skills": {},
+      "category": "champions_meeting_archive",
+      "sequence": 15,
+      "event_name": "CM15"
     },
     "cm14_tokyo_1600_turf": {
       "label": "CM14 — Tokyo Turf 1600 m",
-      "profile": {"surface": "turf", "distance": "mile"},
-      "race": {"racecourse": "Tokyo", "distance_m": 1600, "surface": "turf"},
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 1600,
+        "surface": "turf"
+      },
       "source": "https://uma.guide/guides/cm14-guide",
       "notes": "Final Push has useful track timing despite a generic false zero. Nimble remains generic because a moderate over-weight is acceptable.",
       "skills": {
         "final_push": {
-          "rules": [{"match": {"style": "front_runner"}, "operation": "floor", "value": 0.55, "reason": "Final-corner timing is usable on Tokyo 1600 for Front Runner."}]
+          "rules": [
+            {
+              "match": {
+                "style": "front_runner"
+              },
+              "operation": "floor",
+              "value": 0.55,
+              "reason": "Final-corner timing is usable on Tokyo 1600 for Front Runner."
+            }
+          ]
         }
-      }
+      },
+      "category": "champions_meeting_archive",
+      "sequence": 14,
+      "event_name": "CM14"
     },
     "cm13_tokyo_2400_turf": {
       "label": "CM13 — Tokyo Turf 2400 m",
-      "profile": {"surface": "turf", "distance": "medium"},
-      "race": {"racecourse": "Tokyo", "distance_m": 2400, "surface": "turf"},
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 2400,
+        "surface": "turf"
+      },
       "source": "https://uma.guide/guides/cm13-guide",
       "notes": "The multiple uphill sections make 1,500,000 CC materially more reliable for Late Surger than on a generic Medium course.",
       "skills": {
         "1_500_000_cc": {
-          "rules": [{"match": {"style": "late_surger"}, "operation": "floor", "value": 0.9, "reason": "Tokyo 2400 provides several favorable uphill activation windows."}]
+          "rules": [
+            {
+              "match": {
+                "style": "late_surger"
+              },
+              "operation": "floor",
+              "value": 0.9,
+              "reason": "Tokyo 2400 provides several favorable uphill activation windows."
+            }
+          ]
         }
-      }
+      },
+      "category": "champions_meeting_archive",
+      "sequence": 13,
+      "event_name": "CM13"
     },
     "cm12_nakayama_2000_turf": {
       "label": "CM12 — Nakayama Turf 2000 m",
-      "profile": {"surface": "turf", "distance": "medium"},
-      "race": {"racecourse": "Nakayama", "distance_m": 2000, "surface": "turf"},
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 2000,
+        "surface": "turf"
+      },
       "source": "https://uma.guide/guides/cm12-guide",
       "notes": "Generic Medium weights and the global Nimble correction are adequate for this prototype.",
-      "skills": {}
+      "skills": {},
+      "category": "champions_meeting_archive",
+      "sequence": 12,
+      "event_name": "CM12"
     },
     "cm11_hanshin_3200_turf": {
       "label": "CM11 — Hanshin Turf 3200 m",
-      "profile": {"surface": "turf", "distance": "long"},
-      "race": {"racecourse": "Hanshin", "distance_m": 3200, "surface": "turf"},
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 3200,
+        "surface": "turf"
+      },
       "source": "https://uma.guide/guides/cm11-guide",
       "notes": "The generic batch uses a shorter Long representative course and underestimates Nimble's available late-race blocking window.",
       "skills": {
         "nimble_navigator": {
           "rules": [
-            {"match": {"style": "pace_chaser"}, "operation": "floor", "value": 0.75, "reason": "Long 3200 m race gives more late-race traffic opportunities."},
-            {"match": {"style": "late_surger"}, "operation": "floor", "value": 0.85, "reason": "Long 3200 m race gives more late-race traffic opportunities."},
-            {"match": {"style": "end_closer"}, "operation": "floor", "value": 0.9, "reason": "Long 3200 m race gives more late-race traffic opportunities."}
+            {
+              "match": {
+                "style": "pace_chaser"
+              },
+              "operation": "floor",
+              "value": 0.75,
+              "reason": "Long 3200 m race gives more late-race traffic opportunities."
+            },
+            {
+              "match": {
+                "style": "late_surger"
+              },
+              "operation": "floor",
+              "value": 0.85,
+              "reason": "Long 3200 m race gives more late-race traffic opportunities."
+            },
+            {
+              "match": {
+                "style": "end_closer"
+              },
+              "operation": "floor",
+              "value": 0.9,
+              "reason": "Long 3200 m race gives more late-race traffic opportunities."
+            }
           ]
         }
-      }
+      },
+      "category": "champions_meeting_archive",
+      "sequence": 11,
+      "event_name": "CM11"
     },
     "cm10_tokyo_1600_dirt": {
       "label": "CM10 — Tokyo Dirt 1600 m",
-      "profile": {"surface": "dirt", "distance": "mile"},
-      "race": {"racecourse": "Tokyo", "distance_m": 1600, "surface": "dirt"},
+      "profile": {
+        "surface": "dirt",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 1600,
+        "surface": "dirt"
+      },
       "source": "https://uma.guide/guides/cm10-guide",
       "notes": "The uphill overlaps a useful acceleration window, making Highlander much better than its generic representative-course score.",
       "skills": {
         "highlander": {
-          "rules": [{"operation": "floor", "value": 0.7, "reason": "Tokyo Dirt 1600 uphill timing makes the skill a viable acceleration option."}]
+          "rules": [
+            {
+              "operation": "floor",
+              "value": 0.7,
+              "reason": "Tokyo Dirt 1600 uphill timing makes the skill a viable acceleration option."
+            }
+          ]
         }
-      }
+      },
+      "category": "champions_meeting_archive",
+      "sequence": 10,
+      "event_name": "CM10"
     },
     "cm9_chukyo_1200_turf": {
       "label": "CM9 — Chukyo Turf 1200 m",
-      "profile": {"surface": "turf", "distance": "sprint"},
-      "race": {"racecourse": "Chukyo", "distance_m": 1200, "surface": "turf"},
+      "profile": {
+        "surface": "turf",
+        "distance": "sprint"
+      },
+      "race": {
+        "racecourse": "Chukyo",
+        "distance_m": 1200,
+        "surface": "turf"
+      },
       "source": "https://uma.guide/guides/cm9-guide",
       "notes": "Chukyo's uphill timing makes Highlander valuable; corners also receive an extra course-specific positioning bonus.",
       "skills": {
         "highlander": {
-          "rules": [{"operation": "floor", "value": 0.8, "reason": "The only uphill lies in a favorable acceleration window."}]
+          "rules": [
+            {
+              "operation": "floor",
+              "value": 0.8,
+              "reason": "The only uphill lies in a favorable acceleration window."
+            }
+          ]
         },
         "sprint_corners": {
-          "rules": [{"operation": "bonus", "value": 0.08, "reason": "Guide emphasizes corner velocity and carryover into the decisive section."}]
+          "rules": [
+            {
+              "operation": "bonus",
+              "value": 0.08,
+              "reason": "Guide emphasizes corner velocity and carryover into the decisive section."
+            }
+          ]
         }
-      }
+      },
+      "category": "champions_meeting_archive",
+      "sequence": 9,
+      "event_name": "CM9"
+    },
+    "cm17_ooi_2000_dirt": {
+      "label": "CM17 — Virgo Cup — Ooi Dirt 2000 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 17,
+      "event_name": "Virgo Cup",
+      "event_window": {
+        "start": "15 Sept 2022, 05:00",
+        "end": "21 Sept 2022, 04:59"
+      },
+      "profile": {
+        "surface": "dirt",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Ooi",
+        "distance_m": 2000,
+        "surface": "dirt",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Good",
+        "season_label": "Autumn",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 3,
+        "weather": 1,
+        "ground_condition": 2
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm18_hanshin_1600_turf": {
+      "label": "CM18 — Libra Cup — Hanshin Turf 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 18,
+      "event_name": "Libra Cup",
+      "event_window": {
+        "start": "14 Oct 2022, 05:00",
+        "end": "20 Oct 2022, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 1600,
+        "surface": "turf",
+        "distance_label": "Mile",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Autumn",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 3,
+        "weather": 2,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm19_kyoto_2200_turf": {
+      "label": "CM19 — Scorpio Cup — Kyoto Turf 2200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 19,
+      "event_name": "Scorpio Cup",
+      "event_window": {
+        "start": "13 Nov 2022, 04:00",
+        "end": "19 Nov 2022, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Kyoto",
+        "distance_m": 2200,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Autumn",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 3,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm20_nakayama_2500_turf": {
+      "label": "CM20 — Sagittarius Cup — Nakayama Turf 2500 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 20,
+      "event_name": "Sagittarius Cup",
+      "event_window": {
+        "start": "15 Dec 2022, 04:00",
+        "end": "21 Dec 2022, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 2500,
+        "surface": "turf",
+        "distance_label": "Long",
+        "rotation_label": "Right",
+        "ground_label": "Good",
+        "season_label": "Winter",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 2,
+        "ground_condition": 2
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm21_chukyo_1200_turf": {
+      "label": "CM21 — Capricorn Cup — Chukyo Turf 1200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 21,
+      "event_name": "Capricorn Cup",
+      "event_window": {
+        "start": "14 Jan 2023, 04:00",
+        "end": "20 Jan 2023, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "sprint"
+      },
+      "race": {
+        "racecourse": "Chukyo",
+        "distance_m": 1200,
+        "surface": "turf",
+        "distance_label": "Sprint",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Winter",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": 4,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm22_tokyo_1600_dirt": {
+      "label": "CM22 — Aquarius Cup — Tokyo Dirt 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 22,
+      "event_name": "Aquarius Cup",
+      "event_window": {
+        "start": "17 Feb 2023, 04:00",
+        "end": "23 Feb 2023, 03:59"
+      },
+      "profile": {
+        "surface": "dirt",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 1600,
+        "surface": "dirt",
+        "distance_label": "Mile",
+        "rotation_label": "Left",
+        "ground_label": "Soft",
+        "season_label": "Winter",
+        "weather_label": "Snow"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": 4,
+        "weather": 4,
+        "ground_condition": 3
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm23_nakayama_2000_turf": {
+      "label": "CM23 — Pisces Cup — Nakayama Turf 2000 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 23,
+      "event_name": "Pisces Cup",
+      "event_window": {
+        "start": "14 Mar 2023, 04:00",
+        "end": "20 Mar 2023, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 2000,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm24_kyoto_3200_turf": {
+      "label": "CM24 — Aries Cup — Kyoto Turf 3200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 24,
+      "event_name": "Aries Cup",
+      "event_window": {
+        "start": "13 Apr 2023, 05:00",
+        "end": "19 Apr 2023, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Kyoto",
+        "distance_m": 3200,
+        "surface": "turf",
+        "distance_label": "Long",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm25_tokyo_1600_turf": {
+      "label": "CM25 — MILE — Tokyo Turf 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 25,
+      "event_name": "MILE",
+      "event_window": {
+        "start": "13 Jun 2023, 05:00",
+        "end": "19 Jun 2023, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 1600,
+        "surface": "turf",
+        "distance_label": "Mile",
+        "rotation_label": "Left",
+        "ground_label": "Heavy",
+        "season_label": "Spring",
+        "weather_label": "Rain"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 3,
+        "ground_condition": 4
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm26_funabashi_1600_dirt": {
+      "label": "CM26 — DIRT — Funabashi Dirt 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 26,
+      "event_name": "DIRT",
+      "event_window": {
+        "start": "18 Aug 2023, 05:00",
+        "end": "24 Aug 2023, 04:59"
+      },
+      "profile": {
+        "surface": "dirt",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Funabashi",
+        "distance_m": 1600,
+        "surface": "dirt",
+        "distance_label": "Mile",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Summer",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": 2,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm27_longchamp_2400_turf": {
+      "label": "CM27 — CLASSIC — Longchamp Turf 2400 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 27,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "13 Oct 2023, 05:00",
+        "end": "19 Oct 2023, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Longchamp",
+        "distance_m": 2400,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Soft",
+        "season_label": "Autumn",
+        "weather_label": "Rain"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 3,
+        "weather": 3,
+        "ground_condition": 3
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm28_nakayama_2500_turf": {
+      "label": "CM28 — LONG — Nakayama Turf 2500 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 28,
+      "event_name": "LONG",
+      "event_window": {
+        "start": "14 Dec 2023, 04:00",
+        "end": "20 Dec 2023, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 2500,
+        "surface": "turf",
+        "distance_label": "Long",
+        "rotation_label": "Right",
+        "ground_label": "Soft",
+        "season_label": "Winter",
+        "weather_label": "Snow"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 4,
+        "ground_condition": 3
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm29_hanshin_1400_turf": {
+      "label": "CM29 — SPRINT — Hanshin Turf 1400 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 29,
+      "event_name": "SPRINT",
+      "event_window": {
+        "start": "18 Feb 2024, 04:00",
+        "end": "24 Feb 2024, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "sprint"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 1400,
+        "surface": "turf",
+        "distance_label": "Sprint",
+        "rotation_label": "Right",
+        "ground_label": "Good",
+        "season_label": "Winter",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 2,
+        "ground_condition": 2
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm30_hanshin_1600_turf": {
+      "label": "CM30 — MILE — Hanshin Turf 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 30,
+      "event_name": "MILE",
+      "event_window": {
+        "start": "13 Apr 2024, 05:00",
+        "end": "19 Apr 2024, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 1600,
+        "surface": "turf",
+        "distance_label": "Mile",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm31_tokyo_2400_turf": {
+      "label": "CM31 — CLASSIC — Tokyo Turf 2400 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 31,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "20 Jun 2024, 05:00",
+        "end": "26 Jun 2024, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 2400,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Left",
+        "ground_label": "Soft",
+        "season_label": "Spring",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 2,
+        "ground_condition": 3
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm32_chukyo_1800_dirt": {
+      "label": "CM32 — DIRT — Chukyo Dirt 1800 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 32,
+      "event_name": "DIRT",
+      "event_window": {
+        "start": "25 Aug 2024, 05:00",
+        "end": "31 Aug 2024, 04:59"
+      },
+      "profile": {
+        "surface": "dirt",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Chukyo",
+        "distance_m": 1800,
+        "surface": "dirt",
+        "distance_label": "Mile",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Summer",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": 2,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm33_tokyo_2000_turf": {
+      "label": "CM33 — CLASSIC — Tokyo Turf 2000 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 33,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "23 Oct 2024, 05:00",
+        "end": "29 Oct 2024, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 2000,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Autumn",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": 3,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm34_nakayama_2500_turf": {
+      "label": "CM34 — LONG — Nakayama Turf 2500 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 34,
+      "event_name": "LONG",
+      "event_window": {
+        "start": "22 Dec 2024, 04:00",
+        "end": "28 Dec 2024, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 2500,
+        "surface": "turf",
+        "distance_label": "Long",
+        "rotation_label": "Right",
+        "ground_label": "Good",
+        "season_label": "Winter",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 2,
+        "ground_condition": 2
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm35_hanshin_2400_turf": {
+      "label": "CM35 — CLASSIC — Hanshin Turf 2400 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 35,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "24 Jan 2025, 04:00",
+        "end": "30 Jan 2025, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 2400,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Soft",
+        "season_label": "Winter",
+        "weather_label": "Rain"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 3,
+        "ground_condition": 3
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm36_hanshin_1600_turf": {
+      "label": "CM36 — MILE — Hanshin Turf 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 36,
+      "event_name": "MILE",
+      "event_window": {
+        "start": "25 Mar 2025, 04:00",
+        "end": "31 Mar 2025, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 1600,
+        "surface": "turf",
+        "distance_label": "Mile",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm37_kyoto_3200_turf": {
+      "label": "CM37 — LONG — Kyoto Turf 3200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 37,
+      "event_name": "LONG",
+      "event_window": {
+        "start": "23 Apr 2025, 05:00",
+        "end": "29 Apr 2025, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Kyoto",
+        "distance_m": 3200,
+        "surface": "turf",
+        "distance_label": "Long",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm38_tokyo_2400_turf": {
+      "label": "CM38 — CLASSIC — Tokyo Turf 2400 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 38,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "21 Jun 2025, 05:00",
+        "end": "27 Jun 2025, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 2400,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm39_hanshin_2200_turf": {
+      "label": "CM39 — CLASSIC — Hanshin Turf 2200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 39,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "25 Jul 2025, 05:00",
+        "end": "31 Jul 2025, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 2200,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Good",
+        "season_label": "Summer",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 2,
+        "weather": 2,
+        "ground_condition": 2
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm40_kyoto_2000_turf": {
+      "label": "CM40 — CLASSIC — Kyoto Turf 2000 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 40,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "22 Sept 2025, 05:00",
+        "end": "28 Sept 2025, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Kyoto",
+        "distance_m": 2000,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Autumn",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 3,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm41_niigata_1200_turf": {
+      "label": "CM41 — SPRINT — Niigata Turf 1200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 41,
+      "event_name": "SPRINT",
+      "event_window": {
+        "start": "23 Oct 2025, 05:00",
+        "end": "29 Oct 2025, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "sprint"
+      },
+      "race": {
+        "racecourse": "Niigata",
+        "distance_m": 1200,
+        "surface": "turf",
+        "distance_label": "Sprint",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Autumn",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": 3,
+        "weather": 2,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm42_hanshin_1600_turf": {
+      "label": "CM42 — MILE — Hanshin Turf 1600 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 42,
+      "event_name": "MILE",
+      "event_window": {
+        "start": "21 Dec 2025, 04:00",
+        "end": "27 Dec 2025, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Hanshin",
+        "distance_m": 1600,
+        "surface": "turf",
+        "distance_label": "Mile",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Winter",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm43_nakayama_2500_turf": {
+      "label": "CM43 — LONG — Nakayama Turf 2500 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 43,
+      "event_name": "LONG",
+      "event_window": {
+        "start": "22 Jan 2026, 04:00",
+        "end": "28 Jan 2026, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Nakayama",
+        "distance_m": 2500,
+        "surface": "turf",
+        "distance_label": "Long",
+        "rotation_label": "Right",
+        "ground_label": "Firm",
+        "season_label": "Winter",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 1,
+        "season": 4,
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm44_unknown_racetrack_2200_turf": {
+      "label": "CM44 — CLASSIC — Unknown racetrack Turf 2200 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 44,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "22 Mar 2026, 04:00",
+        "end": "28 Mar 2026, 03:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Unknown racetrack",
+        "distance_m": 2200,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm45_unknown_racetrack_2000_dirt": {
+      "label": "CM45 — DIRT — Unknown racetrack Dirt 2000 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 45,
+      "event_name": "DIRT",
+      "event_window": {
+        "start": "23 Apr 2026, 05:00",
+        "end": "29 Apr 2026, 04:59"
+      },
+      "profile": {
+        "surface": "dirt",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Unknown racetrack",
+        "distance_m": 2000,
+        "surface": "dirt",
+        "distance_label": "Medium",
+        "rotation_label": "Left",
+        "ground_label": "Firm",
+        "season_label": "Spring",
+        "weather_label": "Sunny"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 1,
+        "ground_condition": 1
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "cm46_tokyo_2400_turf": {
+      "label": "CM46 — CLASSIC — Tokyo Turf 2400 m",
+      "category": "champions_meeting_upcoming",
+      "sequence": 46,
+      "event_name": "CLASSIC",
+      "event_window": {
+        "start": "23 Jun 2026, 05:00",
+        "end": "29 Jun 2026, 04:59"
+      },
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Tokyo",
+        "distance_m": 2400,
+        "surface": "turf",
+        "distance_label": "Medium",
+        "rotation_label": "Left",
+        "ground_label": "Soft",
+        "season_label": "Spring",
+        "weather_label": "Cloudy"
+      },
+      "conditions": {
+        "rotation": 2,
+        "season": [
+          1,
+          5
+        ],
+        "weather": 2,
+        "ground_condition": 3
+      },
+      "source": null,
+      "notes": "Exact race conditions preset. Generic profile weights are used unless a skill-specific course correction is configured.",
+      "skills": {}
+    },
+    "team_trials_turf_sprint": {
+      "label": "Team Trials — Turf Sprint",
+      "category": "team_trials",
+      "sequence": 1,
+      "profile": {
+        "surface": "turf",
+        "distance": "sprint"
+      },
+      "race": {
+        "racecourse": "Variable",
+        "surface": "turf"
+      },
+      "conditions": {},
+      "source": "https://gametora.com/umamusume/team-trials-pvp-scoring",
+      "notes": "Generic Team Trials profile: no fixed racecourse, direction, season, weather or ground condition. It uses the selected surface/distance/style weights without exact-course green activation assumptions.",
+      "skills": {}
+    },
+    "team_trials_turf_mile": {
+      "label": "Team Trials — Turf Mile",
+      "category": "team_trials",
+      "sequence": 2,
+      "profile": {
+        "surface": "turf",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Variable",
+        "surface": "turf"
+      },
+      "conditions": {},
+      "source": "https://gametora.com/umamusume/team-trials-pvp-scoring",
+      "notes": "Generic Team Trials profile: no fixed racecourse, direction, season, weather or ground condition. It uses the selected surface/distance/style weights without exact-course green activation assumptions.",
+      "skills": {}
+    },
+    "team_trials_turf_medium": {
+      "label": "Team Trials — Turf Medium",
+      "category": "team_trials",
+      "sequence": 3,
+      "profile": {
+        "surface": "turf",
+        "distance": "medium"
+      },
+      "race": {
+        "racecourse": "Variable",
+        "surface": "turf"
+      },
+      "conditions": {},
+      "source": "https://gametora.com/umamusume/team-trials-pvp-scoring",
+      "notes": "Generic Team Trials profile: no fixed racecourse, direction, season, weather or ground condition. It uses the selected surface/distance/style weights without exact-course green activation assumptions.",
+      "skills": {}
+    },
+    "team_trials_turf_long": {
+      "label": "Team Trials — Turf Long",
+      "category": "team_trials",
+      "sequence": 4,
+      "profile": {
+        "surface": "turf",
+        "distance": "long"
+      },
+      "race": {
+        "racecourse": "Variable",
+        "surface": "turf"
+      },
+      "conditions": {},
+      "source": "https://gametora.com/umamusume/team-trials-pvp-scoring",
+      "notes": "Generic Team Trials profile: no fixed racecourse, direction, season, weather or ground condition. It uses the selected surface/distance/style weights without exact-course green activation assumptions.",
+      "skills": {}
+    },
+    "team_trials_dirt_mile": {
+      "label": "Team Trials — Dirt Mile",
+      "category": "team_trials",
+      "sequence": 5,
+      "profile": {
+        "surface": "dirt",
+        "distance": "mile"
+      },
+      "race": {
+        "racecourse": "Variable",
+        "surface": "dirt"
+      },
+      "conditions": {},
+      "source": "https://gametora.com/umamusume/team-trials-pvp-scoring",
+      "notes": "Generic Team Trials profile: no fixed racecourse, direction, season, weather or ground condition. It uses the selected surface/distance/style weights without exact-course green activation assumptions.",
+      "skills": {}
     }
   }
 }

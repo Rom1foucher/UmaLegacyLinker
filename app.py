@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import queue
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -75,6 +76,7 @@ from uma_moe import (
 
 APP_NAME = "Uma Legacy Linker"
 UMAEXTRACTOR_RELEASES = "https://github.com/xancia/UmaExtractor/releases/latest"
+UMADUMP_REPOSITORY = "https://github.com/Werseter/umadump"
 
 UNSPECIFIED = "Non précisé"
 ROTATION_OPTIONS = {UNSPECIFIED: None, "Droite": 1, "Gauche": 2}
@@ -277,6 +279,7 @@ class Application:
         self._excluded_parent_card_ids = {int(v) for v in str(config.get("uma_moe_excluded_parent_card_ids", "")).split(",") if v.strip().isdigit() and int(v) > 0}
         self.parent_allowed_summary_var = tk.StringVar(value="")
         self.parent_excluded_summary_var = tk.StringVar(value="")
+        self.uma_moe_context_var = tk.StringVar(value="")
         self.uma_moe_limit_var = tk.IntVar(
             value=max(100, min(int(config.get("uma_moe_limit", "1000")), MAX_FETCH_CANDIDATES))
         )
@@ -305,6 +308,16 @@ class Application:
         self._fixed_gp_all_values: list[str] = []
         self._fixed_gp_records: list[dict[str, object]] = []
         self._log_entries: list[tuple[str, str]] = []
+        for context_var in (
+            self.ace_var, self.future_parent_var, self.surface_var, self.distance_var,
+            self.style_var, self.track_var, self.rotation_var, self.season_var,
+            self.weather_var, self.ground_var, self.course_var, self.fixed_gp_var,
+            self.uma_moe_search_mode_var, self.uma_moe_auto_pairs_var,
+        ):
+            context_var.trace_add(
+                "write",
+                lambda *_args: self.root.after_idle(self._refresh_uma_moe_context_summary),
+            )
         self._build_ui()
         self._refresh_scoring_status()
         self._refresh_skill_priorities_status()
@@ -376,6 +389,139 @@ class Application:
                     pass
         for child in widget.winfo_children():
             self._apply_translations(child)
+
+    @staticmethod
+    def _tree_sort_value(value: object) -> tuple[object, ...]:
+        """Return a stable, human-friendly sort key for Treeview cell values."""
+        if value is None:
+            return (3, "")
+        text = str(value).strip()
+        if not text or text in {"—", "-"}:
+            return (3, "")
+
+        normalized = text.replace("\u202f", " ").replace("\xa0", " ")
+        compact = normalized.casefold().replace(" ", "").replace(",", ".")
+        compact = compact.removeprefix("top")
+        percent = compact.endswith("%")
+        if percent:
+            compact = compact[:-1]
+        numeric_match = re.fullmatch(r"[+#]?(-?\d+(?:\.\d+)?)", compact)
+        if numeric_match:
+            return (0, float(numeric_match.group(1)))
+
+        star_match = re.fullmatch(r"(\d+)★(?:/(\d+))?", compact)
+        if star_match:
+            return (1, int(star_match.group(1)), int(star_match.group(2) or 0))
+
+        natural_parts: list[tuple[int, object]] = []
+        for part in re.split(r"(\d+(?:[.,]\d+)?)", normalized.casefold()):
+            if not part:
+                continue
+            try:
+                natural_parts.append((0, float(part.replace(",", "."))))
+            except ValueError:
+                natural_parts.append((1, unicodedata.normalize("NFKD", part)))
+        return (2, tuple(natural_parts))
+
+    def _make_tree_sortable(self, tree: ttk.Treeview) -> None:
+        """Enable ascending/descending sorting on every data column."""
+        columns = list(tree.cget("columns"))
+        heading_texts = {column: str(self._tr(tree.heading(column, "text"))) for column in columns}
+        sort_state = {"column": None, "descending": False}
+
+        def sort_column(column: str) -> None:
+            descending = not (
+                sort_state["column"] == column and bool(sort_state["descending"])
+            )
+            if sort_state["column"] != column:
+                descending = False
+            children = list(tree.get_children(""))
+            indexed = [
+                (self._tree_sort_value(tree.set(iid, column)), index, iid)
+                for index, iid in enumerate(children)
+            ]
+            populated = [item for item in indexed if item[0][0] != 3]
+            missing = [item for item in indexed if item[0][0] == 3]
+            populated.sort(key=lambda item: (item[0], item[1]), reverse=descending)
+            ordered = populated + missing
+            for position, (_key, _index, iid) in enumerate(ordered):
+                tree.move(iid, "", position)
+
+            sort_state["column"] = column
+            sort_state["descending"] = descending
+            for current in columns:
+                marker = " ↓" if current == column and descending else " ↑" if current == column else ""
+                tree.heading(current, text=f"{heading_texts[current]}{marker}")
+
+        for column in columns:
+            tree.heading(column, command=lambda selected=column: sort_column(selected))
+
+    def _show_transient_notice(
+        self,
+        message: object,
+        *,
+        x_root: int,
+        y_root: int,
+        duration_ms: int = 1400,
+    ) -> None:
+        """Show a small confirmation near the pointer without blocking the UI."""
+        notice = tk.Toplevel(self.root)
+        notice.overrideredirect(True)
+        try:
+            notice.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        label = ttk.Label(
+            notice,
+            text=str(self._tr(message)),
+            padding=(10, 6),
+            relief="solid",
+        )
+        label.pack()
+        notice.update_idletasks()
+        width = notice.winfo_reqwidth()
+        height = notice.winfo_reqheight()
+        x = min(max(0, int(x_root) + 12), max(0, notice.winfo_screenwidth() - width - 8))
+        y = min(max(0, int(y_root) + 12), max(0, notice.winfo_screenheight() - height - 8))
+        notice.geometry(f"+{x}+{y}")
+        notice.after(max(300, int(duration_ms)), notice.destroy)
+
+    def _bind_tree_column_copy(
+        self,
+        tree: ttk.Treeview,
+        column: str,
+        *,
+        status_label: str,
+    ) -> None:
+        """Copy a clicked cell from one specific column to the clipboard."""
+        columns = list(tree.cget("columns"))
+        try:
+            target_index = columns.index(column) + 1
+        except ValueError:
+            return
+
+        def copy_cell(event: tk.Event) -> None:
+            if tree.identify_column(event.x) != f"#{target_index}":
+                return
+            iid = tree.identify_row(event.y)
+            if not iid:
+                return
+            value = str(tree.set(iid, column) or "").strip()
+            if not value or value in {"—", "-"}:
+                return
+            tree.selection_set(iid)
+            tree.focus(iid)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.root.update_idletasks()
+            self._set_status(f"{status_label} copié : {value}")
+            self._show_transient_notice(
+                f"{status_label} copié dans le presse-papiers",
+                x_root=int(getattr(event, "x_root", self.root.winfo_pointerx())),
+                y_root=int(getattr(event, "y_root", self.root.winfo_pointery())),
+            )
+
+        tree.bind("<ButtonRelease-1>", copy_cell, add="+")
 
     def _show_error(self, message: object, *, parent: tk.Misc | None = None) -> None:
         messagebox.showerror(APP_NAME, self._tr(str(message)), parent=parent)
@@ -581,12 +727,18 @@ class Application:
             text="Télécharger UmaExtractor",
             command=lambda: webbrowser.open(UMAEXTRACTOR_RELEASES),
         ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Découvrir umadump",
+            command=lambda: webbrowser.open(UMADUMP_REPOSITORY),
+        ).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(
             tab,
             text=(
                 "Produit le JSON enrichi des vétérans, la synthèse CSV, le rapport et les "
                 "catalogues skills/conditions. « Générer catalogue skills » ne nécessite pas "
-                "de data.json."
+                "de data.json. Le lanceur intégré utilise actuellement UmaExtractor ; une "
+                "intégration directe d'umadump comme backend préféré est prévue."
             ),
             style="Hint.TLabel",
             wraplength=1080,
@@ -734,7 +886,7 @@ class Application:
         ttk.Label(
             intro,
             text=(
-                "Un transfert n'est marqué comme sûr que si un autre exemplaire de la même carte et de la "
+                "Un transfert n'est marqué comme sûr que si un autre vétéran du même costume et avec la "
                 "même unique n'est moins bon dans aucune niche globalement viable, y compris pour le support "
                 "G1 en paire."
             ),
@@ -748,7 +900,7 @@ class Application:
         ttk.Label(verdicts, text="Transfert sûr", width=20).grid(row=0, column=0, sticky="w")
         ttk.Label(
             verdicts,
-            text="Remplaçant strict de la même carte détecté dans toutes les niches parent et/ou grand-parent réellement viables.",
+            text="Remplaçant strict du même costume détecté dans toutes les niches parent et/ou grand-parent réellement viables.",
         ).grid(row=0, column=1, sticky="w")
         ttk.Label(verdicts, text="À examiner", width=20).grid(row=1, column=0, sticky="w", pady=(5, 0))
         ttk.Label(
@@ -867,8 +1019,20 @@ class Application:
         ttk.Spinbox(self.uma_moe_g1_frame, from_=0.0, to=1.0, increment=0.1, textvariable=self.uma_moe_single_g1_weight_var, width=6).pack(side=tk.LEFT, padx=(7, 0))
         ttk.Label(self.uma_moe_g1_frame, text="0,6 = 60 % de la valeur d'une G1 commune", style="Hint.TLabel").pack(side=tk.LEFT, padx=(7, 0))
 
+        context = ttk.LabelFrame(tab, text="Conditions de recherche actuelles", padding=8)
+        context.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        context.columnconfigure(0, weight=1)
+        self.uma_moe_context_hint = ttk.Label(
+            context,
+            textvariable=self.uma_moe_context_var,
+            style="Hint.TLabel",
+            wraplength=1080,
+            justify=tk.LEFT,
+        )
+        self.uma_moe_context_hint.grid(row=0, column=0, sticky="w")
+
         uql = ttk.LabelFrame(tab, text="Requête UQL", padding=8)
-        uql.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        uql.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         uql.columnconfigure(1, weight=1)
         ttk.Label(uql, text="UQL / recherche", width=20).grid(row=0, column=0, sticky="w")
         ttk.Entry(uql, textvariable=self.uma_moe_query_var).grid(row=0, column=1, sticky="ew")
@@ -897,7 +1061,7 @@ class Application:
         self.uma_moe_uql_hint.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         api = ttk.LabelFrame(tab, text="API et import", padding=8)
-        api.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        api.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         api.columnconfigure(1, weight=1)
         api.columnconfigure(3, weight=1)
         ttk.Label(api, text="Base API", width=20).grid(row=0, column=0, sticky="w")
@@ -919,7 +1083,7 @@ class Application:
         ).grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(7, 0))
 
         online_actions = ttk.Frame(tab)
-        online_actions.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        online_actions.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         self.uma_moe_live_button = ttk.Button(
             online_actions,
             text="Chercher et classer les paires",
@@ -932,12 +1096,6 @@ class Application:
             command=lambda: self._start_uma_moe_search(use_import=True),
         )
         self.uma_moe_import_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.uma_moe_context_hint = ttk.Label(
-            online_actions,
-            text="Ace, parent à produire, profil et conditions proviennent de l'onglet Optimisation.",
-            style="Hint.TLabel",
-        )
-        self.uma_moe_context_hint.pack(side=tk.LEFT, padx=(14, 0))
         self.uma_moe_mode_hint = ttk.Label(
             tab,
             text=(
@@ -947,8 +1105,9 @@ class Application:
             style="Hint.TLabel",
             wraplength=1080,
         )
-        self.uma_moe_mode_hint.grid(row=4, column=0, sticky="w", pady=(7, 0))
+        self.uma_moe_mode_hint.grid(row=5, column=0, sticky="w", pady=(7, 0))
         self._on_uma_moe_search_mode_changed()
+        self._refresh_uma_moe_context_summary()
 
     def _build_scoring_tab(self, tab: ttk.Frame) -> None:
         tab.columnconfigure(0, weight=1)
@@ -999,18 +1158,19 @@ class Application:
             wraplength=1080,
         ).pack(anchor="w", pady=(6, 0))
 
-        examples = ttk.LabelFrame(tab, text="Repères", padding=10)
+        examples = ttk.LabelFrame(tab, text="Exemples pratiques", padding=10)
         examples.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(
             examples,
             text=(
-                "Exemples : augmenter blue_stat_weights_by_distance.long.Stamina favorise les lignées Stamina en Long ; "
-                "réduire blue_score_influence_by_distance.sprint rend les mauvaises blues encore moins pénalisantes en Sprint ; "
-                "modifier aptitude_inheritance.distance.s_probability_curve change la valeur marginale de P(S) ; "
-                "modifier white_inheritance.distinct_skill_probability_curve règle l'avantage donné à plusieurs whites utiles distinctes ; "
-                "durcir aptitude_inheritance.distance.b_compensation.minimum_white_score rend les départs en B plus exceptionnels."
+                "• Blues → stat favorisée par distance : augmenter Stamina pour Long favorise les lignées Stamina en Long.\n"
+                "• Blues → influence par distance : réduire Sprint limite l'impact des mauvaises Sparks bleues en Sprint.\n"
+                "• Aptitudes → Distance → courbe de probabilité S : règle la valeur relative de 40 %, 50 % ou 60 % de P(S).\n"
+                "• Whites → courbe des skills distinctes : favorise plusieurs skills utiles plutôt qu'une seule skill très répétée.\n"
+                "• Distance B → compensation minimale : relever le seuil White réserve les départs en B aux lignées vraiment exceptionnelles."
             ),
             style="Hint.TLabel",
+            justify=tk.LEFT,
             wraplength=1080,
         ).pack(anchor="w")
 
@@ -1777,6 +1937,7 @@ class Application:
         tree.column("uma", width=260, anchor="w")
         tree.column("card", width=520, anchor="w")
         tree.column("id", width=100, anchor="center")
+        self._make_tree_sortable(tree)
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
         tree.grid(row=0, column=0, sticky="nsew")
@@ -1896,6 +2057,64 @@ class Application:
                 continue
         return " / ".join(parts)
 
+    def _refresh_uma_moe_context_summary(self) -> None:
+        if not hasattr(self, "uma_moe_context_var"):
+            return
+
+        def selected_variant(variable: tk.StringVar) -> str:
+            display = variable.get().strip()
+            card_id = self._ace_display_to_id.get(display)
+            details = self._ace_card_details.get(card_id or 0) or {}
+            return str(details.get("card_name") or display or self._tr("Non sélectionné"))
+
+        separator = ": " if self.language_code == "en" else " : "
+
+        def context_line(label: str, value: object) -> str:
+            return f"{self._tr(label)}{separator}{value}"
+
+        mode = self.uma_moe_search_mode_var.get()
+        ace_name = selected_variant(self.ace_var)
+        profile_text = " / ".join(
+            (self.surface_var.get(), self.distance_var.get(), self.style_var.get())
+        )
+        lines = [
+            context_line("Ace visé", ace_name),
+            context_line("Profil actif", profile_text),
+        ]
+        if mode == "grandparent":
+            lines.insert(1, context_line("Parent à produire", selected_variant(self.future_parent_var)))
+
+        course_name = self.course_var.get().strip()
+        if course_name:
+            lines.append(context_line("Preset de course", course_name))
+
+        conditions: list[str] = []
+        if self._track_display_to_id.get(self.track_var.get()) is not None:
+            conditions.append(f"{self._tr('Hippodrome')}={self.track_var.get()}")
+        for label, variable, options in (
+            ("Rotation", self.rotation_var, ROTATION_OPTIONS),
+            ("Saison", self.season_var, SEASON_OPTIONS),
+            ("Météo", self.weather_var, WEATHER_OPTIONS),
+            ("État du terrain", self.ground_var, GROUND_OPTIONS),
+        ):
+            if self._choice_source(options, variable.get()) != UNSPECIFIED:
+                conditions.append(f"{self._tr(label)}={variable.get()}")
+        lines.append(
+            context_line(
+                "Conditions explicites",
+                ", ".join(conditions) if conditions else str(self._tr("aucune")),
+            )
+        )
+
+        if self.uma_moe_auto_pairs_var.get():
+            pairing = self._tr("Toutes les paires local × distant")
+        else:
+            fixed = self.fixed_gp_var.get().strip() or str(self._tr("Non sélectionné"))
+            role = self._tr("Parent local") if mode == "parent" else self._tr("GP local")
+            pairing = f"{role}{separator}{fixed}"
+        lines.append(context_line("Mode de paire", pairing))
+        self.uma_moe_context_var.set("\n".join(str(line) for line in lines))
+
     def _on_uma_moe_search_mode_changed(self) -> None:
         mode = self.uma_moe_search_mode_var.get()
         parent_mode = mode == "parent"
@@ -1913,15 +2132,6 @@ class Application:
                 self.parent_card_filter_frame.grid()
             else:
                 self.parent_card_filter_frame.grid_remove()
-        if hasattr(self, "uma_moe_context_hint"):
-            self.uma_moe_context_hint.configure(
-                text=self._tr(
-                    "Ace, profil et conditions proviennent de l'onglet Optimisation. "
-                    "Le parent distant est associé au parent local sélectionné."
-                    if parent_mode
-                    else "Ace, parent à produire, profil et conditions proviennent de l'onglet Optimisation."
-                )
-            )
         if hasattr(self, "uma_moe_mode_hint"):
             self.uma_moe_mode_hint.configure(
                 text=self._tr(
@@ -1933,6 +2143,7 @@ class Application:
                 )
             )
         self._toggle_uma_moe_pair_mode()
+        self._refresh_uma_moe_context_summary()
 
 
     def _toggle_uma_moe_pair_mode(self) -> None:
@@ -1942,6 +2153,7 @@ class Application:
             self.fixed_gp_combo.configure(state="disabled" if automatic else "normal")
         if hasattr(self, "fixed_gp_button"):
             self.fixed_gp_button.configure(state=state)
+        self._refresh_uma_moe_context_summary()
 
     def _refresh_local_veteran_options(self, show_errors: bool = False) -> None:
         try:
@@ -2001,8 +2213,12 @@ class Application:
                 self._show_error(f"Impossible de charger les vétérans locaux : {exc}")
 
     def _refresh_parent_card_filter_summaries(self) -> None:
-        self.parent_allowed_summary_var.set(f"Autorisés ({len(self._allowed_parent_card_ids)})")
-        self.parent_excluded_summary_var.set(f"Exclus ({len(self._excluded_parent_card_ids)})")
+        self.parent_allowed_summary_var.set(
+            f"{self._tr('Autorisés')} ({len(self._allowed_parent_card_ids)})"
+        )
+        self.parent_excluded_summary_var.set(
+            f"{self._tr('Exclus')} ({len(self._excluded_parent_card_ids)})"
+        )
 
     def _open_parent_card_filter_picker(self, kind: str) -> None:
         selected = self._allowed_parent_card_ids if kind == "allowed" else self._excluded_parent_card_ids
@@ -2048,6 +2264,7 @@ class Application:
         ttk.Button(buttons, text="Valider", command=apply).pack(side=tk.RIGHT)
         ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side=tk.RIGHT, padx=(0, 8))
         refill()
+        self._apply_translations(dialog)
 
     def _open_fixed_gp_picker(self) -> None:
         self._refresh_local_veteran_options(show_errors=True)
@@ -2085,13 +2302,14 @@ class Application:
         columns = ("uma", "card", "score", "id")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
         tree.heading("uma", text="Uma")
-        tree.heading("card", text="Costume / card")
+        tree.heading("card", text="Costume / variante")
         tree.heading("score", text="Score Uma")
         tree.heading("id", text="ID entraînement")
         tree.column("uma", width=180, anchor="w")
         tree.column("card", width=420, anchor="w")
         tree.column("score", width=120, anchor="center")
         tree.column("id", width=120, anchor="center")
+        self._make_tree_sortable(tree)
         vsb = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
         tree.grid(row=0, column=0, sticky="nsew")
@@ -3231,7 +3449,7 @@ class Application:
         ttk.Label(
             header,
             text=(
-                "Le verdict « transfert sûr » exige un remplaçant de la même carte/unique, "
+                "Le verdict « transfert sûr » exige un remplaçant du même costume et de la même unique, "
                 "non inférieur dans chaque niche globalement viable. Les contextes où toutes "
                 "les copies sont surclassées par le pool global sont ignorés."
             ),
@@ -3242,8 +3460,42 @@ class Application:
         body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
         table_frame = ttk.Frame(body)
-        table_frame.rowconfigure(0, weight=1)
+        table_frame.rowconfigure(1, weight=1)
         table_frame.columnconfigure(0, weight=1)
+
+        filter_bar = ttk.Frame(table_frame)
+        filter_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 7))
+        ttk.Label(filter_bar, text="Filtrer par verdict").pack(side=tk.LEFT)
+        status_filter_options = {
+            str(self._tr("Tous les verdicts")): None,
+            str(self._tr("Transfert sûr")): "safe_transfer",
+            str(self._tr("À examiner")): "review",
+            str(self._tr("Probablement conserver")): "likely_keep",
+            str(self._tr("Conserver")): "keep",
+        }
+        status_filter_var = tk.StringVar(value=next(iter(status_filter_options)))
+        status_filter_combo = ttk.Combobox(
+            filter_bar,
+            textvariable=status_filter_var,
+            values=tuple(status_filter_options),
+            state="readonly",
+            width=24,
+        )
+        status_filter_combo.pack(side=tk.LEFT, padx=(6, 18))
+        ttk.Label(filter_bar, text="Puis trier par score en jeu").pack(side=tk.LEFT)
+        score_order_options = {
+            str(self._tr("Décroissant")): True,
+            str(self._tr("Croissant")): False,
+        }
+        score_order_var = tk.StringVar(value=next(iter(score_order_options)))
+        score_order_combo = ttk.Combobox(
+            filter_bar,
+            textvariable=score_order_var,
+            values=tuple(score_order_options),
+            state="readonly",
+            width=14,
+        )
+        score_order_combo.pack(side=tk.LEFT, padx=(6, 0))
         columns = (
             "status",
             "veteran",
@@ -3297,12 +3549,13 @@ class Application:
                 width=widths[column],
                 anchor="w" if column in {"status", "veteran", "replacement"} else "center",
             )
+        self._make_tree_sortable(tree)
         vsb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
         hsb = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=tree.xview)
         tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
+        tree.grid(row=1, column=0, sticky="nsew")
+        vsb.grid(row=1, column=1, sticky="ns")
+        hsb.grid(row=2, column=0, sticky="ew")
         body.add(table_frame, weight=3)
 
         detail = scrolledtext.ScrolledText(
@@ -3320,33 +3573,65 @@ class Application:
             "likely_keep": "Probablement conserver",
             "keep": "Conserver",
         }
+        all_records = list(result.records)
         row_map: dict[str, dict[str, object]] = {}
-        for index, record in enumerate(result.records):
-            dominated = record.get("dominated_by") or {}
-            iid = tree.insert(
-                "",
-                tk.END,
-                values=(
-                    self._tr(status_labels.get(record.get("status"), record.get("status"))),
-                    record.get("card_name") or record.get("uma_name"),
-                    record.get("trained_chara_id"),
-                    record.get("rank") if record.get("rank") is not None else "—",
-                    self._format_rank_score(record.get("rank_score")) or "—",
-                    record.get("same_card_copy_count"),
-                    f"{float(record.get('best_parent_score') or 0):.1f}",
-                    f"top {float(record.get('best_parent_percentile') or 100):.1f}%",
-                    f"{float(record.get('best_grandparent_score') or 0):.1f}",
-                    f"top {float(record.get('best_grandparent_percentile') or 100):.1f}%",
-                    dominated.get("card_name") or "—",
-                    (
-                        f"+{float(dominated.get('mean_score_lead')):.2f}"
-                        if dominated.get("mean_score_lead") is not None
-                        else "—"
-                    ),
-                    record.get("referenced_by_local_veterans") or 0,
+
+        def populate_transfer_table(_event=None) -> None:
+            selected_status = status_filter_options.get(status_filter_var.get())
+            records = [
+                record for record in all_records
+                if selected_status is None or record.get("status") == selected_status
+            ]
+            descending = score_order_options.get(score_order_var.get(), True)
+            scored_records = [record for record in records if record.get("rank_score") is not None]
+            missing_score_records = [record for record in records if record.get("rank_score") is None]
+            scored_records.sort(
+                key=lambda record: (
+                    int(record.get("rank_score") or 0),
+                    int(record.get("trained_chara_id") or 0),
                 ),
+                reverse=descending,
             )
-            row_map[iid] = record
+            missing_score_records.sort(key=lambda record: int(record.get("trained_chara_id") or 0))
+            records = scored_records + missing_score_records
+            tree.delete(*tree.get_children(""))
+            row_map.clear()
+            for record in records:
+                dominated = record.get("dominated_by") or {}
+                iid = tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        self._tr(status_labels.get(record.get("status"), record.get("status"))),
+                        record.get("card_name") or record.get("uma_name"),
+                        record.get("trained_chara_id"),
+                        record.get("rank") if record.get("rank") is not None else "—",
+                        self._format_rank_score(record.get("rank_score")) or "—",
+                        record.get("same_card_copy_count"),
+                        f"{float(record.get('best_parent_score') or 0):.1f}",
+                        f"top {float(record.get('best_parent_percentile') or 100):.1f}%",
+                        f"{float(record.get('best_grandparent_score') or 0):.1f}",
+                        f"top {float(record.get('best_grandparent_percentile') or 100):.1f}%",
+                        dominated.get("card_name") or "—",
+                        (
+                            f"+{float(dominated.get('mean_score_lead')):.2f}"
+                            if dominated.get("mean_score_lead") is not None
+                            else "—"
+                        ),
+                        record.get("referenced_by_local_veterans") or 0,
+                    ),
+                )
+                row_map[iid] = record
+            children = tree.get_children("")
+            if children:
+                tree.selection_set(children[0])
+                tree.focus(children[0])
+                update_detail()
+            else:
+                detail.configure(state=tk.NORMAL)
+                detail.delete("1.0", tk.END)
+                detail.insert(tk.END, self._tr("Aucun résultat pour ce filtre."))
+                detail.configure(state=tk.DISABLED)
 
         def localised_profile_name(profile: dict[str, object]) -> str:
             context_key = str(profile.get("context_key") or "")
@@ -3376,6 +3661,34 @@ class Application:
                 )
             return lines
 
+        def spark_lines(title: str, snapshot: dict[str, object]) -> list[str]:
+            type_labels = {
+                "blue_stat": "Blue Spark",
+                "red_aptitude": "Pink Spark",
+                "white_skill": "White Skill Spark",
+                "white_race": "Race Spark",
+                "race": "Race Spark",
+                "scenario": "Scenario Spark",
+                "unique": "Unique Spark",
+            }
+            lines = [title]
+            factors = list((snapshot or {}).get("all") or [])
+            if not factors:
+                lines.append("  —")
+                return lines
+            for factor in factors:
+                if not isinstance(factor, dict):
+                    continue
+                factor_type = type_labels.get(
+                    str(factor.get("type") or ""),
+                    str(factor.get("type") or "Spark"),
+                )
+                lines.append(
+                    f"  - {factor_type}: {factor.get('name') or '?'} "
+                    f"{int(factor.get('stars') or 0)}★"
+                )
+            return lines
+
         def update_detail(_event=None) -> None:
             selection = tree.selection()
             if not selection:
@@ -3384,28 +3697,31 @@ class Application:
             dominated = record.get("dominated_by") or {}
             reason_map = {
                 "strictly_dominated_same_card": (
-                    "Un autre exemplaire de la même carte/unique est au moins aussi bon dans toutes les "
+                    "Un autre vétéran du même costume et avec la même unique est au moins aussi bon dans toutes les "
                     "niches globalement viables, avec une avance moyenne suffisante et sans perte de support "
-                    "G1 en paire. Les contextes où toutes les copies sont globalement surclassées sont ignorés."
+                    "G1 en paire. Les contextes où tous les exemplaires sont globalement surclassés sont ignorés."
                 ),
-                "no_competitive_role_detected": (
+                "no_meaningful_role_detected": (
                     "Aucun profil parent ou grand-parent n'atteint les seuils de score ou de classement. "
-                    "Ce verdict reste manuel : aucune copie strictement dominante n'a été trouvée."
+                    "Ce verdict reste manuel : aucun remplaçant strictement dominant n'a été trouvé."
                 ),
-                "grandparent_niche": "Faible comme parent, mais au moins une niche de futur grand-parent reste compétitive.",
-                "parent_niche": "Faible comme futur grand-parent, mais au moins une niche de parent reste compétitive.",
-                "competitive_in_multiple_roles": "Le vétéran reste compétitif dans plusieurs rôles ou profils.",
+                "strong_grandparent_value": "Le vétéran conserve une forte valeur comme futur grand-parent.",
+                "strong_parent_value": "Le vétéran conserve une forte valeur comme parent.",
+                "strong_value_in_multiple_roles": "Le vétéran reste compétitif dans plusieurs rôles ou profils.",
+                "narrow_or_single_context_niche": (
+                    "Le vétéran conserve une niche plausible, mais trop étroite pour être classée comme forte valeur."
+                ),
             }
             lines = [
                 f"{record.get('card_name')} — {record.get('uma_name')}",
-                f"Veteran ID: {record.get('trained_chara_id')} | Card ID: {record.get('card_id')}",
+                f"Veteran ID: {record.get('trained_chara_id')} | Costume ID: {record.get('card_id')}",
                 f"Rang en jeu: {record.get('rank') if record.get('rank') is not None else '—'} | "
                 f"Score en jeu: {self._format_rank_score(record.get('rank_score')) or '—'}",
                 f"Stats: {self._format_stats(record.get('stats') or {}) or '—'}",
                 f"Grands-parents: {record.get('grandparent_1') or '—'} / {record.get('grandparent_2') or '—'}",
                 f"Verdict: {status_labels.get(record.get('status'), record.get('status'))}",
                 f"Raison: {reason_map.get(record.get('reason_code'), record.get('reason_code'))}",
-                f"Copies comparables: {record.get('same_card_copy_count')}",
+                f"Exemplaires comparables: {record.get('same_card_copy_count')}",
                 f"Référencé comme parent direct par {record.get('referenced_by_local_veterans')} vétéran(s) local(aux).",
                 "",
                 f"Meilleur potentiel parent: {float(record.get('best_parent_score') or 0):.2f} "
@@ -3413,6 +3729,7 @@ class Application:
                 f"Meilleur potentiel grand-parent: {float(record.get('best_grandparent_score') or 0):.2f} "
                 f"(top {float(record.get('best_grandparent_percentile') or 100):.2f}%)",
             ]
+            lines.extend([""] + spark_lines("Sparks du vétéran", record.get("sparks") or {}))
             if dominated:
                 lines.extend(
                     [
@@ -3421,6 +3738,9 @@ class Application:
                         f"  {dominated.get('card_name')} [{dominated.get('trained_chara_id')}]",
                         f"  Rang/score en jeu: {dominated.get('rank') if dominated.get('rank') is not None else '—'} / "
                         f"{self._format_rank_score(dominated.get('rank_score')) or '—'}",
+                        f"  Stats du remplaçant: {self._format_stats(dominated.get('stats') or {}) or '—'}",
+                        f"  Grands-parents du remplaçant: {dominated.get('grandparent_1') or '—'} / "
+                        f"{dominated.get('grandparent_2') or '—'}",
                         f"  Avance moyenne: +{float(dominated.get('mean_score_lead') or 0):.3f}",
                         f"  Pire écart observé: {float(dominated.get('worst_context_delta') or 0):+.3f}",
                         f"  Meilleur écart observé: {float(dominated.get('best_context_delta') or 0):+.3f}",
@@ -3428,6 +3748,7 @@ class Application:
                         f"  Comparaisons GP viables: {int(dominated.get('viable_grandparent_comparisons') or 0)}",
                     ]
                 )
+                lines.extend([""] + spark_lines("Sparks du remplaçant", dominated.get("sparks") or {}))
             lines.extend([""] + profile_lines("Meilleurs profils parent", record.get("top_parent_profiles") or []))
             lines.extend([""] + profile_lines("Meilleurs profils grand-parent", record.get("top_grandparent_profiles") or []))
             lines.extend(
@@ -3443,11 +3764,9 @@ class Application:
             detail.configure(state=tk.DISABLED)
 
         tree.bind("<<TreeviewSelect>>", update_detail)
-        if row_map:
-            first = next(iter(row_map))
-            tree.selection_set(first)
-            tree.focus(first)
-            update_detail()
+        status_filter_combo.bind("<<ComboboxSelected>>", populate_transfer_table)
+        score_order_combo.bind("<<ComboboxSelected>>", populate_transfer_table)
+        populate_transfer_table()
 
         footer = ttk.Frame(window, padding=(10, 0, 10, 10))
         footer.pack(fill=tk.X)
@@ -3529,6 +3848,8 @@ class Application:
             tree.heading(column, text=headings[column])
             width = widths.get(column, 92)
             tree.column(column, width=width, anchor="w" if width >= 120 else "center")
+        self._make_tree_sortable(tree)
+        self._bind_tree_column_copy(tree, "friend", status_label="Friend ID")
         vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -3771,6 +4092,8 @@ class Application:
             tree.heading(column, text=headings[column])
             width = widths.get(column, 88)
             tree.column(column, width=width, anchor="w" if width >= 120 else "center")
+        self._make_tree_sortable(tree)
+        self._bind_tree_column_copy(tree, "friend", status_label="Friend ID")
         vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -4497,6 +4820,7 @@ class Application:
                 if column in {"parent_1", "parent_2", "parent", "candidate"}:
                     width = 320
                 tree.column(column, width=width, anchor="w" if width >= 220 else "center")
+            self._make_tree_sortable(tree)
 
             row_map: dict[str, dict[str, object]] = {}
             for index, (payload, values) in enumerate(zip(row_payloads, row_values), 1):
@@ -4945,8 +5269,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Analyse les vétérans locaux et identifie les doublons strictement dominés.",
     )
-    parser.add_argument("--ace-card-id", type=int, help="Card ID de l'Ace cible.")
-    parser.add_argument("--future-parent-card-id", type=int, help="Card ID du parent à produire pour le calcul exact des futurs grands-parents.")
+    parser.add_argument("--ace-card-id", type=int, help="Costume ID de l'Ace cible.")
+    parser.add_argument("--future-parent-card-id", type=int, help="Costume ID du parent à produire pour le calcul exact des futurs grands-parents.")
     parser.add_argument("--track-id", type=int, help="Hippodrome cible (track_id MDB).")
     parser.add_argument("--rotation", type=int, choices=(1, 2), help="1=droite, 2=gauche.")
     parser.add_argument("--season", type=int, choices=(1, 2, 3, 4), help="1=printemps, 2=été, 3=automne, 4=hiver.")

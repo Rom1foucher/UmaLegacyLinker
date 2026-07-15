@@ -166,7 +166,7 @@ def _unique_signature(veteran: dict[str, Any]) -> tuple[str, ...]:
 def comparison_group_key(veteran: dict[str, Any]) -> str:
     """Return the conservative replacement group for a veteran.
 
-    Card ID is deliberately preferred over character ID: alternate costumes can
+    Costume ID is deliberately preferred over character ID: alternate costumes can
     have different inherited unique skills and must never replace one another.
     The unique signature is retained as a safety check for malformed exports.
     """
@@ -176,6 +176,63 @@ def comparison_group_key(veteran: dict[str, Any]) -> str:
     if card_id > 0:
         return f"card:{card_id}|unique:{unique}"
     return f"chara:{chara_id}|unique:{unique}"
+
+
+def _factor_snapshot(veteran: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact, report-friendly view of a veteran's own Sparks."""
+    rows: list[dict[str, Any]] = []
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for factor in ((veteran.get("factors") or {}).get("all") or []):
+        name = str(factor.get("name") or "").strip()
+        factor_type = str(factor.get("type") or "unknown")
+        try:
+            stars = int(factor.get("stars") or 0)
+        except (TypeError, ValueError):
+            stars = 0
+        row = {
+            "type": factor_type,
+            "name": name,
+            "stars": stars,
+        }
+        rows.append(row)
+        by_type[factor_type].append(row)
+
+    type_order = {
+        "blue_stat": 0,
+        "red_aptitude": 1,
+        "white_skill": 2,
+        "white_race": 3,
+        "race": 3,
+        "scenario": 4,
+        "unique": 5,
+    }
+    rows.sort(
+        key=lambda row: (
+            type_order.get(str(row.get("type")), 99),
+            str(row.get("name") or "").casefold(),
+            -int(row.get("stars") or 0),
+        )
+    )
+    type_labels = {
+        "blue_stat": "Blue",
+        "red_aptitude": "Pink",
+        "white_skill": "White skill",
+        "white_race": "Race",
+        "race": "Race",
+        "scenario": "Scenario",
+        "unique": "Unique",
+    }
+    summary = "; ".join(
+        f"{type_labels.get(str(row.get('type') or ''), str(row.get('type') or 'Spark'))}: "
+        f"{row['name']} {row['stars']}★"
+        for row in rows
+        if row.get("name")
+    ) or "none"
+    return {
+        "all": rows,
+        "by_type": {key: value for key, value in sorted(by_type.items())},
+        "summary": summary,
+    }
 
 
 def _build_profile_contexts(
@@ -357,7 +414,7 @@ def _update_group_dominance_for_scores(
     minimum_absolute_floor_ratio: float,
     dominance_tolerance: float,
 ) -> tuple[bool, bool]:
-    """Update same-card dominance only in globally viable role contexts.
+    """Update same-costume dominance only in globally viable role contexts.
 
     A marginal advantage in a context where every copy of that card is globally
     outclassed must not preserve an otherwise redundant veteran. For example,
@@ -586,6 +643,7 @@ def classify_transfer_records(
                 "stats": winner.get("stats") or {},
                 "grandparent_1": winner.get("grandparent_1"),
                 "grandparent_2": winner.get("grandparent_2"),
+                "sparks": winner.get("sparks") or {},
                 "mean_score_lead": round(relation.mean_delta, 4),
                 "worst_context_delta": round(relation.minimum_delta, 4) if math.isfinite(relation.minimum_delta) else 0.0,
                 "best_context_delta": round(relation.maximum_delta, 4) if math.isfinite(relation.maximum_delta) else 0.0,
@@ -688,9 +746,9 @@ def analyze_transfer_candidates(
         "include_team_trials": include_team_trials,
         "include_generic_profiles": include_generic_profiles,
         "course_preset_scope": "first five upcoming Champion Meetings and five Team Trials profiles by default",
-        "replacement_scope": "same card ID and inherited unique signature only",
+        "replacement_scope": "same costume ID and inherited Unique signature only",
         "grandparent_affinity_mode": "optimistic constant ceiling; relative intrinsic ranking is target-independent",
-        "dominance_context_scope": "same-card comparisons only count roles where at least one copy is globally competitive against the full local veteran pool",
+        "dominance_context_scope": "same-costume comparisons only count roles where at least one copy is globally competitive against the full local veteran pool",
     }
 
     contexts = _build_profile_contexts(
@@ -726,6 +784,7 @@ def analyze_transfer_candidates(
             "comparison_group": group,
             "same_card_copy_count": 0,
             "referenced_by_local_veterans": 0,
+            "sparks": _factor_snapshot(veteran),
             "_best_parent_score": 0.0,
             "_best_grandparent_score": 0.0,
             "_best_parent_percentile": 100.0,
@@ -749,7 +808,7 @@ def analyze_transfer_candidates(
                 if loser_index != winner_index:
                     relations[(loser_index, winner_index)] = DominanceAccumulator()
 
-    # Pair-specific base compatibility is identical inside a same-card group. The
+    # Pair-specific base compatibility is identical inside a same-costume group. The
     # only pair support that can differ is G1 overlap, so compare it against every
     # possible local partner once and carry the result into the dominance rule.
     for (loser_index, winner_index), relation in relations.items():
@@ -779,7 +838,15 @@ def analyze_transfer_candidates(
 
     affinity_cache: dict[tuple[int, int], dict[str, Any]] = {}
     ace_cache: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    parent_weight_text = ", ".join(
+        f"{key}={float(value):.1%}" for key, value in parent_weights.items()
+    )
+    gp_weight_text = ", ".join(
+        f"{key}={float(value):.1%}" for key, value in grandparent_weights.items()
+    )
     try:
+        log(f"Pondération Transfer Helper — parent : {parent_weight_text}")
+        log(f"Pondération Transfer Helper — futur GP : {gp_weight_text}")
         log(
             f"Évaluation de {len(veterans)} vétérans dans {len(contexts)} contextes de profil/catégorie…"
         )
@@ -1089,8 +1156,8 @@ def analyze_transfer_candidates(
             "status_counts": dict(sorted(counts.items())),
             "safety_notes": [
                 "The helper never modifies data.json and never transfers a veteran automatically.",
-                "Safe transfer requires one same-card/same-unique replacement that is not worse in every globally viable parent or grandparent context for that card, remains at least as good for G1 pair support, and clears the configured average lead.",
-                "A context is ignored for same-card dominance when every copy of that card is globally outclassed there; being the least-bad copy in a non-viable niche does not force a keep.",
+                "Safe transfer requires one same-costume/same-Unique replacement that is not worse in every globally viable parent or grandparent context for that costume variant, remains at least as good for G1 pair support, and clears the configured average lead.",
+                "A context is ignored for same-costume dominance when every copy of that card is globally outclassed there; being the least-bad copy in a non-viable niche does not force a keep.",
                 "Keep requires elite performance or repeated competitiveness across several contexts and course profiles. A single narrow niche is classified as likely keep.",
                 "Review means no meaningful role was detected under the configured thresholds; it is not an automatic deletion recommendation.",
                 "Grandparent scores use an optimistic constant affinity ceiling so a character-specific compatibility niche is not discarded merely because no target was selected.",
@@ -1218,6 +1285,20 @@ def analyze_transfer_candidates(
         ]
     )
     summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+
+    for record in safe_records:
+        replacement = record.get("dominated_by") or {}
+        log(
+            f"Transfert sûr détaillé : {record.get('card_name')} "
+            f"[#{record.get('trained_chara_id')}] — Sparks : "
+            f"{((record.get('sparks') or {}).get('summary') or 'aucune')}"
+        )
+        log(
+            f"Remplaçant proposé : {replacement.get('card_name')} "
+            f"[#{replacement.get('trained_chara_id')}] — Sparks : "
+            f"{((replacement.get('sparks') or {}).get('summary') or 'aucune')} — "
+            f"avance moyenne {float(replacement.get('mean_score_lead') or 0):+.3f}"
+        )
 
     log(f"Transfer Helper terminé : {report_path}")
     return TransferHelperResult(

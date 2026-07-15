@@ -1671,7 +1671,7 @@ def rank_online_grandparent_pairs(
     finally:
         normalizer.close()
     if not online_candidates:
-        raise UmaMoeError("La réponse uma.moe ne contient aucun candidat avec card/factors exploitables.")
+        raise UmaMoeError("La réponse uma.moe ne contient aucun candidat avec costume/factors exploitables.")
 
     operation_uql = str((api_operation or {}).get("effective_uql") or effective_uql or "")
     generated_meta = (api_operation or {}).get("generated_uql_metadata") or {}
@@ -2154,6 +2154,8 @@ def rank_online_parent_pairs(
         else Path(__file__).resolve().parent / "default_parent_scoring.json"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    allowed_parent_card_ids = {int(value) for value in (allowed_parent_card_ids or []) if int(value) > 0}
+    excluded_parent_card_ids = {int(value) for value in (excluded_parent_card_ids or []) if int(value) > 0}
 
     linked = _read_json(linked_veterans_path)
     weights = _read_json(manual_weights_path)
@@ -2499,7 +2501,7 @@ def rank_online_parent_pairs(
                 "required_any": required_parent_card_id,
                 "allowed": sorted(allowed_parent_card_ids),
                 "excluded": sorted(excluded_parent_card_ids),
-                "scope": "costume/card_id",
+                "scope": "costume_variant/card_id",
             },
             "complete_branch_validation": {
                 "remote_incomplete_excluded": incomplete_remote_count,

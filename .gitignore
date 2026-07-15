@@ -1,7 +1,25 @@
+# Python caches and test artefacts
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+
+# Packaging
 build/
 dist/
 *.spec
+
+# Generated application data
 output/
-UmaLegacyLinker.zip
+UmaLegacyLinker*.zip
+*.prof
+
+# Test modules are project source code and are intentionally not ignored.

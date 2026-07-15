@@ -186,7 +186,7 @@ class MasterResolver:
                 "card_id": card_id,
                 "chara_id": chara_id,
                 "uma_name": uma_name or f"Unknown chara {chara_id}",
-                "card_name": full_name or uma_name or f"Unknown card {card_id}",
+                "card_name": full_name or uma_name or f"Unknown costume {card_id}",
                 "costume_name": costume or "",
             }
 
@@ -296,8 +296,8 @@ class MasterResolver:
                 {
                     "card_id": card_id,
                     "chara_id": None,
-                    "uma_name": f"Unknown card {card_id}",
-                    "card_name": f"Unknown card {card_id}",
+                    "uma_name": f"Unknown costume {card_id}",
+                    "card_name": f"Unknown costume {card_id}",
                     "costume_name": "",
                 },
             )
@@ -730,7 +730,7 @@ def link_veterans(
         )
     if unresolved_cards:
         report_lines.extend(
-            ["", "Card IDs non résolus :", ", ".join(map(str, sorted(unresolved_cards)))]
+            ["", "Costume IDs non résolus :", ", ".join(map(str, sorted(unresolved_cards)))]
         )
     if validation_mismatches:
         report_lines.extend(["", "Divergences G1 :"])

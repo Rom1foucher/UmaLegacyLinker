@@ -832,7 +832,7 @@ def analyze_transfer_candidates(
                 own_member = [(veteran, "grandparent", "candidate")]
                 gp_blue, _ = _blue_score(own_member, context.distance, config)
                 gp_white, _ = _future_grandparent_white_score(
-                    own_member, weight_lookup, config
+                    own_member, weight_lookup, config, race_skills
                 )
                 gp_generation, _ = _white_generation_support_score(
                     _lineage_members(veteran), weight_lookup, config
@@ -885,6 +885,7 @@ def analyze_transfer_candidates(
                             config,
                             "parent_branch",
                             inheritance_affinities=parent_inheritance_affinities,
+                            race_skill_map=race_skills,
                         )
                         parent_components["white_skill"] = parent_white
                         parent_pink, parent_pink_detail = _pink_score(

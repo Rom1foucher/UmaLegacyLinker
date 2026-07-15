@@ -506,6 +506,45 @@ class UmaMoeApiClient:
             "limit": limit,
         }
 
+
+    def documented_parent_card_filter_keys(self) -> dict[str, str]:
+        """Return exact /api/v3/search costume filter parameter names from OpenAPI.
+
+        The uma.moe API has changed parameter naming over time. We therefore only
+        send costume filters that are explicitly present in the live OpenAPI
+        document, while retaining local filtering as the correctness fallback.
+        """
+        try:
+            spec, _ = self.discover_openapi()
+        except Exception:
+            return {}
+        path_item = (spec.get("paths") or {}).get("/api/v3/search") or {}
+        operation = path_item.get("get") or {}
+        params: list[dict[str, Any]] = []
+        for source in (path_item.get("parameters") or [], operation.get("parameters") or []):
+            if isinstance(source, list):
+                params.extend(item for item in source if isinstance(item, dict))
+            elif isinstance(source, dict):
+                params.append(source)
+        names: dict[str, str] = {}
+        for raw in params:
+            param = self._resolve_ref(spec, raw) or {}
+            name = str(param.get("name") or "")
+            lname = name.lower()
+            description = str(param.get("description") or "").lower()
+            haystack = f"{lname.replace('_', ' ')} {description}"
+            if not name or "parent" not in haystack:
+                continue
+            if not any(token in haystack for token in ("card", "costume", "character card", "main parent")):
+                continue
+            is_exclusion = any(token in haystack for token in ("exclude", "excluded", "blacklist", "deny"))
+            is_inclusion = any(token in haystack for token in ("include", "included", "whitelist", "allow", "main_parent"))
+            if is_exclusion and "excluded" not in names:
+                names["excluded"] = name
+            elif is_inclusion and "allowed" not in names:
+                names["allowed"] = name
+        return names
+
     @staticmethod
     def _record_identity(record: Any) -> str:
         if not isinstance(record, dict):
@@ -1574,6 +1613,7 @@ def rank_online_grandparent_pairs(
     skill_catalog_path: str | Path,
     output_dir: str | Path,
     *,
+    race_factor_catalog_path: str | Path | None = None,
     ace_card_id: int,
     target_parent_card_id: int,
     fixed_grandparent_trained_id: int | None = None,
@@ -1601,6 +1641,7 @@ def rank_online_grandparent_pairs(
     linked_veterans_path = Path(linked_veterans_path).resolve()
     manual_weights_path = Path(manual_weights_path).resolve()
     skill_catalog_path = Path(skill_catalog_path).resolve()
+    race_factor_catalog_path = Path(race_factor_catalog_path).resolve() if race_factor_catalog_path else None
     output_dir = Path(output_dir).resolve()
     course_weights_path = Path(course_weights_path).resolve() if course_weights_path else None
     scoring_config_path = Path(scoring_config_path).resolve() if scoring_config_path else Path(__file__).resolve().parent / "default_parent_scoring.json"
@@ -1609,6 +1650,8 @@ def rank_online_grandparent_pairs(
     linked = _read_json(linked_veterans_path)
     weights = _read_json(manual_weights_path)
     skill_catalog = _read_json(skill_catalog_path)
+    race_catalog = _read_json(race_factor_catalog_path) if race_factor_catalog_path and race_factor_catalog_path.is_file() else {"race_factors": []}
+    race_skills = _race_skill_map(race_catalog)
     course_payload = _read_json(course_weights_path) if course_weights_path and course_weights_path.is_file() else None
     config = _read_json(scoring_config_path)
     veterans = list(linked.get("veterans") or [])
@@ -1744,7 +1787,7 @@ def rank_online_grandparent_pairs(
                 members, ace, surface, distance, style, config
             )
             white, _ = _future_grandparent_white_score(
-                members, weight_lookup, config
+                members, weight_lookup, config, race_skills
             )
             white_generation, _ = _white_generation_support_score(_lineage_members(member), weight_lookup, config)
             g1_count = len(_member_g1(member))
@@ -1823,7 +1866,7 @@ def rank_online_grandparent_pairs(
                 direct_members, ace, surface, distance, style, config
             )
             white, white_detail = _future_grandparent_white_score(
-                direct_members, weight_lookup, config
+                direct_members, weight_lookup, config, race_skills
             )
             white_generation, white_generation_detail = _white_generation_support_score(six_members, weight_lookup, config)
             components = {
@@ -2084,6 +2127,9 @@ def rank_online_parent_pairs(
     top_n: int = 50,
     api_operation: dict[str, Any] | None = None,
     required_main_factors: Iterable[dict[str, Any]] | None = None,
+    required_parent_card_id: int | None = None,
+    allowed_parent_card_ids: Iterable[int] | None = None,
+    excluded_parent_card_ids: Iterable[int] | None = None,
     effective_uql: str = "",
     logger: Callable[[str], None] | None = None,
 ) -> OnlineParentSearchResult:
@@ -2204,7 +2250,22 @@ def rank_online_parent_pairs(
 
         def eligible(member: dict[str, Any]) -> bool:
             chara = int(member.get("chara_id") or 0)
-            return chara > 0 and chara != ace_chara
+            card_id = int(member.get("card_id") or 0)
+            if chara <= 0 or chara == ace_chara or card_id <= 0:
+                return False
+            if allowed_parent_card_ids and card_id not in allowed_parent_card_ids:
+                return False
+            if card_id in excluded_parent_card_ids:
+                return False
+            return True
+
+        def pair_matches_card_filters(parent_1: dict[str, Any], parent_2: dict[str, Any]) -> bool:
+            if required_parent_card_id is None:
+                return True
+            return required_parent_card_id in {
+                int(parent_1.get("card_id") or 0),
+                int(parent_2.get("card_id") or 0),
+            }
 
         branch_cache: dict[tuple[str, int], dict[str, Any]] = {}
 
@@ -2385,6 +2446,8 @@ def rank_online_parent_pairs(
                 remote_chara = int(remote_parent.get("chara_id") or 0)
                 if local_chara <= 0 or remote_chara <= 0 or local_chara == remote_chara:
                     continue
+                if not pair_matches_card_filters(local_parent, remote_parent):
+                    continue
                 summaries.append(evaluate_pair(local_parent, remote_parent, detailed=False))
             if exhaustive_pairs and (
                 processed % max(1, len(selected_remotes) * 10) == 0
@@ -2432,6 +2495,12 @@ def rank_online_parent_pairs(
                 },
             },
             "normalization": normalization_diag,
+            "parent_card_filters": {
+                "required_any": required_parent_card_id,
+                "allowed": sorted(allowed_parent_card_ids),
+                "excluded": sorted(excluded_parent_card_ids),
+                "scope": "costume/card_id",
+            },
             "complete_branch_validation": {
                 "remote_incomplete_excluded": incomplete_remote_count,
                 "local_incomplete_excluded": incomplete_local_count,

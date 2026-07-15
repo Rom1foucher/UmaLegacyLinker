@@ -87,6 +87,7 @@ Alternate costumes are never considered interchangeable. The helper never edits 
 For **final parents and parent pairs**, White Skill Sparks are evaluated by actual usefulness and estimated inheritance probability rather than by raw quantity alone. The model uses each carrier’s individual modern affinity, 3/6/9% base rates and both Inspiration Events; duplicate copies are combined as the probability of inheriting the skill at least once.
 
 Future-grandparent searches deliberately keep the simpler model: direct pink/blue/white quality, G1 overlap, base/triple affinity and lineage-supported white generation. They do not estimate final-Ace proc rates, starting aptitude or `P(S)` because a single future GP is only one of six final lineage members and the rest of the final lineage is not yet known.
+Race Sparks that grant a useful skill are also recognized: final Ace-parent searches use their real 1/2/3% inheritance rates and individual affinity, while future-GP searches use only the simplified race-to-white base-rate ratio.
 
 The bundled model can account for:
 
@@ -425,3 +426,7 @@ The Transfer Helper does not classify veterans from percentile alone. Each paren
 - its percentile rank, with a deliberately smaller weight.
 
 This prevents a weak veteran from being kept merely because it ranks well inside a poor field, while preserving genuinely useful veterans in dense, high-quality score clusters. The default weights and thresholds are editable under `transfer_helper` in the scoring configuration.
+
+### Parent costume filters
+
+In the uma.moe parent search mode, a costume can be required anywhere in the final pair. Optional allowed and excluded costume lists apply to both sides of the pair. The application forwards allow/deny filters to uma.moe only when those exact parameters are present in the live OpenAPI document, and always validates the result locally.

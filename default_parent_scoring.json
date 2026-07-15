@@ -78,7 +78,7 @@
     "3": 1.0
   },
   "white_saturation": {
-    "future_grandparent": 0.73,
+    "future_grandparent": 3.96,
     "parent_branch": 1.67,
     "parent_pair": 3.0
   },
@@ -88,7 +88,6 @@
   },
   "race_factor": {
     "base_per_star_quality": 0.025,
-    "granted_skill_multiplier": 0.2,
     "scenario_per_star_quality": 0.06
   },
   "affinity": {
@@ -204,9 +203,9 @@
     "active_green_floor": 0.12,
     "floors": {
       "season": 0.65,
-      "rotation_right": 0.32,
+      "rotation_right": 0.45,
       "rotation_left": 0.52,
-      "track_id": 0.26,
+      "track_id": 0.2,
       "weather": 0.12,
       "ground_condition": 0.14,
       "time": 0.12
@@ -559,7 +558,7 @@
   },
   "blue_neutral_score": 50.0,
   "white_inheritance": {
-    "description": "White Skill Spark model reserved for Ace-parent branches and final pairs. Copies of the same skill are combined into P(inherited at least once), then converted through a distinct-skill utility curve. The curve suppresses very low chances and applies diminishing returns to one highly concentrated skill, so several different useful rare whites are preferred for high-roll potential.",
+    "description": "White Skill Spark model reserved for Ace-parent branches and final pairs. Direct white skills use 3/6/9% base rates; skills granted by Race Sparks use 1/2/3% and merge into the same per-skill inheritance probability. Copies of the same skill are combined into P(inherited at least once), then converted through a distinct-skill utility curve.",
     "base_proc_rates": {
       "1": 0.03,
       "2": 0.06,
@@ -608,7 +607,12 @@
         1.0,
         0.73
       ]
-    ]
+    ],
+    "race_base_proc_rates": {
+      "1": 0.01,
+      "2": 0.02,
+      "3": 0.03
+    }
   },
   "future_grandparent_heuristics": {
     "description": "Simple future-GP model. No Inspiration proc probability or final Ace P(S) is calculated. The candidate is one of six final factors, so acceptable direct pink/blue/white quality is valued alongside affinity, G1 overlap and lineage white-generation support.",

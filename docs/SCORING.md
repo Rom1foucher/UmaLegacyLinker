@@ -336,22 +336,20 @@ seulement jugées acceptables ou utiles à l'échelle d'un membre sur six.
 
 ## White skills
 
-Chaque white Skill Spark utilise les taux communautaires de base :
+Les skills héritables peuvent provenir d’une white Skill Spark directe ou d’une Race Spark qui accorde cette même skill. Les taux communautaires de base sont :
 
 ```text
-1★ = 3 %
-2★ = 6 %
-3★ = 9 %
+White Skill Spark : 1★ = 3 %, 2★ = 6 %, 3★ = 9 %
+Race Spark       : 1★ = 1 %, 2★ = 2 %, 3★ = 3 %
 ```
 
-Pour chaque porteur :
+Pour chaque source portée par un membre :
 
 ```text
 p/événement = taux de base × (1 + affinité individuelle / 100)
 ```
 
-Le moteur applique les deux Inspiration Events. Lorsque plusieurs membres portent la même
-skill, leurs rolls sont combinés en une seule probabilité d'obtenir la skill au moins une fois :
+Le moteur applique les deux Inspiration Events. Une white directe et une Race Spark accordant la même skill sont regroupées sans multiplicateur artificiel : la Race Spark vaut naturellement moins car son taux de base est inférieur. Lorsque plusieurs sources donnent la même skill, leurs rolls sont combinés en une seule probabilité d'obtenir la skill au moins une fois :
 
 ```text
 P(skill) = 1 − produit(1 − p_i)²
@@ -394,9 +392,7 @@ avec leurs six affinités individuelles exactes.
 **Futur GP**
 
 Le candidat restera un GP visible dans la lignée finale, mais le reste de cette lignée n'est
-pas encore suffisamment défini pour produire une estimation de proc utile. Ses propres whites
-sont donc évaluées simplement selon la priorité du skill, les étoiles et son rôle de GP. Aucune
-affinité individuelle, probabilité par événement ou probabilité cumulée n'est calculée.
+pas encore suffisamment défini pour produire une estimation de proc utile. Ses propres whites sont donc évaluées simplement selon la priorité du skill, les étoiles et son rôle de GP. Une Race Spark accordant une skill utile reçoit la même valeur heuristique multipliée par le ratio `taux_race / taux_white` à étoiles égales — un tiers avec les taux par défaut. Aucune affinité individuelle, probabilité par événement ou probabilité cumulée n'est calculée.
 
 Les parents actuels du candidat ne seront plus visibles dans la lignée de l’Ace. Leurs whites
 ne sont donc jamais ajoutées au score d’héritage direct. Elles interviennent uniquement dans

@@ -1,5 +1,13 @@
 # Changelog
 
+## V38 — Race Sparks et skills accordées
+
+- Les skills accordées par les Race Sparks sont désormais intégrées au composant white des branches et paires de parents avec leurs taux réels 1/2/3 %, l’affinité individuelle du porteur et les deux Inspiration Events.
+- Une Race Spark et une white directe donnant la même skill sont fusionnées dans la même probabilité cumulée d’obtention ; aucune décote arbitraire supplémentaire n’est appliquée.
+- Le composant race/scénario ne valorise plus la skill accordée : il conserve uniquement l’utilité statistique/scénario, ce qui évite le double comptage.
+- En recherche de futur GP, les Race Sparks utiles reçoivent une estimation simplifiée fondée sur le ratio de taux race/white à étoiles égales, sans calcul d’affinité ni de probabilité complète.
+- Ajout des taux configurables `white_inheritance.race_base_proc_rates` et suppression/migration du réglage obsolète `race_factor.granted_skill_multiplier`.
+
 ## V37 — diversité des whites et nouveaux poids parent
 
 - Nouveaux poids par défaut de la paire finale : Distance S 29 %, autres pinks 7 %, whites 35 %, race/scénario 4 %, blues 20 % et unique 5 %.
@@ -304,3 +312,10 @@
 - Added a minimum absolute-score ratio so the least-bad candidate in a weak field is not protected.
 - Parent and grandparent profile exports now include utility, leader score, relative-to-leader score, and score gap to the leader.
 - Percentile remains available for diagnostics but no longer grants competitiveness by itself.
+
+## V39 — Parent costume constraints
+
+- Added costume-level filters for Ace parent searches: required in pair, allowed, and excluded.
+- The required costume may be satisfied by either the local or remote parent.
+- Allowed/excluded remote costumes are pushed to uma.moe when the live OpenAPI exposes matching parameters, then always revalidated locally.
+- Imported JSON responses use the same local safeguards.

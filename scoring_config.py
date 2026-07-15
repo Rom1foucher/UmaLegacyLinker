@@ -82,6 +82,13 @@ def migrate_scoring_overrides(
             future_mode.pop("distance_s", None)
             future_mode.pop("pink_other", None)
 
+    race_factor_overrides = migrated.get("race_factor")
+    if isinstance(race_factor_overrides, dict):
+        # Granted Race-Spark skills now use their actual 1/2/3% inheritance
+        # rates inside the white-skill component; the former arbitrary
+        # multiplier would otherwise remain visible but have no effect.
+        race_factor_overrides.pop("granted_skill_multiplier", None)
+
     aptitude_overrides = migrated.get("aptitude_inheritance")
     if isinstance(aptitude_overrides, dict):
         dimensions = aptitude_overrides.get("dimension_weights_by_mode")
@@ -249,6 +256,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("future_grandparent_heuristics", "pink_need_multiplier"),
         ("future_grandparent_heuristics", "white_star_quality"),
         ("white_inheritance", "base_proc_rates"),
+        ("white_inheritance", "race_base_proc_rates"),
         ("unique_star_quality",),
         ("position_transmission",),
         ("white_saturation",),
@@ -274,6 +282,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("blue_star_quality",),
         ("aptitude_inheritance", "pink_base_proc_rates"),
         ("white_inheritance", "base_proc_rates"),
+        ("white_inheritance", "race_base_proc_rates"),
         ("unique_star_quality",),
     ):
         mapping = _require_dict(config, path)

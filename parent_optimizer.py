@@ -1053,8 +1053,14 @@ def _future_grandparent_white_score(
     members: list[tuple[dict[str, Any], str, str]],
     weight_lookup: Callable[[str], float],
     config: dict[str, Any],
+    race_skill_map: dict[str, list[str]] | None = None,
 ) -> tuple[float, dict[str, Any]]:
-    """Score white Sparks directly carried by a future GP without proc maths."""
+    """Score direct useful factors on a future GP without affinity proc maths.
+
+    Direct white Skill Sparks keep the historical star/position heuristic. Race
+    Sparks that grant the same skill use the same heuristic multiplied by their
+    base proc-rate ratio versus a white Skill Spark of the same star count.
+    """
     gp_cfg = config.get("future_grandparent_heuristics") or {}
     position_weights = config.get("position_transmission") or {}
     star_quality = gp_cfg.get("white_star_quality") or {
@@ -1062,6 +1068,11 @@ def _future_grandparent_white_score(
         "2": 1.35,
         "3": 1.8,
     }
+    white_cfg = config.get("white_inheritance") or {}
+    white_rates = white_cfg.get("base_proc_rates") or {"1": 0.03, "2": 0.06, "3": 0.09}
+    race_rates = white_cfg.get("race_base_proc_rates") or {"1": 0.01, "2": 0.02, "3": 0.03}
+    granted_by_race = race_skill_map or {}
+
     raw = 0.0
     details: list[dict[str, Any]] = []
     for member, position, role in members:
@@ -1077,22 +1088,56 @@ def _future_grandparent_white_score(
             details.append({
                 "role": role,
                 "position": position,
+                "source_type": "white_skill",
+                "source_factor_name": name,
                 "name": name,
                 "catalog_key": catalog_key,
                 "stars": stars,
                 "profile_weight": round(profile_weight, 6),
                 "star_quality": round(quality, 6),
                 "position_weight": round(position_weight, 6),
+                "proc_rate_ratio_vs_white": 1.0,
                 "contribution": round(contribution, 8),
             })
+
+        for factor in _factor_list(member, "white_race"):
+            stars = int(factor.get("stars") or 0)
+            race_name = str(factor.get("name") or "")
+            quality = float(star_quality.get(str(stars), 0.0))
+            white_rate = max(0.0, float(white_rates.get(str(stars), 0.0)))
+            race_rate = max(0.0, float(race_rates.get(str(stars), 0.0)))
+            rate_ratio = race_rate / white_rate if white_rate > 0.0 else 0.0
+            for catalog_key in granted_by_race.get(race_name, []):
+                profile_weight = max(0.0, float(weight_lookup(catalog_key)))
+                contribution = profile_weight * quality * position_weight * rate_ratio
+                raw += contribution
+                details.append({
+                    "role": role,
+                    "position": position,
+                    "source_type": "white_race",
+                    "source_factor_name": race_name,
+                    "name": catalog_key,
+                    "catalog_key": catalog_key,
+                    "stars": stars,
+                    "profile_weight": round(profile_weight, 6),
+                    "star_quality": round(quality, 6),
+                    "position_weight": round(position_weight, 6),
+                    "white_base_proc_rate": round(white_rate, 8),
+                    "race_base_proc_rate": round(race_rate, 8),
+                    "proc_rate_ratio_vs_white": round(rate_ratio, 8),
+                    "contribution": round(contribution, 8),
+                })
     scale = float((config.get("white_saturation") or {}).get("future_grandparent", 1.0))
     details.sort(key=lambda item: item["contribution"], reverse=True)
     return _saturating_score(raw, scale), {
         "raw": raw,
         "scale": scale,
-        "formula": "sum(profile priority × star quality × GP position weight), then diminishing-return saturation",
+        "formula": "direct white: priority × star quality × GP position; granted race skill: same value × race/white base proc-rate ratio; then diminishing-return saturation",
         "model": "future_grandparent_simple",
         "uses_individual_affinity": False,
+        "uses_simplified_race_proc_ratio": True,
+        "white_base_proc_rates": white_rates,
+        "race_base_proc_rates": race_rates,
         "star_tiers": star_quality,
         "top_factors": details[:30],
         "factor_count": len(details),
@@ -1289,16 +1334,18 @@ def _white_score(
     config: dict[str, Any],
     saturation_key: str,
     inheritance_affinities: dict[str, float] | None = None,
+    race_skill_map: dict[str, list[str]] | None = None,
 ) -> tuple[float, dict[str, Any]]:
-    """Score useful white Skill Sparks from estimated inheritance odds.
+    """Score useful inherited skills from direct white and Race Sparks.
 
-    Every carrier rolls independently at each Inspiration Event. Duplicate copies
-    of the same skill are combined as the probability of receiving that skill at
-    least once, which prevents a parent branch from being inflated merely because
-    its own low-affinity grandparents carry redundant copies.
+    Both source types use their actual base proc rate, the carrier's individual
+    affinity and the same two Inspiration Events. Sources granting the same skill
+    are merged into one P(inherited at least once), so Race Sparks need no extra
+    arbitrary discount beyond their naturally lower 1/2/3% base rates.
     """
     white_cfg = config.get("white_inheritance") or {}
     base_rates = white_cfg.get("base_proc_rates") or {"1": 0.03, "2": 0.06, "3": 0.09}
+    race_base_rates = white_cfg.get("race_base_proc_rates") or {"1": 0.01, "2": 0.02, "3": 0.03}
     event_count = max(1, int(white_cfg.get("inspiration_event_count", 2) or 2))
     per_event_cap = max(0.0, min(float(white_cfg.get("per_event_probability_cap", 1.0)), 1.0))
     distinct_skill_curve = white_cfg.get("distinct_skill_probability_curve") or [
@@ -1311,51 +1358,95 @@ def _white_score(
         [1.0, 0.73],
     ]
     affinities = inheritance_affinities or {}
+    granted_by_race = race_skill_map or {}
 
     grouped: dict[str, dict[str, Any]] = {}
     factor_details: list[dict[str, Any]] = []
+
+    def register_source(
+        *,
+        role: str,
+        position: str,
+        skill_key: str,
+        skill_name: str,
+        source_type: str,
+        source_factor_name: str,
+        stars: int,
+        base_rate: float,
+        affinity_value: float,
+    ) -> None:
+        affinity_multiplier = 1.0 + affinity_value / 100.0
+        profile_weight = max(0.0, float(weight_lookup(skill_key)))
+        probability_per_event = min(per_event_cap, max(0.0, base_rate) * affinity_multiplier)
+        probability_over_run = 1.0 - (1.0 - probability_per_event) ** event_count
+        standalone_contribution = profile_weight * probability_over_run
+        row = {
+            "role": role,
+            "position": position,
+            "source_type": source_type,
+            "source_factor_name": source_factor_name,
+            "name": skill_name,
+            "catalog_key": skill_key,
+            "stars": stars,
+            "profile_weight": round(profile_weight, 6),
+            "inheritance_affinity": round(affinity_value, 6),
+            "base_proc_rate": round(base_rate, 8),
+            "affinity_multiplier": round(affinity_multiplier, 6),
+            "proc_probability_per_event": round(probability_per_event, 8),
+            "proc_probability_over_run": round(probability_over_run, 8),
+            "standalone_contribution": round(standalone_contribution, 8),
+            "contribution": round(standalone_contribution, 8),
+        }
+        factor_details.append(row)
+        bucket = grouped.setdefault(
+            skill_key,
+            {
+                "name": skill_name,
+                "catalog_key": skill_key,
+                "profile_weight": profile_weight,
+                "failure_probability": 1.0,
+                "factors": [],
+            },
+        )
+        if source_type == "white_skill":
+            bucket["name"] = skill_name
+        bucket["failure_probability"] *= (1.0 - probability_per_event) ** event_count
+        bucket["factors"].append(row)
+
     for member, position, role in members:
         affinity_value = max(0.0, float(affinities.get(role, 0.0)))
-        affinity_multiplier = 1.0 + affinity_value / 100.0
         for factor in _factor_list(member, "white_skill"):
             stars = int(factor.get("stars") or 0)
             name = str(factor.get("name") or "")
             key = slugify(name)
-            profile_weight = max(0.0, float(weight_lookup(key)))
-            base_rate = max(0.0, float(base_rates.get(str(stars), 0.0)))
-            probability_per_event = min(per_event_cap, base_rate * affinity_multiplier)
-            probability_over_run = 1.0 - (1.0 - probability_per_event) ** event_count
-            standalone_contribution = profile_weight * probability_over_run
-            row = {
-                "role": role,
-                "position": position,
-                "name": name,
-                "catalog_key": key,
-                "stars": stars,
-                "profile_weight": round(profile_weight, 6),
-                "inheritance_affinity": round(affinity_value, 6),
-                "base_proc_rate": round(base_rate, 8),
-                "affinity_multiplier": round(affinity_multiplier, 6),
-                "proc_probability_per_event": round(probability_per_event, 8),
-                "proc_probability_over_run": round(probability_over_run, 8),
-                "standalone_contribution": round(standalone_contribution, 8),
-                # Compatibility alias for generic detail renderers. This is the
-                # factor's standalone value, not the duplicate-aware skill value.
-                "contribution": round(standalone_contribution, 8),
-            }
-            factor_details.append(row)
-            bucket = grouped.setdefault(
-                key,
-                {
-                    "name": name,
-                    "catalog_key": key,
-                    "profile_weight": profile_weight,
-                    "failure_probability": 1.0,
-                    "factors": [],
-                },
+            register_source(
+                role=role,
+                position=position,
+                skill_key=key,
+                skill_name=name,
+                source_type="white_skill",
+                source_factor_name=name,
+                stars=stars,
+                base_rate=max(0.0, float(base_rates.get(str(stars), 0.0))),
+                affinity_value=affinity_value,
             )
-            bucket["failure_probability"] *= (1.0 - probability_per_event) ** event_count
-            bucket["factors"].append(row)
+
+        for factor in _factor_list(member, "white_race"):
+            stars = int(factor.get("stars") or 0)
+            race_name = str(factor.get("name") or "")
+            base_rate = max(0.0, float(race_base_rates.get(str(stars), 0.0)))
+            for skill_key in granted_by_race.get(race_name, []):
+                register_source(
+                    role=role,
+                    position=position,
+                    skill_key=skill_key,
+                    skill_name=skill_key,
+                    source_type="white_race",
+                    source_factor_name=race_name,
+                    stars=stars,
+                    base_rate=base_rate,
+                    affinity_value=affinity_value,
+                )
 
     raw = 0.0
     probability_raw = 0.0
@@ -1383,6 +1474,7 @@ def _white_score(
                 "contribution": round(contribution, 8),
                 "carrier_count": len(carriers),
                 "roles": [str(item["role"]) for item in carriers],
+                "source_types": sorted({str(item["source_type"]) for item in carriers}),
                 "factors": carriers,
             }
         )
@@ -1394,11 +1486,13 @@ def _white_score(
         "raw": raw,
         "probability_raw": probability_raw,
         "scale": scale,
-        "formula": "for each distinct skill: combine carriers into P(at least once), convert P through the configurable distinct-skill utility curve, multiply by profile priority, sum, then apply total saturation",
+        "formula": "combine direct white and granted Race-Spark sources per distinct skill using their own base rates, individual affinity and Inspiration events; convert P through the distinct-skill utility curve; sum and saturate",
         "base_proc_rates": base_rates,
+        "race_base_proc_rates": race_base_rates,
         "inspiration_event_count": event_count,
         "distinct_skill_probability_curve": distinct_skill_curve,
         "uses_individual_affinity": True,
+        "race_skill_policy": "no arbitrary multiplier: Race Sparks use their lower 1/2/3% base rates and merge with direct white copies of the same granted skill",
         "diversity_policy": "very low chances are suppressed; useful distinct skills receive separate utility; repeated copies only increase the same skill probability with diminishing returns",
         "top_skills": skill_details[:20],
         "top_factors": factor_details[:30],
@@ -1414,11 +1508,16 @@ def _race_scenario_score(
     config: dict[str, Any],
     saturation_key: str,
 ) -> tuple[float, dict[str, Any]]:
+    """Score only the stat/scenario side of Race and Scenario Sparks.
+
+    Skills granted by Race Sparks are scored in :func:`_white_score` with their
+    actual 1/2/3% inheritance rates, preventing both an arbitrary multiplier and
+    double counting in this component.
+    """
     position_weights = config.get("position_transmission") or {}
     star_quality = config.get("star_quality") or {}
     race_config = config.get("race_factor") or {}
     base_per_star = float(race_config.get("base_per_star_quality", 0.06))
-    skill_multiplier = float(race_config.get("granted_skill_multiplier", 0.33))
     scenario_per_star = float(race_config.get("scenario_per_star_quality", 0.10))
     raw = 0.0
     details: list[dict[str, Any]] = []
@@ -1432,12 +1531,10 @@ def _race_scenario_score(
                 if factor_type == "scenario":
                     base = scenario_per_star * star_weight
                     granted = []
-                    skill_value = 0.0
                 else:
                     base = base_per_star * star_weight
                     granted = race_skill_map.get(name, [])
-                    skill_value = max((weight_lookup(key) for key in granted), default=0.0)
-                contribution = (base + skill_multiplier * skill_value * star_weight) * position_weight
+                contribution = base * position_weight
                 raw += contribution
                 details.append(
                     {
@@ -1446,13 +1543,19 @@ def _race_scenario_score(
                         "name": name,
                         "stars": stars,
                         "granted_skill_keys": granted,
-                        "granted_skill_weight": round(skill_value, 6),
+                        "granted_skills_scored_in": "white_skill" if granted else None,
                         "contribution": round(contribution, 6),
                     }
                 )
     scale = float((config.get("race_saturation") or {}).get(saturation_key, 1.0))
     details.sort(key=lambda item: item["contribution"], reverse=True)
-    return _saturating_score(raw, scale), {"raw": raw, "scale": scale, "top_factors": details[:20], "factor_count": len(details)}
+    return _saturating_score(raw, scale), {
+        "raw": raw,
+        "scale": scale,
+        "formula": "Race/Scenario Spark stat utility only; granted skills are probability-scored in white_skill",
+        "top_factors": details[:20],
+        "factor_count": len(details),
+    }
 
 
 def _unique_score(
@@ -1668,6 +1771,7 @@ def evaluate_parent_branch(
     white, white_detail = _white_score(
         members, weight_lookup, config, "parent_branch",
         inheritance_affinities=inheritance_affinities,
+        race_skill_map=race_skills,
     )
     race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_branch")
     unique, unique_detail = _unique_score(members, config, "parent_branch")
@@ -1801,6 +1905,7 @@ def evaluate_parent_pair(
     white, white_detail = _white_score(
         members, weight_lookup, config, "parent_pair",
         inheritance_affinities=inheritance_affinity_detail["values"],
+        race_skill_map=race_skills,
     )
     race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_pair")
     unique, unique_detail = _unique_score(members, config, "parent_pair")
@@ -2118,7 +2223,7 @@ def optimize_parents(
                 members, ace, surface, distance, style, config
             )
             white, white_detail = _future_grandparent_white_score(
-                members, weight_lookup, config
+                members, weight_lookup, config, race_skills
             )
             production_lineage = _lineage_members(veteran)
             white_generation, white_generation_detail = _white_generation_support_score(

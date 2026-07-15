@@ -271,6 +271,12 @@ class Application:
         self.uma_moe_response_var = tk.StringVar(value=config.get("uma_moe_response_path", ""))
         self.uma_moe_token_var = tk.StringVar(value=os.environ.get("UMA_MOE_API_KEY", ""))
         self.fixed_gp_var = tk.StringVar(value="")
+        self.parent_required_card_var = tk.StringVar(value="")
+        self._saved_required_parent_card_id = int(config.get("uma_moe_required_parent_card_id", "0") or 0)
+        self._allowed_parent_card_ids = {int(v) for v in str(config.get("uma_moe_allowed_parent_card_ids", "")).split(",") if v.strip().isdigit() and int(v) > 0}
+        self._excluded_parent_card_ids = {int(v) for v in str(config.get("uma_moe_excluded_parent_card_ids", "")).split(",") if v.strip().isdigit() and int(v) > 0}
+        self.parent_allowed_summary_var = tk.StringVar(value="")
+        self.parent_excluded_summary_var = tk.StringVar(value="")
         self.uma_moe_limit_var = tk.IntVar(
             value=max(100, min(int(config.get("uma_moe_limit", "1000")), MAX_FETCH_CANDIDATES))
         )
@@ -829,10 +835,22 @@ class Application:
             width=7,
         ).pack(side=tk.LEFT)
 
+        self.parent_card_filter_frame = ttk.Frame(mode)
+        self.parent_card_filter_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(7, 0))
+        self.parent_card_filter_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.parent_card_filter_frame, text="Costume requis dans la paire", width=24).grid(row=0, column=0, sticky="w")
+        self.parent_required_card_combo = ttk.Combobox(self.parent_card_filter_frame, textvariable=self.parent_required_card_var, state="normal")
+        self.parent_required_card_combo.grid(row=0, column=1, sticky="ew")
+        self._enable_searchable_combo(self.parent_required_card_combo, lambda: ["(aucun)"] + self._ace_all_values)
+        ttk.Button(self.parent_card_filter_frame, textvariable=self.parent_allowed_summary_var, command=lambda: self._open_parent_card_filter_picker("allowed")).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(self.parent_card_filter_frame, textvariable=self.parent_excluded_summary_var, command=lambda: self._open_parent_card_filter_picker("excluded")).grid(row=0, column=3, padx=(8, 0))
+        ttk.Label(self.parent_card_filter_frame, text="Filtres par costume uniquement ; le parent requis peut être local ou distant.", style="Hint.TLabel").grid(row=1, column=1, columnspan=3, sticky="w", pady=(3, 0))
+        self._refresh_parent_card_filter_summaries()
+
         self.uma_moe_fixed_label = ttk.Label(mode, text="GP local fixé (manuel)", width=24)
-        self.uma_moe_fixed_label.grid(row=2, column=0, sticky="w", pady=(7, 0))
+        self.uma_moe_fixed_label.grid(row=3, column=0, sticky="w", pady=(7, 0))
         fixed_gp_frame = ttk.Frame(mode)
-        fixed_gp_frame.grid(row=2, column=1, sticky="ew", pady=(7, 0))
+        fixed_gp_frame.grid(row=3, column=1, sticky="ew", pady=(7, 0))
         fixed_gp_frame.columnconfigure(0, weight=1)
         self.fixed_gp_combo = ttk.Combobox(fixed_gp_frame, textvariable=self.fixed_gp_var, state="normal")
         self.fixed_gp_combo.grid(row=0, column=0, sticky="ew")
@@ -842,7 +860,7 @@ class Application:
         ttk.Label(fixed_gp_frame, text="Ignoré en mode automatique.", style="Hint.TLabel").grid(row=0, column=2, padx=(8, 0))
 
         self.uma_moe_g1_frame = ttk.Frame(mode)
-        self.uma_moe_g1_frame.grid(row=3, column=0, columnspan=2, sticky="w", pady=(7, 0))
+        self.uma_moe_g1_frame.grid(row=4, column=0, columnspan=2, sticky="w", pady=(7, 0))
         ttk.Label(self.uma_moe_g1_frame, text="G1 prévues sur le parent").pack(side=tk.LEFT)
         ttk.Spinbox(self.uma_moe_g1_frame, from_=0, to=40, increment=1, textvariable=self.uma_moe_parent_g1_budget_var, width=6).pack(side=tk.LEFT, padx=(7, 0))
         ttk.Label(self.uma_moe_g1_frame, text="Valeur d'une G1 non commune").pack(side=tk.LEFT, padx=(24, 0))
@@ -1890,6 +1908,11 @@ class Application:
                 self.uma_moe_g1_frame.grid_remove()
             else:
                 self.uma_moe_g1_frame.grid()
+        if hasattr(self, "parent_card_filter_frame"):
+            if parent_mode:
+                self.parent_card_filter_frame.grid()
+            else:
+                self.parent_card_filter_frame.grid_remove()
         if hasattr(self, "uma_moe_context_hint"):
             self.uma_moe_context_hint.configure(
                 text=self._tr(
@@ -1976,6 +1999,55 @@ class Application:
         except Exception as exc:
             if show_errors:
                 self._show_error(f"Impossible de charger les vétérans locaux : {exc}")
+
+    def _refresh_parent_card_filter_summaries(self) -> None:
+        self.parent_allowed_summary_var.set(f"Autorisés ({len(self._allowed_parent_card_ids)})")
+        self.parent_excluded_summary_var.set(f"Exclus ({len(self._excluded_parent_card_ids)})")
+
+    def _open_parent_card_filter_picker(self, kind: str) -> None:
+        selected = self._allowed_parent_card_ids if kind == "allowed" else self._excluded_parent_card_ids
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Costumes autorisés" if kind == "allowed" else "Costumes exclus")
+        dialog.geometry("760x620")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        search_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=search_var).pack(fill=tk.X)
+        listbox = tk.Listbox(frame, selectmode=tk.MULTIPLE)
+        listbox.pack(fill=tk.BOTH, expand=True, pady=(8, 8))
+        visible_ids: list[int] = []
+        def refill(*_args) -> None:
+            query = search_var.get().strip().casefold()
+            listbox.delete(0, tk.END)
+            visible_ids.clear()
+            for display in self._ace_all_values:
+                if query and query not in display.casefold():
+                    continue
+                card_id = self._ace_display_to_id.get(display)
+                if not card_id:
+                    continue
+                index = len(visible_ids)
+                visible_ids.append(card_id)
+                listbox.insert(tk.END, display)
+                if card_id in selected:
+                    listbox.selection_set(index)
+        def apply() -> None:
+            chosen = {visible_ids[int(i)] for i in listbox.curselection()}
+            # Preserve selected cards hidden by the active search query.
+            hidden = selected - set(visible_ids)
+            selected.clear()
+            selected.update(hidden | chosen)
+            self._refresh_parent_card_filter_summaries()
+            dialog.destroy()
+        search_var.trace_add("write", refill)
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill=tk.X)
+        ttk.Button(buttons, text="Tout effacer", command=lambda: (selected.clear(), refill())).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Valider", command=apply).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Annuler", command=dialog.destroy).pack(side=tk.RIGHT, padx=(0, 8))
+        refill()
 
     def _open_fixed_gp_picker(self) -> None:
         self._refresh_local_veteran_options(show_errors=True)
@@ -2212,6 +2284,9 @@ class Application:
                 "uma_moe_response_path": self.uma_moe_response_var.get().strip(),
                 "uma_moe_limit": str(self.uma_moe_limit_var.get()),
                 "uma_moe_parent_g1_budget": str(self.uma_moe_parent_g1_budget_var.get()),
+                "uma_moe_required_parent_card_id": str(self._ace_display_to_id.get(self.parent_required_card_var.get(), self._saved_required_parent_card_id or 0)),
+                "uma_moe_allowed_parent_card_ids": ",".join(str(v) for v in sorted(self._allowed_parent_card_ids)),
+                "uma_moe_excluded_parent_card_ids": ",".join(str(v) for v in sorted(self._excluded_parent_card_ids)),
                 "uma_moe_single_g1_weight": str(self.uma_moe_single_g1_weight_var.get()),
                 "uma_moe_auto_uql": "1" if self.uma_moe_auto_uql_var.get() else "0",
                 "uma_moe_auto_pairs": "1" if self.uma_moe_auto_pairs_var.get() else "0",
@@ -2256,6 +2331,10 @@ class Application:
             values = [option.display_name for option in options]
             self._ace_all_values = values
             self.ace_combo.configure(values=values)
+            self.parent_required_card_combo.configure(values=["(aucun)"] + values)
+            required_display = self._ace_id_to_display.get(self._saved_required_parent_card_id)
+            self.parent_required_card_var.set(required_display or "(aucun)")
+            self._refresh_parent_card_filter_summaries()
             self.future_parent_combo.configure(values=values)
             selected = self._ace_id_to_display.get(self._saved_ace_card_id)
             if selected is None and values:
@@ -2548,6 +2627,21 @@ class Application:
                 "require_main_style": bool(self.uql_require_style_var.get()),
                 "pink_min_stars": max(1, min(int(self.uql_pink_min_stars_var.get()), 3)),
             }
+            required_parent_card_id: int | None = None
+            allowed_parent_card_ids: set[int] = set()
+            excluded_parent_card_ids: set[int] = set()
+            if parent_search:
+                required_parent_card_id = self._ace_display_to_id.get(self.parent_required_card_var.get())
+                allowed_parent_card_ids = set(self._allowed_parent_card_ids)
+                excluded_parent_card_ids = set(self._excluded_parent_card_ids)
+                if required_parent_card_id in excluded_parent_card_ids:
+                    raise UmaMoeError("Le costume requis est également exclu.")
+                if (
+                    allowed_parent_card_ids
+                    and required_parent_card_id is not None
+                    and required_parent_card_id not in allowed_parent_card_ids
+                ):
+                    raise UmaMoeError("Le costume requis doit être présent dans les costumes autorisés.")
             course_conditions = self._selected_course_conditions()
             course_overrides_text = self.course_overrides_var.get().strip()
             course_overrides = Path(course_overrides_text).expanduser() if course_overrides_text else None
@@ -2604,6 +2698,9 @@ class Application:
                 limit,
                 planned_g1_budget,
                 single_g1_weight,
+                required_parent_card_id,
+                sorted(allowed_parent_card_ids),
+                sorted(excluded_parent_card_ids),
                 self.uma_moe_token_var.get().strip(),
             ),
             daemon=True,
@@ -2923,6 +3020,9 @@ class Application:
         limit: int,
         planned_g1_budget: int,
         single_g1_weight: float,
+        required_parent_card_id: int | None,
+        allowed_parent_card_ids: list[int],
+        excluded_parent_card_ids: list[int],
         token: str,
     ) -> None:
         try:
@@ -3016,6 +3116,30 @@ class Application:
                     api_filters["optional_main_white_factors"] = optional_main_white_factors
                 if optional_white_sparks:
                     api_filters["optional_white_sparks"] = optional_white_sparks
+                if search_mode == "parent":
+                    # OpenAPI discovery is only useful when an API-side whitelist
+                    # or blacklist must actually be sent. The required-parent
+                    # constraint is pair-wide and is therefore checked locally.
+                    documented_card_filters = (
+                        client.documented_parent_card_filter_keys()
+                        if allowed_parent_card_ids or excluded_parent_card_ids
+                        else {}
+                    )
+                    allowed_key = documented_card_filters.get("allowed")
+                    excluded_key = documented_card_filters.get("excluded")
+                    if allowed_key and allowed_parent_card_ids:
+                        api_filters[allowed_key] = allowed_parent_card_ids
+                        self._enqueue_log(f"Whitelist costumes envoyée à l’API ({allowed_key}) : {allowed_parent_card_ids}")
+                    if excluded_key and excluded_parent_card_ids:
+                        api_filters[excluded_key] = excluded_parent_card_ids
+                        self._enqueue_log(f"Blacklist costumes envoyée à l’API ({excluded_key}) : {excluded_parent_card_ids}")
+                    if (allowed_parent_card_ids or excluded_parent_card_ids) and not documented_card_filters:
+                        self._enqueue_log("Filtres costume non détectés dans l’OpenAPI : contrôle local uniquement.")
+                    if required_parent_card_id:
+                        self._enqueue_log(
+                            "Parent requis dans la paire : contrôle local après constitution des paires "
+                            "(il peut être local ou distant, donc aucun filtre API unilatéral n’est appliqué)."
+                        )
                 raw_payload, operation = client.search_many(
                     filters=api_filters,
                     desired_candidates=limit,
@@ -3059,6 +3183,9 @@ class Application:
                     output,
                     ace_card_id=ace_card_id,
                     fixed_parent_trained_id=fixed_local_id,
+                    required_parent_card_id=required_parent_card_id,
+                    allowed_parent_card_ids=allowed_parent_card_ids,
+                    excluded_parent_card_ids=excluded_parent_card_ids,
                     **common_kwargs,
                 )
                 self.queue.put(("uma_moe_parent_done", result))
@@ -3071,6 +3198,7 @@ class Application:
                     manual_weights.weights_path,
                     linked.skills_catalog_path,
                     output,
+                    race_factor_catalog_path=linked.race_factor_skills_path,
                     ace_card_id=ace_card_id,
                     target_parent_card_id=target_parent_card_id,
                     fixed_grandparent_trained_id=fixed_local_id,
@@ -3789,6 +3917,7 @@ class Application:
                             f"| P(héritée au moins une fois)={100 * float(factor.get('probability_at_least_once') or 0):.1f}% "
                             f"| utilité diversité={float(factor.get('probability_utility') or factor.get('probability_at_least_once') or 0):.3f} "
                             f"| porteurs={int(factor.get('carrier_count') or 0)} "
+                            f"| sources={','.join(factor.get('source_types') or []) or 'white'} "
                             f"| contribution={float(factor.get('contribution') or 0):.4f}"
                         )
                     elif key == "pink":
@@ -4020,12 +4149,23 @@ class Application:
                             f" => brut={float(factor.get('contribution') or 0):.4f}"
                         )
                     else:
-                        prefix += (
-                            f" {stars}★ | poids profil={float(factor.get('profile_weight') or 0):.3f}"
-                            f" × palier étoiles={float(factor.get('star_quality') or 0):.2f}"
-                            f" × position GP={float(factor.get('position_weight') or 0):.2f}"
-                            f" => brut={float(factor.get('contribution') or 0):.4f}"
-                        )
+                        source_type = str(factor.get("source_type") or "white_skill")
+                        if source_type == "white_race":
+                            prefix += (
+                                f" via {factor.get('source_factor_name') or 'Race Spark'} {stars}★"
+                                f" | poids profil={float(factor.get('profile_weight') or 0):.3f}"
+                                f" × palier étoiles={float(factor.get('star_quality') or 0):.2f}"
+                                f" × position GP={float(factor.get('position_weight') or 0):.2f}"
+                                f" × ratio proc={float(factor.get('proc_rate_ratio_vs_white') or 0):.2f}"
+                                f" => brut={float(factor.get('contribution') or 0):.4f}"
+                            )
+                        else:
+                            prefix += (
+                                f" {stars}★ | poids profil={float(factor.get('profile_weight') or 0):.3f}"
+                                f" × palier étoiles={float(factor.get('star_quality') or 0):.2f}"
+                                f" × position GP={float(factor.get('position_weight') or 0):.2f}"
+                                f" => brut={float(factor.get('contribution') or 0):.4f}"
+                            )
                 else:
                     prefix = f"  - {role}: {name} {stars}★"
                     if kind == "blue":

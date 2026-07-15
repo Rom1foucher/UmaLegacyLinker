@@ -4,7 +4,7 @@ Uma Legacy Linker is a local desktop application for analysing and ranking inher
 
 It links exported veteran data to the game's current `master.mdb`, reconstructs each veteran's factors, race history and ancestry, then evaluates parents and grandparents for a selected Ace, strategy and race profile.
 
-The application is designed for players who want more than a simple compatibility score: it combines affinity, blue and pink factors, white skills, race factors, lineage potential, G1 overlap and configurable meta priorities into one explainable ranking model.
+The application is designed for players who want more than a simple compatibility score: it combines individual Spark inheritance affinity, initial aptitude ranks, blue and pink factors, white skills, race factors, lineage potential, G1 overlap and configurable meta priorities into one explainable ranking model.
 
 > This is an independent community tool. It is not affiliated with or endorsed by Cygames.
 
@@ -84,7 +84,9 @@ Alternate costumes are never considered interchangeable. The helper never edits 
 
 ### Skill-aware scoring
 
-White factors are evaluated by actual usefulness for the selected profile rather than by raw quantity alone.
+For **final parents and parent pairs**, White Skill Sparks are evaluated by actual usefulness and estimated inheritance probability rather than by raw quantity alone. The model uses each carrier’s individual modern affinity, 3/6/9% base rates and both Inspiration Events; duplicate copies are combined as the probability of inheriting the skill at least once.
+
+Future-grandparent searches deliberately keep the simpler model: direct pink/blue/white quality, G1 overlap, base/triple affinity and lineage-supported white generation. They do not estimate final-Ace proc rates, starting aptitude or `P(S)` because a single future GP is only one of six final lineage members and the rest of the final lineage is not yet known.
 
 The bundled model can account for:
 
@@ -106,9 +108,13 @@ Users can customise, among other things:
 
 - which blue factor types should be favoured;
 - blue priorities by distance or build profile;
-- pink factor categories and star multipliers;
+- parent-Ace pink inheritance rates and the relative priority of distance, surface and style;
+- separate simple pink/white quality curves for future-grandparent searches;
+- exact initial aptitude ranks and probabilities of reaching A/S across both Inspiration Events;
+- modern individual inheritance-affinity coefficients for each parent and grandparent;
+- strict compensation thresholds for a final pair that starts at Distance B;
 - white skill importance;
-- affinity thresholds and saturation curves;
+- diagnostic affinity thresholds and future-lineage potential curves;
 - G1 overlap value;
 - lineage-potential weighting;
 - race-condition bonuses;
@@ -139,6 +145,29 @@ Available workflows include:
 - exporting ranked pairs, diagnostics and raw responses.
 
 The final-parent workflow uses the exact same six-member scoring engine as the local parent-pair optimiser. The remote Main and its two parents form one complete branch; the local parent and its two parents form the other. Affinity, five G1 links and every factor across the six visible members are therefore evaluated identically for local-only and local × online pairs.
+
+The GP workflow remains intentionally separate. It ranks acceptable direct factors, GP1↔GP2 G1 overlap, the future Ace-parent-GP base/triple relationship and the current parents’ limited white-generation support. It does not apply the final-parent `P(A)`/`P(S)` or per-factor proc model.
+
+Final pairs are grouped first by their calculated distance status: `ready for S`,
+`Distance B compensated`, `Distance B uncompensated`, `A without S support`, or
+`underprepared`. The engine calculates the aptitude at run start, each matching factor's proc
+rate from its modern individual inheritance affinity, and the exact probabilities of reaching
+A and S across both Inspiration Events. Surface/style use the same probability model with much
+softer scoring and can never compensate for an inferior distance status.
+
+Within the same distance-status tier, pairs are ranked by the configurable weighted score rather
+than raw `P(S)`. Distance-S probability is converted through a saturating utility curve: roughly
+40% is the practical baseline, 50% is very strong and 60% reaches the default ceiling. White
+Skill Sparks are likewise probability-aware, so a high-affinity parent copy can outweigh several
+low-affinity grandparent copies. After duplicate copies are merged, each distinct useful skill passes
+through its own configurable diminishing-return curve: very low chances remain weak, while several
+meaningful rare skills are preferred to one overconcentrated skill. This targets the best high-roll
+potential across repeated runs and lets genuinely better white and blue lineages beat a marginal
+50→60% probability improvement.
+
+Blue Sparks remain deliberately simple and affinity-independent. Their preferred stat now varies
+more strongly by distance—Power leads Sprint/Mile, Stamina leads Medium/Long—and their overall
+ranking influence is compressed for Sprint and Mile, where target stat lines are easier to reach.
 
 Online retrieval is strictly limited to **2,000 parents per search**.
 

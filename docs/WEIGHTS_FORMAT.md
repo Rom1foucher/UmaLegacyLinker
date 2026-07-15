@@ -42,3 +42,32 @@ or more common in longer races. That strategic judgment belongs in the manual ma
 Sparks should otherwise receive a low base value. When a race Spark grants a useful
 green skill for the target course, reuse the corresponding skill relevance weight as
 a separate bonus rather than inflating all race Sparks.
+
+## Manual parent-Spark priority semantics
+
+`default_skill_priorities.json` does **not** score raw in-race performance alone.
+Its values combine:
+
+1. strategic usefulness for the selected Ace profile;
+2. practical scarcity in commonly played support decks;
+3. how much obtaining the skill as a white Spark differentiates a lineage.
+
+Consequently, a strong but ubiquitous hint such as a matching distance/style corner
+should remain modest, while rare and build-defining Sparks such as Uma Stan, Nimble
+Navigator, Groundwork or a course-valid Straightaway Spurt may exceed `1.0`.
+
+### Combining surface, distance and style
+
+For a profile cell, `manual_weights._profile_weight` applies these rules:
+
+- if no matching dimension override exists, use `base`;
+- if one override exists, use that value;
+- if several non-zero overrides exist, use their arithmetic mean;
+- if any matching override is exactly `0.0`, the result is a hard incompatibility (`0.0`);
+- matching `profiles` rules are then applied, allowing an exact `override`, `floor`,
+  `cap`, `multiplier` or `bonus`.
+
+Use an explicit zero for impossible distance/style/surface combinations. Use a
+`profiles` cap or override when a dimension is technically possible but should stay
+low regardless of another dimension's positive bonus; Nimble Navigator on Front
+Runner is the canonical example.

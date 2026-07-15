@@ -29,8 +29,11 @@ from parent_optimizer import (
     _affinity_score,
     _blue_score,
     _compile_static_condition_rules,
+    _future_grandparent_pink_score,
+    _future_grandparent_white_score,
     _lineage_members,
     _member_g1,
+    _mode_weights,
     _pink_score,
     _race_skill_map,
     _read_json,
@@ -41,6 +44,7 @@ from parent_optimizer import (
     _white_score,
     evaluate_parent_branch,
     evaluate_parent_pair,
+    parent_pair_sort_key,
 )
 
 DEFAULT_API_BASE = "https://uma.moe/api"
@@ -1452,6 +1456,23 @@ def _final_parent_affinity_potential(
     single_pool_count = len(fixed_only) + len(candidate_only)
     single_count = min(single_pool_count, remaining)
     single_weight = max(0.0, min(float(single_g1_weight), 1.0))
+
+    # The selected GP1/GP2 remain visible grandparents in the final Ace lineage.
+    # Their direct pink/white inheritance odds therefore use their projected
+    # final GP coefficients, not the compatibility of the intermediate run that
+    # creates the target parent. Common races benefit both GP links; one-sided
+    # races are distributed proportionally across the available unique pools.
+    if single_pool_count > 0:
+        fixed_single_share = single_count * len(fixed_only) / single_pool_count
+        candidate_single_share = single_count * len(candidate_only) / single_pool_count
+    else:
+        fixed_single_share = 0.0
+        candidate_single_share = 0.0
+    fixed_projected_g1_links = double_count + fixed_single_share * single_weight
+    candidate_projected_g1_links = double_count + candidate_single_share * single_weight
+    fixed_projected_inheritance = fixed_triple + fixed_projected_g1_links * g1_bonus_value
+    candidate_projected_inheritance = candidate_triple + candidate_projected_g1_links * g1_bonus_value
+
     common_bonus = double_count * 2 * g1_bonus_value
     single_bonus_exact = single_count * g1_bonus_value
     single_bonus_weighted = single_bonus_exact * single_weight
@@ -1489,6 +1510,18 @@ def _final_parent_affinity_potential(
         "theoretical_unbounded_total": base + theoretical_unbounded_bonus,
         "theoretical_unbounded_g1_bonus_exact": theoretical_unbounded_bonus_exact,
         "theoretical_unbounded_total_exact": base + theoretical_unbounded_bonus_exact,
+        "projected_gp1_inheritance_modifier": {
+            "base_triple": fixed_triple,
+            "planned_common_links": double_count,
+            "planned_single_links_weighted": fixed_single_share * single_weight,
+            "total": fixed_projected_inheritance,
+        },
+        "projected_gp2_inheritance_modifier": {
+            "base_triple": candidate_triple,
+            "planned_common_links": double_count,
+            "planned_single_links_weighted": candidate_single_share * single_weight,
+            "total": candidate_projected_inheritance,
+        },
         "g1_bonus_per_link": g1_bonus_value,
         "other_final_parent_links_included": False,
         "formula": (
@@ -1705,11 +1738,15 @@ def rank_online_grandparent_pairs(
 
         def individual_score(member: dict[str, Any]) -> dict[str, Any]:
             members = [(member, "grandparent", "candidate")]
-            blue, _ = _blue_score(members, distance, config)
-            pink, _ = _pink_score(members, ace, surface, distance, style, config)
-            white, _ = _white_score(members, weight_lookup, config, "future_grandparent")
-            white_generation, _ = _white_generation_support_score(_lineage_members(member), weight_lookup, config)
             triple_raw = resolver.triple(ace_chara, target_parent_chara, int(member.get("chara_id") or 0))
+            blue, _ = _blue_score(members, distance, config)
+            pink, _ = _future_grandparent_pink_score(
+                members, ace, surface, distance, style, config
+            )
+            white, _ = _future_grandparent_white_score(
+                members, weight_lookup, config
+            )
+            white_generation, _ = _white_generation_support_score(_lineage_members(member), weight_lookup, config)
             g1_count = len(_member_g1(member))
             components = {
                 "candidate_affinity": _affinity_score(triple_raw, triple_thresholds),
@@ -1782,8 +1819,12 @@ def rank_online_grandparent_pairs(
             ]
             six_members = _lineage_members(gp1) + _lineage_members(gp2)
             blue, blue_detail = _blue_score(direct_members, distance, config)
-            pink, pink_detail = _pink_score(direct_members, ace, surface, distance, style, config)
-            white, white_detail = _white_score(direct_members, weight_lookup, config, "future_grandparent")
+            pink, pink_detail = _future_grandparent_pink_score(
+                direct_members, ace, surface, distance, style, config
+            )
+            white, white_detail = _future_grandparent_white_score(
+                direct_members, weight_lookup, config
+            )
             white_generation, white_generation_detail = _white_generation_support_score(six_members, weight_lookup, config)
             components = {
                 "final_parent_affinity": _affinity_score(final_parent_affinity["potential_total"], final_thresholds),
@@ -1817,9 +1858,18 @@ def rank_online_grandparent_pairs(
                     "final_branch_affinity": {**final_parent_affinity, "total": final_parent_affinity["potential_total"]},
                     "component_details": {
                         "blue": blue_detail,
-                        "pink": pink_detail,
-                        "white_skill": white_detail,
-                        "white_generation": white_generation_detail,
+                        "pink": {
+                            **pink_detail,
+                            "evaluation_context": "future_grandparent_simple_quality",
+                        },
+                        "white_skill": {
+                            **white_detail,
+                            "evaluation_context": "future_grandparent_direct_factor_quality",
+                        },
+                        "white_generation": {
+                            **white_generation_detail,
+                            "evaluation_context": "intermediate_run_that_creates_target_parent",
+                        },
                     },
                 })
             return row
@@ -1852,7 +1902,7 @@ def rank_online_grandparent_pairs(
     rankings_json_path = output_dir / "uma_moe_grandparent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 4,
+            "schema_version": 5,
             "generated_at_utc": generated,
             "source": "uma.moe public API or imported API response",
             "api_operation": api_operation,
@@ -1872,9 +1922,9 @@ def rank_online_grandparent_pairs(
             },
             "normalization": normalization_diag,
             "condition_diagnostics": condition_diag,
-            "white_star_model": {
-                "meaning": "Stars modify inheritance comfort, not the intrinsic strategic value of the skill.",
-                "coefficients": config.get("white_star_quality") or config.get("star_quality") or {},
+            "future_grandparent_factor_model": {
+                "meaning": "Direct pink/white/blue factors on selected GP1/GP2 use the simple future-grandparent quality model. No Inspiration proc probability, initial aptitude or P(S) is calculated. Their current parents contribute only to separate white-generation support for the intermediate parent-production run.",
+                "parameters": config.get("future_grandparent_heuristics") or {},
                 "saturation": config.get("white_saturation") or {},
             },
             "important": "Online records can become stale; verify follow availability and the profile on uma.moe before relying on a borrow.",
@@ -1995,7 +2045,12 @@ def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "remote_gp1", "remote_gp2",
         "affinity_total", "affinity_base", "affinity_g1_bonus",
         "parent_parent_base", "parent_parent_common_g1_count", "parent_parent_common_g1",
-        "affinity_component", "pink", "white", "race_scenario", "blue", "unique",
+        "distance_status", "distance_tier", "distance_stars", "distance_carriers",
+        "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met",
+        "distance_initial_rank", "distance_probability_a", "distance_probability_s",
+        "surface_initial_rank", "surface_probability_a", "surface_probability_s",
+        "style_initial_rank", "style_probability_a", "style_probability_s",
+        "affinity_component", "distance_s", "pink_other", "pink", "white", "race_scenario", "blue", "unique",
         "updated_at", "follow_status",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
@@ -2145,7 +2200,7 @@ def rank_online_parent_pairs(
         g1_bonus_value = int(affinity_cfg.get("g1_common_bonus", 3))
         branch_thresholds = affinity_cfg.get("parent_branch_thresholds") or [[0, 0], [95, 100]]
         pair_thresholds = affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
-        pair_weights = (config.get("mode_weights") or {}).get("parent_final") or {}
+        pair_weights = _mode_weights(config, "parent_pair")
 
         def eligible(member: dict[str, Any]) -> bool:
             chara = int(member.get("chara_id") or 0)
@@ -2289,6 +2344,8 @@ def rank_online_parent_pairs(
                 "affinity": pair["affinity"],
                 "components": pair["components"],
                 "score_breakdown": pair["score_breakdown"],
+                "distance_viability": pair["distance_viability"],
+                "distance_s_summary": pair["distance_s_summary"],
                 "_local_parent": local_parent,
                 "_remote_parent": remote_parent,
             }
@@ -2302,12 +2359,16 @@ def rank_online_parent_pairs(
                         "affinity": local_branch["affinity"],
                         "components": local_branch["components"],
                         "score_breakdown": local_branch["score_breakdown"],
+                        "distance_viability": local_branch["distance_viability"],
+                        "distance_s_summary": local_branch["distance_s_summary"],
                     },
                     "remote_branch": {
                         "score": remote_branch["score"],
                         "affinity": remote_branch["affinity"],
                         "components": remote_branch["components"],
                         "score_breakdown": remote_branch["score_breakdown"],
+                        "distance_viability": remote_branch["distance_viability"],
+                        "distance_s_summary": remote_branch["distance_s_summary"],
                     },
                 })
                 row.pop("_local_parent", None)
@@ -2333,10 +2394,7 @@ def rank_online_parent_pairs(
 
         if not summaries:
             raise UmaMoeError("Aucune paire parent local × parent distant valide.")
-        summaries.sort(
-            key=lambda row: (row["score"], row["affinity"]["total"]),
-            reverse=True,
-        )
+        summaries.sort(key=parent_pair_sort_key, reverse=True)
         detail_count = max(1, min(int(top_n), 500))
         top = [
             evaluate_pair(row["_local_parent"], row["_remote_parent"], detailed=True)
@@ -2354,7 +2412,7 @@ def rank_online_parent_pairs(
     rankings_json_path = output_dir / "uma_moe_parent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at_utc": generated,
             "source": "uma.moe public API or imported API response",
             "search_mode": "parent_for_ace",
@@ -2386,6 +2444,12 @@ def rank_online_parent_pairs(
                 "two complete parent branches, parent-parent compatibility, five G1 links, "
                 "and all factors from both parents plus their four grandparents."
             ),
+            "ranking_order": (
+                "Distance-S viability tier first, then weighted pair score, white score, blue score "
+                "and raw Distance-S probability as a tie-breaker. P(S) is already converted through "
+                "the configurable saturating utility curve. Surface/style pinks cannot compensate "
+                "for a lower viability tier."
+            ),
             "important": (
                 "Online records can become stale; verify follow availability and the profile "
                 "on uma.moe before relying on a borrow."
@@ -2399,7 +2463,9 @@ def rank_online_parent_pairs(
             "pair_affinity_thresholds": pair_thresholds,
             "logic": (
                 "Remote Main records are normalized as complete parent branches, then passed "
-                "unchanged to the same scorer as local parent pairs."
+                "unchanged to the same scorer as local parent pairs. Final ranking is lexicographic: "
+                "Distance-S viability before weighted quality; raw P(S) no longer overrides better "
+                "white/blue lineages inside the same viability tier."
             ),
         },
         "results": top,
@@ -2419,6 +2485,8 @@ def rank_online_parent_pairs(
         affinity = row["affinity"]
         common = affinity.get("parent_parent_common_g1") or []
         components = row["components"]
+        distance_summary = row.get("distance_s_summary") or {}
+        viability = row.get("distance_viability") or {}
         csv_rows.append({
             "rank": rank,
             "score": round(float(row["score"]), 3),
@@ -2441,7 +2509,26 @@ def rank_online_parent_pairs(
             "parent_parent_base": affinity.get("parent_parent_base"),
             "parent_parent_common_g1_count": len(common),
             "parent_parent_common_g1": "; ".join(common),
+            "distance_status": viability.get("key"),
+            "distance_tier": viability.get("tier"),
+            "distance_stars": distance_summary.get("total_stars"),
+            "distance_carriers": distance_summary.get("carrier_count"),
+            "distance_parent_carriers": distance_summary.get("parent_carrier_count"),
+            "distance_support": distance_summary.get("weighted_support"),
+            "distance_initial_required": distance_summary.get("initial_required_stars"),
+            "distance_initial_met": viability.get("is_initial_requirement_met"),
+            "distance_initial_rank": distance_summary.get("initial_rank_label"),
+            "distance_probability_a": round(100.0 * float(distance_summary.get("probability_reach_a") or 0), 3),
+            "distance_probability_s": round(100.0 * float(distance_summary.get("probability_reach_s") or 0), 3),
+            "surface_initial_rank": ((row.get("aptitude_summaries") or {}).get("surface") or {}).get("initial_rank_label"),
+            "surface_probability_a": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("surface") or {}).get("probability_reach_a") or 0)), 3),
+            "surface_probability_s": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("surface") or {}).get("probability_reach_s") or 0)), 3),
+            "style_initial_rank": ((row.get("aptitude_summaries") or {}).get("style") or {}).get("initial_rank_label"),
+            "style_probability_a": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("style") or {}).get("probability_reach_a") or 0)), 3),
+            "style_probability_s": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("style") or {}).get("probability_reach_s") or 0)), 3),
             "affinity_component": round(float(components.get("affinity") or 0), 2),
+            "distance_s": round(float(components.get("distance_s") or 0), 2),
+            "pink_other": round(float(components.get("pink_other") or 0), 2),
             "pink": round(float(components.get("pink") or 0), 2),
             "white": round(float(components.get("white_skill") or 0), 2),
             "race_scenario": round(float(components.get("race_scenario") or 0), 2),

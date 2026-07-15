@@ -52,6 +52,75 @@ def deep_merge(base: Any, overrides: Any) -> Any:
     return copy.deepcopy(overrides)
 
 
+def migrate_scoring_overrides(
+    default: dict[str, Any], overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Translate legacy shared parent weights and drop obsolete parent heuristics.
+
+    Old profiles stored ``mode_weights.parent_final`` and exposed fixed star/position
+    heuristics for pink Sparks. Parent weights are preserved; obsolete parent pink
+    internals are removed so the probability-aware aptitude model cannot be mixed
+    with the simple future-grandparent model.
+    """
+    migrated = copy.deepcopy(overrides)
+    for obsolete_key in ("pink_star_quality", "pink_dimension_weights", "pink_need_multiplier", "distance_s", "white_star_quality"):
+        if obsolete_key not in default:
+            migrated.pop(obsolete_key, None)
+    override_modes = migrated.get("mode_weights")
+    if isinstance(override_modes, dict):
+        future_mode = override_modes.get("future_grandparent")
+        if isinstance(future_mode, dict):
+            # V31–V35 temporarily split future-GP pinks into the parent-specific
+            # probability components. Preserve the user's total pink allocation
+            # while restoring the simple GP component schema.
+            if "pink" not in future_mode and (
+                "distance_s" in future_mode or "pink_other" in future_mode
+            ):
+                future_mode["pink"] = float(future_mode.get("distance_s", 0.0)) + float(
+                    future_mode.get("pink_other", 0.0)
+                )
+            future_mode.pop("distance_s", None)
+            future_mode.pop("pink_other", None)
+
+    aptitude_overrides = migrated.get("aptitude_inheritance")
+    if isinstance(aptitude_overrides, dict):
+        dimensions = aptitude_overrides.get("dimension_weights_by_mode")
+        if isinstance(dimensions, dict):
+            dimensions.pop("future_grandparent", None)
+        partial = aptitude_overrides.get("partial_scoring")
+        if isinstance(partial, dict):
+            partial.pop("future_grandparent", None)
+
+    if not isinstance(override_modes, dict):
+        return migrated
+    legacy = override_modes.get("parent_final")
+    if not isinstance(legacy, dict):
+        return migrated
+
+    default_modes = default.get("mode_weights") or {}
+    for target_mode in ("parent_branch", "parent_pair"):
+        if target_mode in override_modes:
+            continue
+        baseline = default_modes.get(target_mode) or {}
+        mapped: dict[str, Any] = {}
+        for key, value in legacy.items():
+            if key == "pink":
+                continue
+            if key in baseline:
+                mapped[key] = copy.deepcopy(value)
+        if "pink" in legacy:
+            pink_total = float(legacy["pink"])
+            distance_default = float(baseline.get("distance_s", 0.0))
+            other_default = float(baseline.get("pink_other", 0.0))
+            default_total = distance_default + other_default
+            if default_total > 0:
+                mapped["distance_s"] = pink_total * distance_default / default_total
+                mapped["pink_other"] = pink_total * other_default / default_total
+        override_modes[target_mode] = mapped
+    override_modes.pop("parent_final", None)
+    return migrated
+
+
 def diff_from_default(default: Any, current: Any) -> Any:
     """Return a minimal recursive override, or the private _MISSING sentinel."""
     if isinstance(default, dict) and isinstance(current, dict):
@@ -162,13 +231,24 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
                 raise ScoringConfigError(f"{'.'.join(path)} ne peut pas être négatif.")
 
     required_numeric_mappings = (
-        ("mode_weights", "parent_final"),
+        ("mode_weights", "parent_branch"),
+        ("mode_weights", "parent_pair"),
         ("mode_weights", "future_grandparent"),
         ("blue_star_quality",),
-        ("pink_star_quality",),
-        ("pink_dimension_weights",),
-        ("pink_need_multiplier",),
-        ("white_star_quality",),
+        ("blue_score_influence_by_distance",),
+        ("aptitude_inheritance", "pink_base_proc_rates"),
+        ("aptitude_inheritance", "dimension_weights_by_mode", "parent_branch"),
+        ("aptitude_inheritance", "dimension_weights_by_mode", "parent_pair"),
+        ("aptitude_inheritance", "partial_scoring", "parent_branch"),
+        ("aptitude_inheritance", "distance", "below_b"),
+        ("aptitude_inheritance", "distance", "b_compensation"),
+        ("aptitude_inheritance", "surface", "below_b"),
+        ("aptitude_inheritance", "style", "below_b"),
+        ("future_grandparent_heuristics", "pink_dimension_weights"),
+        ("future_grandparent_heuristics", "pink_star_quality"),
+        ("future_grandparent_heuristics", "pink_need_multiplier"),
+        ("future_grandparent_heuristics", "white_star_quality"),
+        ("white_inheritance", "base_proc_rates"),
         ("unique_star_quality",),
         ("position_transmission",),
         ("white_saturation",),
@@ -182,15 +262,18 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         _require_numeric_mapping(config, path)
 
     blue_by_distance = _require_dict(config, ("blue_stat_weights_by_distance",))
+    blue_influence = _require_dict(config, ("blue_score_influence_by_distance",))
     for distance in ("sprint", "mile", "medium", "long"):
         if distance not in blue_by_distance:
             raise ScoringConfigError(f"blue_stat_weights_by_distance.{distance} est requis.")
         _require_numeric_mapping(config, ("blue_stat_weights_by_distance", distance))
+        if distance not in blue_influence:
+            raise ScoringConfigError(f"blue_score_influence_by_distance.{distance} est requis.")
 
     for path in (
         ("blue_star_quality",),
-        ("pink_star_quality",),
-        ("white_star_quality",),
+        ("aptitude_inheritance", "pink_base_proc_rates"),
+        ("white_inheritance", "base_proc_rates"),
         ("unique_star_quality",),
     ):
         mapping = _require_dict(config, path)
@@ -209,9 +292,76 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("uma_moe_pair", "final_parent_potential_thresholds"),
         ("uma_moe_pair", "production_run_affinity_thresholds"),
         ("uma_moe_pair", "gp_triple_preselection_thresholds"),
+        ("aptitude_inheritance", "distance", "s_probability_curve"),
+        ("aptitude_inheritance", "surface", "s_probability_curve"),
+        ("aptitude_inheritance", "style", "s_probability_curve"),
+        ("white_inheritance", "distinct_skill_probability_curve"),
     )
     for path in threshold_paths:
         _validate_thresholds(config, path)
+
+    aptitude = _require_dict(config, ("aptitude_inheritance",))
+    event_count = aptitude.get("inspiration_event_count")
+    if isinstance(event_count, bool) or not isinstance(event_count, int) or event_count < 1:
+        raise ScoringConfigError("aptitude_inheritance.inspiration_event_count doit être un entier strictement positif.")
+
+    white_inheritance = _require_dict(config, ("white_inheritance",))
+    white_event_count = white_inheritance.get("inspiration_event_count")
+    if isinstance(white_event_count, bool) or not isinstance(white_event_count, int) or white_event_count < 1:
+        raise ScoringConfigError("white_inheritance.inspiration_event_count doit être un entier strictement positif.")
+    white_cap = white_inheritance.get("per_event_probability_cap", 1.0)
+    if isinstance(white_cap, bool) or not isinstance(white_cap, (int, float)) or not 0 < float(white_cap) <= 1:
+        raise ScoringConfigError("white_inheritance.per_event_probability_cap doit être compris entre 0 (exclu) et 1.")
+    for index, (probability, utility) in enumerate(white_inheritance["distinct_skill_probability_curve"]):
+        if float(probability) > 1:
+            raise ScoringConfigError(
+                f"white_inheritance.distinct_skill_probability_curve[{index}][0] ne peut pas dépasser 1."
+            )
+        if float(utility) > 1:
+            raise ScoringConfigError(
+                f"white_inheritance.distinct_skill_probability_curve[{index}][1] ne peut pas dépasser 1."
+            )
+    for mode in ("parent_branch", "parent_pair"):
+        weights = _require_dict(config, ("aptitude_inheritance", "dimension_weights_by_mode", mode))
+        missing = [key for key in ("distance", "surface", "style") if key not in weights]
+        if missing:
+            raise ScoringConfigError(
+                f"aptitude_inheritance.dimension_weights_by_mode.{mode} doit définir : {', '.join(missing)}."
+            )
+    gp_dimensions = _require_dict(
+        config, ("future_grandparent_heuristics", "pink_dimension_weights")
+    )
+    missing_gp_dimensions = [
+        key for key in ("distance", "surface", "style") if key not in gp_dimensions
+    ]
+    if missing_gp_dimensions:
+        raise ScoringConfigError(
+            "future_grandparent_heuristics.pink_dimension_weights doit définir : "
+            + ", ".join(missing_gp_dimensions)
+        )
+    for dimension in ("distance", "surface", "style"):
+        section = _require_dict(config, ("aptitude_inheritance", dimension))
+        for key in (
+            "start_a_base_score", "start_a_s_probability_weight",
+            "start_b_base_score", "start_b_a_probability_weight", "start_b_s_probability_weight",
+        ):
+            if key not in section:
+                raise ScoringConfigError(f"aptitude_inheritance.{dimension}.{key} est requis.")
+        for index, (probability, quality) in enumerate(section["s_probability_curve"]):
+            if float(probability) > 1:
+                raise ScoringConfigError(
+                    f"aptitude_inheritance.{dimension}.s_probability_curve[{index}][0] ne peut pas dépasser 1."
+                )
+            if float(quality) > 100:
+                raise ScoringConfigError(
+                    f"aptitude_inheritance.{dimension}.s_probability_curve[{index}][1] ne peut pas dépasser 100."
+                )
+    for key in ("minimum_probability_a", "minimum_probability_s"):
+        value = get_path_value(config, ("aptitude_inheritance", "distance", "b_compensation", key))
+        if float(value) > 1:
+            raise ScoringConfigError(
+                f"aptitude_inheritance.distance.b_compensation.{key} ne peut pas dépasser 1."
+            )
 
     modes = _require_dict(config, ("course_conditions", "modes"))
     for key, value in modes.items():
@@ -339,6 +489,7 @@ def load_effective_scoring_config(
         resolved_override = Path(override_path).expanduser().resolve()
         if resolved_override.is_file():
             overrides = read_json_object(resolved_override)
+    overrides = migrate_scoring_overrides(default, overrides)
     effective = deep_merge(default, overrides)
     validate_scoring_config(effective)
     return default, overrides, effective

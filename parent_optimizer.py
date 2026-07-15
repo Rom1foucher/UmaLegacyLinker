@@ -149,6 +149,25 @@ def _weighted_total(components: dict[str, float], weights: dict[str, float]) -> 
     ) / total_weight
 
 
+def _mode_weights(config: dict[str, Any], mode: str) -> dict[str, float]:
+    """Return the component weights for a scoring role.
+
+    ``parent_final`` was the legacy shared mode for branches and final pairs.
+    Keeping it as a fallback makes old custom profiles and tests readable while
+    the default profile now exposes distinct ``parent_branch`` and
+    ``parent_pair`` roles.
+    """
+    modes = config.get("mode_weights") or {}
+    selected = modes.get(mode)
+    if isinstance(selected, dict) and selected:
+        return selected
+    if mode in {"parent_branch", "parent_pair"}:
+        legacy = modes.get("parent_final")
+        if isinstance(legacy, dict):
+            return legacy
+    return {}
+
+
 def _score_breakdown(components: dict[str, float], weights: dict[str, float]) -> dict[str, Any]:
     total_weight = sum(max(0.0, float(value)) for value in weights.values()) or 1.0
     rows: dict[str, Any] = {}
@@ -364,15 +383,22 @@ def _member_g1(member: dict[str, Any] | None) -> set[str]:
     return set((member.get("g1_wins") or {}).get("names") or [])
 
 
-def _lineage_members(veteran: dict[str, Any]) -> list[tuple[dict[str, Any], str, str]]:
+def _lineage_members(
+    veteran: dict[str, Any],
+    role_prefix: str | None = None,
+) -> list[tuple[dict[str, Any], str, str]]:
+    """Return the visible parent branch with stable, optionally unique role ids."""
     lineage = veteran.get("when_used_as_parent") or {}
-    result: list[tuple[dict[str, Any], str, str]] = [(veteran, "parent", "parent")]
+    parent_role = role_prefix or "parent"
+    gp1_role = f"{role_prefix}_grandparent_1" if role_prefix else "grandparent_1"
+    gp2_role = f"{role_prefix}_grandparent_2" if role_prefix else "grandparent_2"
+    result: list[tuple[dict[str, Any], str, str]] = [(veteran, "parent", parent_role)]
     gp1 = lineage.get("grandparent_1")
     gp2 = lineage.get("grandparent_2")
     if gp1:
-        result.append((gp1, "grandparent", "grandparent_1"))
+        result.append((gp1, "grandparent", gp1_role))
     if gp2:
-        result.append((gp2, "grandparent", "grandparent_2"))
+        result.append((gp2, "grandparent", gp2_role))
     return result
 
 
@@ -660,6 +686,14 @@ def _blue_score(
 ) -> tuple[float, dict[str, Any]]:
     stat_weights = (config.get("blue_stat_weights_by_distance") or {}).get(distance) or {}
     quality_by_stars = config.get("blue_star_quality") or {"1": 0.12, "2": 0.78, "3": 1.0}
+    influence_by_distance = config.get("blue_score_influence_by_distance") or {
+        "sprint": 0.45,
+        "mile": 0.65,
+        "medium": 0.90,
+        "long": 1.00,
+    }
+    influence = max(0.0, float(influence_by_distance.get(distance, 1.0)))
+    neutral_score = max(0.0, min(100.0, float(config.get("blue_neutral_score", 50.0))))
     raw = 0.0
     slot_count = max(1, len(members))
     details: list[dict[str, Any]] = []
@@ -683,17 +717,228 @@ def _blue_score(
                 "relevance": round(relevance, 4),
                 "contribution": round(contribution, 4),
             })
-    score = min(100.0, 100.0 * raw / slot_count)
+    uncompressed_score = min(100.0, 100.0 * raw / slot_count)
+    # Shorter distances make the target stat line easier to reach, so lineage
+    # blue quality should differentiate candidates less strongly. Blending
+    # toward a neutral score preserves cross-profile comparability while
+    # compressing the impact of good/bad blues where appropriate.
+    score = max(0.0, min(100.0, neutral_score + influence * (uncompressed_score - neutral_score)))
     return score, {
         "raw": raw,
         "slot_count": slot_count,
-        "formula": "100 × sum(star-tier quality × stat relevance) / lineage slots",
+        "uncompressed_score": round(uncompressed_score, 6),
+        "distance_influence": round(influence, 6),
+        "neutral_score": round(neutral_score, 6),
+        "formula": (
+            "raw blue score = 100 × sum(star-tier quality × stat relevance) / lineage slots; "
+            "final score = neutral + distance influence × (raw score - neutral)"
+        ),
         "star_tiers": quality_by_stars,
+        "stat_weights": stat_weights,
         "factors": details,
     }
 
 
-def _pink_score(
+def _initial_rank_gain(total_stars: int) -> int:
+    """Return aptitude ranks gained at run start from matching red stars."""
+    stars = max(0, int(total_stars))
+    if stars <= 0:
+        return 0
+    return min(4, 1 + (stars - 1) // 3)
+
+
+def _initial_aptitude_rank(base_rank: int, total_stars: int) -> int:
+    # Initial inheritance cannot start an aptitude at S.
+    return min(7, max(1, int(base_rank)) + _initial_rank_gain(total_stars))
+
+
+def _stars_required_to_start_at_a(base_rank: int) -> int:
+    rank = max(1, int(base_rank))
+    if rank >= 7:
+        return 0
+    # B→A needs 1★. Every lower rank needs three more stars.
+    return 1 + 3 * (6 - rank)
+
+
+def _poisson_binomial_distribution(probabilities: Iterable[float]) -> list[float]:
+    """Exact distribution for independent, non-identical Bernoulli trials."""
+    distribution = [1.0]
+    for raw_probability in probabilities:
+        probability = max(0.0, min(1.0, float(raw_probability)))
+        updated = [0.0] * (len(distribution) + 1)
+        for successes, mass in enumerate(distribution):
+            updated[successes] += mass * (1.0 - probability)
+            updated[successes + 1] += mass * probability
+        distribution = updated
+    return distribution
+
+
+def _probability_at_least(distribution: list[float], successes: int) -> float:
+    required = max(0, int(successes))
+    if required <= 0:
+        return 1.0
+    if required >= len(distribution):
+        return 0.0
+    return max(0.0, min(1.0, sum(distribution[required:])))
+
+
+def _aptitude_proc_rate(stars: int, affinity: float, config: dict[str, Any]) -> tuple[float, float]:
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    rates = aptitude_cfg.get("pink_base_proc_rates") or {"1": 0.01, "2": 0.03, "3": 0.05}
+    base_rate = max(0.0, float(rates.get(str(int(stars)), 0.0)))
+    effective = min(1.0, base_rate * (1.0 + max(0.0, float(affinity)) / 100.0))
+    return base_rate, effective
+
+
+def _aptitude_pair_score(
+    dimension: str,
+    initial_rank: int,
+    probability_a: float,
+    probability_s: float,
+    config: dict[str, Any],
+) -> float:
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    dimension_cfg = aptitude_cfg.get(dimension) or {}
+    s_probability_curve = dimension_cfg.get("s_probability_curve") or [[0.0, 0.0], [1.0, 100.0]]
+    s_probability_quality = max(
+        0.0,
+        min(1.0, _piecewise_score(probability_s, s_probability_curve) / 100.0),
+    )
+    if initial_rank >= 7:
+        if dimension == "distance" and probability_s <= 0.0:
+            return 0.0
+        base = float(dimension_cfg.get("start_a_base_score", {"distance": 70, "surface": 80, "style": 90}[dimension]))
+        s_weight = float(dimension_cfg.get("start_a_s_probability_weight", {"distance": 30, "surface": 20, "style": 10}[dimension]))
+        return max(0.0, min(100.0, base + s_weight * s_probability_quality))
+    if initial_rank == 6:
+        base = float(dimension_cfg.get("start_b_base_score", {"distance": 20, "surface": 55, "style": 70}[dimension]))
+        a_weight = float(dimension_cfg.get("start_b_a_probability_weight", {"distance": 45, "surface": 30, "style": 25}[dimension]))
+        s_weight = float(dimension_cfg.get("start_b_s_probability_weight", {"distance": 35, "surface": 15, "style": 5}[dimension]))
+        return max(0.0, min(100.0, base + a_weight * probability_a + s_weight * s_probability_quality))
+    below_cfg = dimension_cfg.get("below_b") or {}
+    base = float(below_cfg.get("base_score", 0 if dimension == "distance" else 10))
+    a_weight = float(below_cfg.get("a_probability_weight", 0 if dimension == "distance" else (25 if dimension == "surface" else 30)))
+    s_weight = float(below_cfg.get("s_probability_weight", 0 if dimension == "distance" else (10 if dimension == "surface" else 5)))
+    return max(0.0, min(100.0, base + a_weight * probability_a + s_weight * s_probability_quality))
+
+
+def _partial_aptitude_score(
+    *,
+    mode: str,
+    base_rank: int,
+    total_stars: int,
+    probability_any_proc: float,
+    config: dict[str, Any],
+) -> float:
+    """Score one incomplete branch without pretending it is a full final pair."""
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    partial_cfg = (aptitude_cfg.get("partial_scoring") or {}).get(mode) or {}
+    max_stars = float(partial_cfg.get("full_star_reference", 6 if mode == "parent_branch" else 3))
+    target_probability = float(partial_cfg.get("full_proc_probability", 0.40 if mode == "parent_branch" else 0.20))
+    star_weight = float(partial_cfg.get("star_weight", 0.60 if mode == "parent_branch" else 0.65))
+    proc_weight = float(partial_cfg.get("proc_weight", 1.0 - star_weight))
+    required = _stars_required_to_start_at_a(base_rank)
+    if required > 0:
+        star_readiness = min(1.0, total_stars / required)
+    else:
+        star_readiness = min(1.0, total_stars / max(1.0, max_stars))
+    proc_readiness = min(1.0, probability_any_proc / max(0.000001, target_probability))
+    total_weight = max(0.000001, star_weight + proc_weight)
+    return 100.0 * (star_readiness * star_weight + proc_readiness * proc_weight) / total_weight
+
+
+def _distance_viability(
+    *,
+    mode: str,
+    distance_detail: dict[str, Any],
+    white_score: float = 0.0,
+    blue_score: float = 0.0,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    initial_rank = int(distance_detail.get("initial_rank") or 0)
+    probability_a = float(distance_detail.get("probability_reach_a") or 0.0)
+    probability_s = float(distance_detail.get("probability_reach_s") or 0.0)
+    total_stars = int(distance_detail.get("total_stars") or 0)
+    carrier_count = int(distance_detail.get("carrier_count") or 0)
+
+    if mode == "parent_pair":
+        distance_cfg = ((config.get("aptitude_inheritance") or {}).get("distance") or {})
+        compensation = distance_cfg.get("b_compensation") or {}
+        thresholds = {
+            "minimum_probability_a": float(compensation.get("minimum_probability_a", 0.55)),
+            "minimum_probability_s": float(compensation.get("minimum_probability_s", 0.15)),
+            "minimum_white_score": float(compensation.get("minimum_white_score", 85.0)),
+            "minimum_blue_score": float(compensation.get("minimum_blue_score", 75.0)),
+        }
+        compensation_checks = {
+            "probability_a": probability_a >= thresholds["minimum_probability_a"],
+            "probability_s": probability_s >= thresholds["minimum_probability_s"],
+            "white_score": float(white_score) >= thresholds["minimum_white_score"],
+            "blue_score": float(blue_score) >= thresholds["minimum_blue_score"],
+        }
+        if initial_rank >= 7 and probability_s > 0.0:
+            key, tier, viable = "ready_for_s", 4, True
+        elif initial_rank == 6 and all(compensation_checks.values()):
+            key, tier, viable = "distance_b_compensated", 3, True
+        elif initial_rank == 6:
+            key, tier, viable = "distance_b_uncompensated", 1, False
+        elif initial_rank >= 7:
+            key, tier, viable = "no_s_support", 0, False
+        else:
+            key, tier, viable = "underprepared", 0, False
+        return {
+            "key": key,
+            "tier": tier,
+            "is_viable": viable,
+            "sort_priority": tier,
+            "scope": "final_parent_pair",
+            "initial_rank": initial_rank,
+            "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
+            "is_initial_requirement_met": initial_rank >= 7,
+            "probability_reach_a": round(probability_a, 8),
+            "probability_reach_s": round(probability_s, 8),
+            "compensation_thresholds": thresholds,
+            "compensation_checks": compensation_checks,
+            "white_score": round(float(white_score), 6),
+            "blue_score": round(float(blue_score), 6),
+        }
+
+    if mode == "parent_branch":
+        if carrier_count == 0:
+            key, tier = "deficit", 0
+        elif total_stars >= 6 and carrier_count >= 2:
+            key, tier = "distance_carrier", 3
+        elif total_stars >= 3:
+            key, tier = "balanced", 2
+        else:
+            key, tier = "light", 1
+        return {
+            "key": key,
+            "tier": tier,
+            "is_viable": None,
+            "sort_priority": tier,
+            "scope": "parent_branch_contribution",
+            "initial_rank": initial_rank,
+            "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
+            "is_initial_requirement_met": initial_rank >= 7,
+            "probability_reach_a": round(probability_a, 8),
+            "probability_reach_s": round(probability_s, 8),
+        }
+
+    return {
+        "key": "matching_distance" if carrier_count else "off_distance",
+        "tier": 1 if carrier_count else 0,
+        "is_viable": None,
+        "sort_priority": 0,
+        "scope": "future_grandparent_partial_contribution",
+        "initial_rank": initial_rank,
+        "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
+        "probability_reach_a": round(probability_a, 8),
+        "probability_reach_s": round(probability_s, 8),
+    }
+
+
+def _future_grandparent_pink_score(
     members: list[tuple[dict[str, Any], str, str]],
     ace: dict[str, Any],
     surface: str,
@@ -701,14 +946,33 @@ def _pink_score(
     style: str,
     config: dict[str, Any],
 ) -> tuple[float, dict[str, Any]]:
+    """Score a future GP's pink Spark with the intentionally simple GP model.
+
+    A future grandparent is only one of the six final lineage members.  This mode
+    therefore values a useful/acceptable factor without trying to predict the
+    final Ace's starting rank or Inspiration-event outcome.  Probability-aware
+    aptitude scoring is reserved for complete parent branches and final pairs.
+    """
+    gp_cfg = config.get("future_grandparent_heuristics") or {}
     targets = {
         "surface": SURFACE_FACTOR_NAMES[surface],
         "distance": DISTANCE_FACTOR_NAMES[distance],
         "style": STYLE_FACTOR_NAMES[style],
     }
-    dimension_weights = config.get("pink_dimension_weights") or {}
-    star_quality = config.get("pink_star_quality") or {"1": 0.55, "2": 0.72, "3": 1.0}
-    need_cfg = config.get("pink_need_multiplier") or {}
+    dimension_weights = gp_cfg.get("pink_dimension_weights") or {
+        "distance": 1.0,
+        "surface": 0.72,
+        "style": 0.55,
+    }
+    star_quality = gp_cfg.get("pink_star_quality") or {
+        "1": 0.55,
+        "2": 0.72,
+        "3": 1.0,
+    }
+    need_cfg = gp_cfg.get("pink_need_multiplier") or {
+        "below_a": 1.1,
+        "a_or_s": 1.0,
+    }
     slot_count = max(1, len(members))
     raw = 0.0
     stars_by_dimension = {key: 0 for key in targets}
@@ -716,17 +980,37 @@ def _pink_score(
     for member, _position, role in members:
         factors = _factor_list(member, "red_aptitude")
         if not factors:
-            details.append({"role": role, "name": None, "stars": 0, "matched_dimension": None, "contribution": 0.0})
+            details.append({
+                "role": role,
+                "name": None,
+                "stars": 0,
+                "matched_dimension": None,
+                "contribution": 0.0,
+            })
             continue
         for factor in factors:
             name = str(factor.get("name") or "")
             stars = int(factor.get("stars") or 0)
-            matched_dimension = next((key for key, target in targets.items() if name == target), None)
+            matched_dimension = next(
+                (key for key, target in targets.items() if name == target), None
+            )
             quality = float(star_quality.get(str(stars), 0.0))
-            dimension_weight = float(dimension_weights.get(matched_dimension, 0.0)) if matched_dimension else 0.0
-            base_rank = int(ace["target_aptitudes"][matched_dimension]["rank"]) if matched_dimension else 0
-            need_multiplier = float(need_cfg.get("below_a" if base_rank < 7 else "a_or_s", 1.0)) if matched_dimension else 0.0
-            contribution = min(1.0, quality * dimension_weight * need_multiplier) if matched_dimension else 0.0
+            dimension_weight = (
+                float(dimension_weights.get(matched_dimension, 0.0))
+                if matched_dimension else 0.0
+            )
+            base_rank = (
+                int(ace["target_aptitudes"][matched_dimension]["rank"])
+                if matched_dimension else 0
+            )
+            need_multiplier = (
+                float(need_cfg.get("below_a" if base_rank < 7 else "a_or_s", 1.0))
+                if matched_dimension else 0.0
+            )
+            contribution = (
+                min(1.0, quality * dimension_weight * need_multiplier)
+                if matched_dimension else 0.0
+            )
             if matched_dimension:
                 stars_by_dimension[matched_dimension] += stars
             raw += contribution
@@ -756,21 +1040,28 @@ def _pink_score(
     return score, {
         "raw": raw,
         "slot_count": slot_count,
-        "formula": "100 × sum(star-tier quality × category value × aptitude-need multiplier) / lineage slots",
+        "formula": "100 × sum(star quality × aptitude relevance × need multiplier) / evaluated GP slots",
+        "model": "future_grandparent_simple",
+        "uses_proc_probability": False,
         "star_tiers": star_quality,
         "dimensions": dimensions,
         "factors": details,
     }
 
 
-def _white_score(
+def _future_grandparent_white_score(
     members: list[tuple[dict[str, Any], str, str]],
     weight_lookup: Callable[[str], float],
     config: dict[str, Any],
-    saturation_key: str,
 ) -> tuple[float, dict[str, Any]]:
+    """Score white Sparks directly carried by a future GP without proc maths."""
+    gp_cfg = config.get("future_grandparent_heuristics") or {}
     position_weights = config.get("position_transmission") or {}
-    star_quality = config.get("white_star_quality") or config.get("star_quality") or {}
+    star_quality = gp_cfg.get("white_star_quality") or {
+        "1": 1.0,
+        "2": 1.35,
+        "3": 1.8,
+    }
     raw = 0.0
     details: list[dict[str, Any]] = []
     for member, position, role in members:
@@ -778,32 +1069,341 @@ def _white_score(
         for factor in _factor_list(member, "white_skill"):
             stars = int(factor.get("stars") or 0)
             name = str(factor.get("name") or "")
-            key = slugify(name)
-            profile_weight = weight_lookup(key)
-            star_weight = float(star_quality.get(str(stars), 0.0))
-            contribution = profile_weight * star_weight * position_weight
+            catalog_key = slugify(name)
+            profile_weight = max(0.0, float(weight_lookup(catalog_key)))
+            quality = float(star_quality.get(str(stars), 0.0))
+            contribution = profile_weight * quality * position_weight
             raw += contribution
-            details.append(
-                {
-                    "role": role,
-                    "name": name,
-                    "catalog_key": key,
-                    "stars": stars,
-                    "profile_weight": round(profile_weight, 6),
-                    "star_quality": round(star_weight, 6),
-                    "position_weight": position_weight,
-                    "contribution": round(contribution, 6),
-                }
-            )
-    scale = float((config.get("white_saturation") or {}).get(saturation_key, 1.0))
+            details.append({
+                "role": role,
+                "position": position,
+                "name": name,
+                "catalog_key": catalog_key,
+                "stars": stars,
+                "profile_weight": round(profile_weight, 6),
+                "star_quality": round(quality, 6),
+                "position_weight": round(position_weight, 6),
+                "contribution": round(contribution, 8),
+            })
+    scale = float((config.get("white_saturation") or {}).get("future_grandparent", 1.0))
     details.sort(key=lambda item: item["contribution"], reverse=True)
     return _saturating_score(raw, scale), {
         "raw": raw,
         "scale": scale,
-        "formula": "priority(profile) × white-star inheritance-comfort coefficient × lineage position, then diminishing-return saturation",
+        "formula": "sum(profile priority × star quality × GP position weight), then diminishing-return saturation",
+        "model": "future_grandparent_simple",
+        "uses_individual_affinity": False,
         "star_tiers": star_quality,
-        "top_factors": details[:20],
+        "top_factors": details[:30],
         "factor_count": len(details),
+    }
+
+
+def _pink_score(
+    members: list[tuple[dict[str, Any], str, str]],
+    ace: dict[str, Any],
+    surface: str,
+    distance: str,
+    style: str,
+    config: dict[str, Any],
+    mode: str = "parent_branch",
+    inheritance_affinities: dict[str, float] | None = None,
+) -> tuple[float, dict[str, Any]]:
+    targets = {
+        "surface": SURFACE_FACTOR_NAMES[surface],
+        "distance": DISTANCE_FACTOR_NAMES[distance],
+        "style": STYLE_FACTOR_NAMES[style],
+    }
+    affinities = inheritance_affinities or {}
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    event_count = max(1, int(aptitude_cfg.get("inspiration_event_count", 2)))
+    mode_dimension_weights = (
+        ((aptitude_cfg.get("dimension_weights_by_mode") or {}).get(mode))
+        or {
+            "distance": 0.72 if mode == "parent_pair" else (0.65 if mode == "parent_branch" else 0.55),
+            "surface": 0.18 if mode == "parent_pair" else (0.22 if mode == "parent_branch" else 0.27),
+            "style": 0.10 if mode == "parent_pair" else (0.13 if mode == "parent_branch" else 0.18),
+        }
+    )
+    dimensions_work: dict[str, dict[str, Any]] = {
+        dimension: {
+            "target": target,
+            "total_stars": 0,
+            "carrier_roles": set(),
+            "parent_carrier_roles": set(),
+            "trial_probabilities": [],
+            "factors": [],
+        }
+        for dimension, target in targets.items()
+    }
+    factor_rows: list[dict[str, Any]] = []
+
+    for member, position, role in members:
+        factors = _factor_list(member, "red_aptitude")
+        if not factors:
+            factor_rows.append({
+                "role": role,
+                "position": position,
+                "name": None,
+                "stars": 0,
+                "matched_dimension": None,
+                "inheritance_affinity": round(float(affinities.get(role, 0.0)), 4),
+                "base_proc_rate": 0.0,
+                "proc_probability_per_event": 0.0,
+            })
+            continue
+        for factor in factors:
+            name = str(factor.get("name") or "")
+            stars = int(factor.get("stars") or 0)
+            matched_dimension = next((key for key, target in targets.items() if name == target), None)
+            affinity_value = max(0.0, float(affinities.get(role, 0.0)))
+            base_rate, proc_rate = _aptitude_proc_rate(stars, affinity_value, config) if matched_dimension else (0.0, 0.0)
+            row = {
+                "role": role,
+                "position": position,
+                "name": name,
+                "stars": stars,
+                "matched_dimension": matched_dimension,
+                "inheritance_affinity": round(affinity_value, 4),
+                "base_proc_rate": round(base_rate, 8),
+                "affinity_multiplier": round(1.0 + affinity_value / 100.0, 6),
+                "proc_probability_per_event": round(proc_rate, 8),
+                "proc_probability_over_run": round(1.0 - (1.0 - proc_rate) ** event_count, 8),
+            }
+            factor_rows.append(row)
+            if not matched_dimension:
+                continue
+            work = dimensions_work[matched_dimension]
+            work["total_stars"] += stars
+            work["carrier_roles"].add(role)
+            if position == "parent":
+                work["parent_carrier_roles"].add(role)
+            work["trial_probabilities"].extend([proc_rate] * event_count)
+            work["factors"].append(row)
+
+    dimensions: dict[str, dict[str, Any]] = {}
+    for dimension, work in dimensions_work.items():
+        base_rank = int(ace["target_aptitudes"][dimension]["rank"])
+        total_stars = int(work["total_stars"])
+        initial_rank = _initial_aptitude_rank(base_rank, total_stars)
+        required_a = max(0, 7 - initial_rank)
+        required_s = max(0, 8 - initial_rank)
+        distribution = _poisson_binomial_distribution(work["trial_probabilities"])
+        probability_a = _probability_at_least(distribution, required_a)
+        probability_s = _probability_at_least(distribution, required_s)
+        probability_any = _probability_at_least(distribution, 1)
+        dimension_cfg = aptitude_cfg.get(dimension) or {}
+        s_probability_curve = dimension_cfg.get("s_probability_curve") or [[0.0, 0.0], [1.0, 100.0]]
+        s_probability_quality = max(
+            0.0,
+            min(100.0, _piecewise_score(probability_s, s_probability_curve)),
+        )
+        if mode == "parent_pair":
+            score = _aptitude_pair_score(
+                dimension, initial_rank, probability_a, probability_s, config
+            )
+        else:
+            score = _partial_aptitude_score(
+                mode=mode,
+                base_rank=base_rank,
+                total_stars=total_stars,
+                probability_any_proc=probability_any,
+                config=config,
+            )
+        dimensions[dimension] = {
+            "target": targets[dimension],
+            "score": round(score, 6),
+            "base_rank": base_rank,
+            "base_rank_label": APTITUDE_LABELS.get(base_rank, str(base_rank)),
+            "total_stars": total_stars,
+            "initial_rank_gain": _initial_rank_gain(total_stars),
+            "initial_rank": initial_rank,
+            "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
+            "stars_required_to_start_at_a": _stars_required_to_start_at_a(base_rank),
+            "starts_at_a": initial_rank >= 7,
+            "procs_required_for_a": required_a,
+            "procs_required_for_s": required_s,
+            "probability_any_proc": round(probability_any, 8),
+            "probability_reach_a": round(probability_a, 8),
+            "probability_reach_s": round(probability_s, 8),
+            "probability_reach_s_quality": round(s_probability_quality, 6),
+            "s_probability_curve": s_probability_curve,
+            "proc_count_distribution": [round(value, 10) for value in distribution],
+            "carrier_count": len(work["carrier_roles"]),
+            "carrier_roles": sorted(work["carrier_roles"]),
+            "parent_carrier_count": len(work["parent_carrier_roles"]),
+            "sum_proc_probability_per_event": round(sum(prob for prob in work["trial_probabilities"][::event_count]), 8) if event_count else 0.0,
+            "inspiration_event_count": event_count,
+            "factors": work["factors"],
+            "formula": (
+                "initial rank from total matching stars; each matching factor rolls independently at every inspiration event; "
+                "p = base pink rate × (1 + individual inheritance affinity / 100); one proc equals one aptitude rank"
+            ),
+        }
+
+    distance_detail = dimensions["distance"]
+    # Backward-compatible names retained for CSV/UI consumers.
+    distance_detail["activation_score"] = round(100.0 * float(distance_detail["probability_reach_s"]), 6)
+    distance_detail["weighted_support"] = distance_detail["sum_proc_probability_per_event"]
+    distance_detail["initial_required_stars"] = distance_detail["stars_required_to_start_at_a"]
+    distance_detail["initial_readiness"] = 1.0 if distance_detail["starts_at_a"] else 0.0
+    distance_detail["star_tiers"] = aptitude_cfg.get("pink_base_proc_rates") or {"1": 0.01, "2": 0.03, "3": 0.05}
+    distance_detail["position_weights"] = None
+    distance_detail["viability"] = _distance_viability(
+        mode=mode,
+        distance_detail=distance_detail,
+        config=config,
+    )
+
+    dimension_weight_total = sum(max(0.0, float(value)) for value in mode_dimension_weights.values()) or 1.0
+    overall_score = sum(
+        float(dimensions[key]["score"]) * max(0.0, float(mode_dimension_weights.get(key, 0.0)))
+        for key in ("distance", "surface", "style")
+    ) / dimension_weight_total
+    other_weight_total = sum(max(0.0, float(mode_dimension_weights.get(key, 0.0))) for key in ("surface", "style")) or 1.0
+    other_score = sum(
+        float(dimensions[key]["score"]) * max(0.0, float(mode_dimension_weights.get(key, 0.0)))
+        for key in ("surface", "style")
+    ) / other_weight_total
+
+    return overall_score, {
+        "raw": overall_score,
+        "slot_count": max(1, len(members)),
+        "formula": "probability-aware aptitude model; distance, surface and style are evaluated independently",
+        "dimension_weights": mode_dimension_weights,
+        "dimensions": dimensions,
+        "factors": factor_rows,
+        "distance_s": distance_detail,
+        "pink_other": {
+            "score": round(other_score, 6),
+            "dimensions": ["surface", "style"],
+            "surface": dimensions["surface"],
+            "style": dimensions["style"],
+            "formula": "weighted surface/style aptitude quality; distance is excluded and scored separately",
+        },
+    }
+
+def _white_score(
+    members: list[tuple[dict[str, Any], str, str]],
+    weight_lookup: Callable[[str], float],
+    config: dict[str, Any],
+    saturation_key: str,
+    inheritance_affinities: dict[str, float] | None = None,
+) -> tuple[float, dict[str, Any]]:
+    """Score useful white Skill Sparks from estimated inheritance odds.
+
+    Every carrier rolls independently at each Inspiration Event. Duplicate copies
+    of the same skill are combined as the probability of receiving that skill at
+    least once, which prevents a parent branch from being inflated merely because
+    its own low-affinity grandparents carry redundant copies.
+    """
+    white_cfg = config.get("white_inheritance") or {}
+    base_rates = white_cfg.get("base_proc_rates") or {"1": 0.03, "2": 0.06, "3": 0.09}
+    event_count = max(1, int(white_cfg.get("inspiration_event_count", 2) or 2))
+    per_event_cap = max(0.0, min(float(white_cfg.get("per_event_probability_cap", 1.0)), 1.0))
+    distinct_skill_curve = white_cfg.get("distinct_skill_probability_curve") or [
+        [0.0, 0.0],
+        [0.10, 0.10],
+        [0.20, 0.30],
+        [0.40, 0.52],
+        [0.60, 0.64],
+        [0.80, 0.70],
+        [1.0, 0.73],
+    ]
+    affinities = inheritance_affinities or {}
+
+    grouped: dict[str, dict[str, Any]] = {}
+    factor_details: list[dict[str, Any]] = []
+    for member, position, role in members:
+        affinity_value = max(0.0, float(affinities.get(role, 0.0)))
+        affinity_multiplier = 1.0 + affinity_value / 100.0
+        for factor in _factor_list(member, "white_skill"):
+            stars = int(factor.get("stars") or 0)
+            name = str(factor.get("name") or "")
+            key = slugify(name)
+            profile_weight = max(0.0, float(weight_lookup(key)))
+            base_rate = max(0.0, float(base_rates.get(str(stars), 0.0)))
+            probability_per_event = min(per_event_cap, base_rate * affinity_multiplier)
+            probability_over_run = 1.0 - (1.0 - probability_per_event) ** event_count
+            standalone_contribution = profile_weight * probability_over_run
+            row = {
+                "role": role,
+                "position": position,
+                "name": name,
+                "catalog_key": key,
+                "stars": stars,
+                "profile_weight": round(profile_weight, 6),
+                "inheritance_affinity": round(affinity_value, 6),
+                "base_proc_rate": round(base_rate, 8),
+                "affinity_multiplier": round(affinity_multiplier, 6),
+                "proc_probability_per_event": round(probability_per_event, 8),
+                "proc_probability_over_run": round(probability_over_run, 8),
+                "standalone_contribution": round(standalone_contribution, 8),
+                # Compatibility alias for generic detail renderers. This is the
+                # factor's standalone value, not the duplicate-aware skill value.
+                "contribution": round(standalone_contribution, 8),
+            }
+            factor_details.append(row)
+            bucket = grouped.setdefault(
+                key,
+                {
+                    "name": name,
+                    "catalog_key": key,
+                    "profile_weight": profile_weight,
+                    "failure_probability": 1.0,
+                    "factors": [],
+                },
+            )
+            bucket["failure_probability"] *= (1.0 - probability_per_event) ** event_count
+            bucket["factors"].append(row)
+
+    raw = 0.0
+    probability_raw = 0.0
+    skill_details: list[dict[str, Any]] = []
+    for bucket in grouped.values():
+        probability_at_least_once = 1.0 - float(bucket["failure_probability"])
+        probability_utility = max(
+            0.0,
+            float(_piecewise_score(probability_at_least_once, distinct_skill_curve)),
+        )
+        profile_weight = float(bucket["profile_weight"])
+        probability_contribution = profile_weight * probability_at_least_once
+        contribution = profile_weight * probability_utility
+        probability_raw += probability_contribution
+        raw += contribution
+        carriers = list(bucket["factors"])
+        skill_details.append(
+            {
+                "name": bucket["name"],
+                "catalog_key": bucket["catalog_key"],
+                "profile_weight": round(profile_weight, 6),
+                "probability_at_least_once": round(probability_at_least_once, 8),
+                "probability_utility": round(probability_utility, 8),
+                "probability_contribution": round(probability_contribution, 8),
+                "contribution": round(contribution, 8),
+                "carrier_count": len(carriers),
+                "roles": [str(item["role"]) for item in carriers],
+                "factors": carriers,
+            }
+        )
+
+    scale = float((config.get("white_saturation") or {}).get(saturation_key, 1.0))
+    skill_details.sort(key=lambda item: item["contribution"], reverse=True)
+    factor_details.sort(key=lambda item: item["standalone_contribution"], reverse=True)
+    return _saturating_score(raw, scale), {
+        "raw": raw,
+        "probability_raw": probability_raw,
+        "scale": scale,
+        "formula": "for each distinct skill: combine carriers into P(at least once), convert P through the configurable distinct-skill utility curve, multiply by profile priority, sum, then apply total saturation",
+        "base_proc_rates": base_rates,
+        "inspiration_event_count": event_count,
+        "distinct_skill_probability_curve": distinct_skill_curve,
+        "uses_individual_affinity": True,
+        "diversity_policy": "very low chances are suppressed; useful distinct skills receive separate utility; repeated copies only increase the same skill probability with diminishing returns",
+        "top_skills": skill_details[:20],
+        "top_factors": factor_details[:30],
+        "skill_count": len(skill_details),
+        "factor_count": len(factor_details),
     }
 
 
@@ -925,6 +1525,99 @@ def _branch_affinity(
     }
 
 
+
+
+def _branch_inheritance_affinities(
+    resolver: AffinityResolver,
+    ace_chara_id: int,
+    veteran: dict[str, Any],
+    g1_bonus_value: int,
+) -> dict[str, float]:
+    """Partial inheritance coefficients for an isolated parent branch.
+
+    The parent↔other-parent terms are unknown here and are added by the final
+    pair evaluator. Grandparent coefficients are already exact for this branch.
+    """
+    parent_chara = int(veteran.get("chara_id") or 0)
+    lineage = veteran.get("when_used_as_parent") or {}
+    gp1 = lineage.get("grandparent_1")
+    gp2 = lineage.get("grandparent_2")
+    gp1_chara = int((gp1 or {}).get("chara_id") or 0)
+    gp2_chara = int((gp2 or {}).get("chara_id") or 0)
+    ace_parent = resolver.pair(ace_chara_id, parent_chara)
+    triple_1 = resolver.triple(ace_chara_id, parent_chara, gp1_chara) if gp1 else 0
+    triple_2 = resolver.triple(ace_chara_id, parent_chara, gp2_chara) if gp2 else 0
+    parent_g1 = _member_g1(veteran)
+    gp1_g1 = g1_bonus_value * len(parent_g1 & _member_g1(gp1))
+    gp2_g1 = g1_bonus_value * len(parent_g1 & _member_g1(gp2))
+    return {
+        "parent": float(ace_parent + triple_1 + triple_2 + gp1_g1 + gp2_g1),
+        "grandparent_1": float(triple_1 + gp1_g1),
+        "grandparent_2": float(triple_2 + gp2_g1),
+    }
+
+
+def _pair_inheritance_affinities(
+    resolver: AffinityResolver,
+    ace_chara_id: int,
+    parent_1: dict[str, Any],
+    parent_2: dict[str, Any],
+    g1_bonus_value: int,
+) -> dict[str, Any]:
+    """Compute the six modern individual inheritance coefficients.
+
+    These are the coefficients used by Spark proc estimates, not six disjoint
+    shares of the in-game overall ◎/〇/△ total. Shared links intentionally occur
+    in both the parent and the corresponding grandparent coefficient.
+    """
+    p1_chara = int(parent_1.get("chara_id") or 0)
+    p2_chara = int(parent_2.get("chara_id") or 0)
+    p1_lineage = parent_1.get("when_used_as_parent") or {}
+    p2_lineage = parent_2.get("when_used_as_parent") or {}
+    p1_gp1 = p1_lineage.get("grandparent_1")
+    p1_gp2 = p1_lineage.get("grandparent_2")
+    p2_gp1 = p2_lineage.get("grandparent_1")
+    p2_gp2 = p2_lineage.get("grandparent_2")
+
+    p1_gp1_triple = resolver.triple(ace_chara_id, p1_chara, int((p1_gp1 or {}).get("chara_id") or 0)) if p1_gp1 else 0
+    p1_gp2_triple = resolver.triple(ace_chara_id, p1_chara, int((p1_gp2 or {}).get("chara_id") or 0)) if p1_gp2 else 0
+    p2_gp1_triple = resolver.triple(ace_chara_id, p2_chara, int((p2_gp1 or {}).get("chara_id") or 0)) if p2_gp1 else 0
+    p2_gp2_triple = resolver.triple(ace_chara_id, p2_chara, int((p2_gp2 or {}).get("chara_id") or 0)) if p2_gp2 else 0
+
+    parent_pair_base = resolver.pair(p1_chara, p2_chara)
+    p1_g1 = _member_g1(parent_1)
+    p2_g1 = _member_g1(parent_2)
+    p1_p2_g1 = g1_bonus_value * len(p1_g1 & p2_g1)
+    p1_gp1_g1 = g1_bonus_value * len(p1_g1 & _member_g1(p1_gp1))
+    p1_gp2_g1 = g1_bonus_value * len(p1_g1 & _member_g1(p1_gp2))
+    p2_gp1_g1 = g1_bonus_value * len(p2_g1 & _member_g1(p2_gp1))
+    p2_gp2_g1 = g1_bonus_value * len(p2_g1 & _member_g1(p2_gp2))
+
+    ace_p1 = resolver.pair(ace_chara_id, p1_chara)
+    ace_p2 = resolver.pair(ace_chara_id, p2_chara)
+    values = {
+        "parent_1": float(ace_p1 + parent_pair_base + p1_gp1_triple + p1_gp2_triple + p1_p2_g1 + p1_gp1_g1 + p1_gp2_g1),
+        "parent_1_grandparent_1": float(p1_gp1_triple + p1_gp1_g1),
+        "parent_1_grandparent_2": float(p1_gp2_triple + p1_gp2_g1),
+        "parent_2": float(ace_p2 + parent_pair_base + p2_gp1_triple + p2_gp2_triple + p1_p2_g1 + p2_gp1_g1 + p2_gp2_g1),
+        "parent_2_grandparent_1": float(p2_gp1_triple + p2_gp1_g1),
+        "parent_2_grandparent_2": float(p2_gp2_triple + p2_gp2_g1),
+    }
+    return {
+        "values": values,
+        "formula": {
+            "parent": "pair(Ace,parent) + pair(parent1,parent2) + two Ace-parent-GP triples + three modern G1 links",
+            "grandparent": "triple(Ace,parent,grandparent) + 3 × shared G1(parent,grandparent)",
+        },
+        "assumptions": {
+            "affinity_system": "modern_g1",
+            "g1_only": True,
+            "g1_bonus_per_overlap": g1_bonus_value,
+            "parent_parent_link_included": True,
+            "g2_g3_and_titles_excluded": True,
+        },
+    }
+
 def evaluate_parent_branch(
     resolver: AffinityResolver,
     ace: dict[str, Any],
@@ -961,23 +1654,42 @@ def evaluate_parent_branch(
         else g1_bonus_value
     )
     thresholds = affinity_thresholds or affinity_cfg.get("parent_branch_thresholds") or [[0, 0], [95, 100]]
-    weights = (config.get("mode_weights") or {}).get("parent_final") or {}
+    weights = _mode_weights(config, "parent_branch")
     members = _lineage_members(veteran)
     affinity = _branch_affinity(resolver, ace_chara, veteran, resolved_g1_bonus)
+    inheritance_affinities = _branch_inheritance_affinities(
+        resolver, ace_chara, veteran, resolved_g1_bonus
+    )
     blue, blue_detail = _blue_score(members, distance, config)
-    pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
-    white, white_detail = _white_score(members, weight_lookup, config, "parent_branch")
+    pink, pink_detail = _pink_score(
+        members, ace, surface, distance, style, config, mode="parent_branch",
+        inheritance_affinities=inheritance_affinities,
+    )
+    white, white_detail = _white_score(
+        members, weight_lookup, config, "parent_branch",
+        inheritance_affinities=inheritance_affinities,
+    )
     race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_branch")
     unique, unique_detail = _unique_score(members, config, "parent_branch")
     components = {
         "blue": blue,
         "pink": pink,
+        "distance_s": float(pink_detail["distance_s"]["score"]),
+        "pink_other": float(pink_detail["pink_other"]["score"]),
         "white_skill": white,
         "race_scenario": race,
         "unique": unique,
     }
     affinity_score = _affinity_score(affinity["total"], thresholds)
     components["affinity"] = affinity_score
+    branch_viability = _distance_viability(
+        mode="parent_branch",
+        distance_detail=pink_detail["distance_s"],
+        white_score=white,
+        blue_score=blue,
+        config=config,
+    )
+    pink_detail["distance_s"]["viability"] = branch_viability
     component_details = {
         "blue": blue_detail,
         "pink": pink_detail,
@@ -990,6 +1702,8 @@ def evaluate_parent_branch(
             "g1_bonus": affinity["g1_bonus"],
             "thresholds": thresholds,
             "score": affinity_score,
+            "inheritance_affinities_partial": inheritance_affinities,
+            "note": "Branch-only proc coefficients exclude the unknown other-parent link; final pair evaluation recomputes exact values.",
         },
     }
     return {
@@ -1000,6 +1714,8 @@ def evaluate_parent_branch(
         "component_details": component_details,
         "score": _weighted_total(components, weights),
         "score_breakdown": _score_breakdown(components, weights),
+        "distance_viability": branch_viability,
+        "distance_s_summary": pink_detail["distance_s"],
     }
 
 
@@ -1041,7 +1757,7 @@ def evaluate_parent_pair(
         else g1_bonus_value
     )
     thresholds = affinity_thresholds or affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
-    weights = (config.get("mode_weights") or {}).get("parent_final") or {}
+    weights = _mode_weights(config, "parent_pair")
 
     left = parent_1_branch or evaluate_parent_branch(
         resolver, ace, parent_1, surface=surface, distance=distance, style=style,
@@ -1057,6 +1773,9 @@ def evaluate_parent_pair(
     parent_pair_base = resolver.pair(chara_1, chara_2)
     parent_common = sorted(_member_g1(parent_1) & _member_g1(parent_2))
     parent_pair_g1 = resolved_g1_bonus * len(parent_common)
+    inheritance_affinity_detail = _pair_inheritance_affinities(
+        resolver, int(ace.get("chara_id") or 0), parent_1, parent_2, resolved_g1_bonus
+    )
     affinity = {
         "base": int(left["affinity"]["base"]) + int(right["affinity"]["base"]) + parent_pair_base,
         "g1_bonus": int(left["affinity"]["g1_bonus"]) + int(right["affinity"]["g1_bonus"]) + parent_pair_g1,
@@ -1066,27 +1785,47 @@ def evaluate_parent_pair(
         "parent_parent_common_g1_bonus": parent_pair_g1,
         "parent_1_branch": left["affinity"],
         "parent_2_branch": right["affinity"],
+        "inheritance_affinities": inheritance_affinity_detail,
         "formula": (
             "branch(Ace,parent1,GP1,GP2) + branch(Ace,parent2,GP3,GP4) "
-            "+ pair(parent1,parent2), with the five visible G1 links"
+            "+ pair(parent1,parent2), with the five visible modern G1 links"
         ),
     }
 
-    members = _lineage_members(parent_1) + _lineage_members(parent_2)
+    members = _lineage_members(parent_1, "parent_1") + _lineage_members(parent_2, "parent_2")
     blue, blue_detail = _blue_score(members, distance, config)
-    pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
-    white, white_detail = _white_score(members, weight_lookup, config, "parent_pair")
+    pink, pink_detail = _pink_score(
+        members, ace, surface, distance, style, config, mode="parent_pair",
+        inheritance_affinities=inheritance_affinity_detail["values"],
+    )
+    white, white_detail = _white_score(
+        members, weight_lookup, config, "parent_pair",
+        inheritance_affinities=inheritance_affinity_detail["values"],
+    )
     race, race_detail = _race_scenario_score(members, weight_lookup, race_skills, config, "parent_pair")
     unique, unique_detail = _unique_score(members, config, "parent_pair")
     components = {
         "blue": blue,
         "pink": pink,
+        "distance_s": float(pink_detail["distance_s"]["score"]),
+        "pink_other": float(pink_detail["pink_other"]["score"]),
         "white_skill": white,
         "race_scenario": race,
         "unique": unique,
     }
     affinity_score = _affinity_score(affinity["total"], thresholds)
     components["affinity"] = affinity_score
+    pair_viability = _distance_viability(
+        mode="parent_pair",
+        distance_detail=pink_detail["distance_s"],
+        white_score=white,
+        # Compensation asks whether the blue lineage is intrinsically
+        # excellent. Use the uncompressed quality here; the distance-specific
+        # influence only controls how strongly blues affect normal ranking.
+        blue_score=float(blue_detail.get("uncompressed_score", blue)),
+        config=config,
+    )
+    pink_detail["distance_s"]["viability"] = pair_viability
     component_details = {
         "blue": blue_detail,
         "pink": pink_detail,
@@ -1106,6 +1845,8 @@ def evaluate_parent_pair(
                 "parent_parent_common_g1": parent_common,
                 "parent_parent_common_g1_bonus": parent_pair_g1,
             },
+            "inheritance_affinities": inheritance_affinity_detail,
+            "note": "Overall compatibility remains diagnostic; Spark proc estimates use the six individual coefficients.",
         },
     }
     return {
@@ -1116,7 +1857,30 @@ def evaluate_parent_pair(
         "component_details": component_details,
         "score": _weighted_total(components, weights),
         "score_breakdown": _score_breakdown(components, weights),
+        "distance_viability": pair_viability,
+        "distance_s_summary": pink_detail["distance_s"],
+        "aptitude_summaries": pink_detail["dimensions"],
     }
+
+
+def parent_pair_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+    """Prioritize viability, then the configurable weighted quality score.
+
+    Distance-S probability is already converted through a saturating utility
+    curve inside the distance component. Keeping raw P(S) ahead of the global
+    score would make small differences near the practical ceiling dominate
+    much better white/blue lineages.
+    """
+    viability = row.get("distance_viability") or {}
+    pink_detail = ((row.get("component_details") or {}).get("pink") or {})
+    distance_detail = row.get("distance_s_summary") or pink_detail.get("distance_s") or {}
+    return (
+        float(viability.get("sort_priority") or 0),
+        float(row.get("score") or 0),
+        float((row.get("components") or {}).get("white_skill") or 0),
+        float((row.get("components") or {}).get("blue") or 0),
+        float(distance_detail.get("probability_reach_s") or 0),
+    )
 
 
 def _candidate_identity(veteran: dict[str, Any]) -> dict[str, Any]:
@@ -1323,7 +2087,7 @@ def optimize_parents(
                 )
 
         pair_p95 = _quantile((row["affinity"]["total"] for row in pair_rows), 0.95)
-        pair_rows.sort(key=lambda row: (row["score"], row["affinity"]["total"]), reverse=True)
+        pair_rows.sort(key=parent_pair_sort_key, reverse=True)
 
         log("Évaluation des futurs grands-parents…")
         future_rows: list[dict[str, Any]] = []
@@ -1350,8 +2114,12 @@ def optimize_parents(
                 affinity_mode = "ace_candidate_pair_fallback"
             g1_count = len(_member_g1(veteran))
             blue, blue_detail = _blue_score(members, distance, config)
-            pink, pink_detail = _pink_score(members, ace, surface, distance, style, config)
-            white, white_detail = _white_score(members, weight_lookup, config, "future_grandparent")
+            pink, pink_detail = _future_grandparent_pink_score(
+                members, ace, surface, distance, style, config
+            )
+            white, white_detail = _future_grandparent_white_score(
+                members, weight_lookup, config
+            )
             production_lineage = _lineage_members(veteran)
             white_generation, white_generation_detail = _white_generation_support_score(
                 production_lineage, weight_lookup, config
@@ -1374,16 +2142,25 @@ def optimize_parents(
                     },
                     "component_details": {
                         "blue": blue_detail,
-                        "pink": pink_detail,
-                        "white_skill": white_detail,
-                        "white_generation": white_generation_detail,
+                        "pink": {
+                            **pink_detail,
+                            "evaluation_context": "future_grandparent_simple_quality",
+                        },
+                        "white_skill": {
+                            **white_detail,
+                            "evaluation_context": "future_grandparent_direct_factor_quality",
+                        },
+                        "white_generation": {
+                            **white_generation_detail,
+                            "evaluation_context": "intermediate_run_that_creates_target_parent",
+                        },
                         "unique": unique_detail,
                     },
                 }
             )
         future_affinity_p95 = _quantile((row["affinity_raw"] for row in future_rows), 0.95)
         future_g1_p95 = max(1.0, _quantile((row["g1_count"] for row in future_rows), 0.95))
-        future_weights = (config.get("mode_weights") or {}).get("future_grandparent") or {}
+        future_weights = _mode_weights(config, "future_grandparent")
         for row in future_rows:
             affinity_basis = float(row.get("future_branch_base_total") or row["affinity_raw"])
             affinity_score = _affinity_score(affinity_basis, future_affinity_thresholds)
@@ -1419,7 +2196,7 @@ def optimize_parents(
         generated_at = datetime.now(timezone.utc).isoformat()
         payload = {
             "metadata": {
-                "schema_version": 4,
+                "schema_version": 6,
                 "generated_at_utc": generated_at,
                 "purpose": "Rank final parent pairs, parent branches and future grandparents for a target Ace profile.",
                 "source_master": {"filename": master.name, "sha256": _sha256(master)},
@@ -1439,10 +2216,12 @@ def optimize_parents(
                         if future_parent is not None
                         else "Future-grandparent affinity uses pair(Ace, candidate) as a fallback because no target parent was selected."
                     ),
-                    "White-skill values use manual profile priorities first. Spark stars use a moderate inheritance-comfort curve (1★=1.00, 2★=1.35, 3★=1.80), then parent/grandparent transmission position and diminishing-return saturation.",
+                    "Parent branches and final pairs use the probability-aware pink/white model with individual affinities. Future-grandparent factors deliberately use the simpler pre-session quality model: no proc percentage, initial aptitude or P(S) is calculated.",
                     "For future-grandparent production, matching white skill Sparks on the candidate and its two current parents add only their incremental lineage-copy bonus; learned gold/basic form and base generation chance are ignored. Race/scenario Sparks are excluded.",
                     "A trainee repeated as her own grandparent contributes zero base compatibility; a raw MDB group intersection must not be used for duplicate characters.",
                     "Blue and compatibility components are threshold-oriented and saturate; 2-star blue is acceptable, while 3-star is an incremental improvement rather than a requirement.",
+                    "Distance-S support is scored separately from surface/style pinks only for parent branches and final pairs. Final pairs are ordered by Distance-S viability before their additive score.",
+                    "Parent branches are classified as deficit/light/balanced/distance carrier, but are not hard-gated because two branches may complement each other.",
                     "Race Sparks have a low base value and only gain meaningful value when they grant a relevant course-static skill; the direct white skill remains substantially more valuable.",
                 ],
             },
@@ -1497,7 +2276,17 @@ def optimize_parents(
                 "affinity_base": row["affinity"]["base"],
                 "affinity_g1_bonus": row["affinity"]["g1_bonus"],
                 "affinity_component_score": round(row["components"]["affinity"], 3),
+                "distance_status": row["distance_viability"]["key"],
+                "distance_tier": row["distance_viability"]["tier"],
+                "distance_stars": row["distance_s_summary"]["total_stars"],
+                "distance_carriers": row["distance_s_summary"]["carrier_count"],
+                "distance_support": row["distance_s_summary"]["weighted_support"],
+                "distance_initial_rank": row["distance_s_summary"]["initial_rank_label"],
+                "distance_probability_a": round(100.0 * row["distance_s_summary"]["probability_reach_a"], 3),
+                "distance_probability_s": round(100.0 * row["distance_s_summary"]["probability_reach_s"], 3),
                 "blue": round(row["components"]["blue"], 3),
+                "distance_s": round(row["components"]["distance_s"], 3),
+                "pink_other": round(row["components"]["pink_other"], 3),
                 "pink": round(row["components"]["pink"], 3),
                 "white_skill": round(row["components"]["white_skill"], 3),
                 "race_scenario": round(row["components"]["race_scenario"], 3),
@@ -1508,7 +2297,7 @@ def optimize_parents(
         _write_csv(
             parent_candidates_csv,
             candidate_csv_rows,
-            ["rank", "score", "trained_chara_id", "rank_score", "parent", "grandparent_1", "grandparent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "blue", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "trained_chara_id", "rank_score", "parent", "grandparent_1", "grandparent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_support", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "blue", "distance_s", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         pair_csv_rows = [
@@ -1526,7 +2315,26 @@ def optimize_parents(
                 "affinity_g1_bonus": row["affinity"]["g1_bonus"],
                 "affinity_component_score": round(row["components"]["affinity"], 3),
                 "parent_parent_common_g1": " | ".join(row["affinity"]["parent_parent_common_g1"]),
+                "distance_status": row["distance_viability"]["key"],
+                "distance_tier": row["distance_viability"]["tier"],
+                "distance_stars": row["distance_s_summary"]["total_stars"],
+                "distance_carriers": row["distance_s_summary"]["carrier_count"],
+                "distance_parent_carriers": row["distance_s_summary"]["parent_carrier_count"],
+                "distance_support": row["distance_s_summary"]["weighted_support"],
+                "distance_initial_required": row["distance_s_summary"]["initial_required_stars"],
+                "distance_initial_met": row["distance_viability"]["is_initial_requirement_met"],
+                "distance_initial_rank": row["distance_s_summary"]["initial_rank_label"],
+                "distance_probability_a": round(100.0 * row["distance_s_summary"]["probability_reach_a"], 3),
+                "distance_probability_s": round(100.0 * row["distance_s_summary"]["probability_reach_s"], 3),
+                "surface_initial_rank": row["aptitude_summaries"]["surface"]["initial_rank_label"],
+                "surface_probability_a": round(100.0 * row["aptitude_summaries"]["surface"]["probability_reach_a"], 3),
+                "surface_probability_s": round(100.0 * row["aptitude_summaries"]["surface"]["probability_reach_s"], 3),
+                "style_initial_rank": row["aptitude_summaries"]["style"]["initial_rank_label"],
+                "style_probability_a": round(100.0 * row["aptitude_summaries"]["style"]["probability_reach_a"], 3),
+                "style_probability_s": round(100.0 * row["aptitude_summaries"]["style"]["probability_reach_s"], 3),
                 "blue": round(row["components"]["blue"], 3),
+                "distance_s": round(row["components"]["distance_s"], 3),
+                "pink_other": round(row["components"]["pink_other"], 3),
                 "pink": round(row["components"]["pink"], 3),
                 "white_skill": round(row["components"]["white_skill"], 3),
                 "race_scenario": round(row["components"]["race_scenario"], 3),
@@ -1537,7 +2345,7 @@ def optimize_parents(
         _write_csv(
             parent_pairs_csv,
             pair_csv_rows,
-            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "blue", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         future_csv_rows = [

@@ -1,5 +1,77 @@
 # Changelog
 
+## V37 — diversité des whites et nouveaux poids parent
+
+- Nouveaux poids par défaut de la paire finale : Distance S 29 %, autres pinks 7 %, whites 35 %, race/scénario 4 %, blues 20 % et unique 5 %.
+- Ajout d'une courbe configurable de valeur par white distincte après calcul de sa probabilité cumulée d'héritage.
+- Les probabilités très faibles restent peu valorisées, tandis que plusieurs skills utiles autour de 20 % sont préférées à une seule skill surconcentrée vers 80 %.
+- Les copies identiques continuent d'être fusionnées en une seule probabilité ; elles améliorent donc la fiabilité de cette skill sans créer artificiellement de diversité.
+- Le scoring vise davantage le potentiel de high roll sur plusieurs runs, tout en conservant l'affinité individuelle et les taux de proc réels comme base.
+- Nouveau réglage custom `white_inheritance.distinct_skill_probability_curve`, affiché dans l'éditeur et les diagnostics.
+
+## V36 — séparation stricte du scoring parent et futur GP
+
+- Restauration du modèle simple historique pour la recherche de futurs grands-parents : pink, blue et whites propres sont évaluées sans probabilité de proc, rang initial ou `P(S)`.
+- Conservation du modèle probabiliste complet uniquement pour les branches parent et les paires finales de l'Ace.
+- Les parents actuels d'un GP ne contribuent toujours qu'à `white_generation`; ils ne sont jamais traités comme ancêtres directs de l'Ace final.
+- Optimiseur local, recherche GP uma.moe, Transfer Helper, interface et exports remis sur le même schéma GP simple.
+- Restauration d'une composante unique `pink` pour `mode_weights.future_grandparent`; migration automatique des profils V31–V35 `distance_s + pink_other` vers ce poids unique.
+- Les pondérations personnalisées par rôle et les nouveaux réglages parent/blue restent disponibles.
+
+## V35 — séparation white parent / futur GP
+
+- Conservation du modèle probabiliste complet sur les six membres pour la recherche de parents et les paires finales.
+- En recherche de GP, les whites propres à GP1/GP2 sont désormais évaluées comme facteurs de grands-parents visibles pendant la future run de l’Ace.
+- Les affinités de production du parent intermédiaire ne sont plus utilisées pour surévaluer les whites directes des GP.
+- Ajout d’un coefficient final projeté par GP : triple `Ace-parent-GP` + bonus G1 planifiés pour ce lien.
+- Les parents actuels d’un GP restent exclus de l’héritage direct de l’Ace et n’interviennent que dans le sous-score séparé `white_generation`.
+- La compatibilité de la run qui produit le futur parent reste un diagnostic/composant distinct à faible poids.
+
+## V34 — héritage probabiliste des white Skill Sparks
+
+- Remplacement du coefficient fixe étoiles × position des white skills par les taux de proc 3/6/9 % multipliés par l’affinité individuelle moderne de chaque porteur.
+- Calcul sur les deux Inspiration Events, avec probabilité par facteur et probabilité cumulée d’obtenir chaque skill au moins une fois.
+- Les copies identiques sont agrégées par skill au lieu d’être additionnées naïvement, ce qui évite de surévaluer les propres GP d’un parent lorsqu’ils ont une faible affinité.
+- Suppression du réglage obsolète `white_star_quality`; nouveaux réglages `white_inheritance.base_proc_rates`, `inspiration_event_count` et `per_event_probability_cap`.
+- Recalibrage de `white_saturation` pour conserver une échelle de score comparable à la V33.
+- Détails UI/JSON enrichis : affinité individuelle, taux par événement, probabilité sur la run, porteurs et contribution agrégée par skill.
+
+## V33 — rendements décroissants de P(S) et blues par distance
+
+- Remplacement de la valeur linéaire de `P(S)` par une courbe saturante configurable : 40 % devient un seuil pratique correct, 50 % très bon et 60 % le plafond idéal par défaut.
+- À statut de viabilité distance identique, le score pondéré global passe désormais avant la probabilité brute de S ; `P(S)` ne sert plus que de départage après le score, les whites et les blues.
+- Rééquilibrage de la paire finale : distance 32 %, whites 42 %, blues 8 %, afin de mieux valoriser une lignée qualitativement supérieure lorsque les chances de S sont déjà bonnes.
+- Rééquilibrage des branches parent : distance 22 %, whites 47 %, blues 8 %.
+- Nouvelles préférences blue par distance : Power prioritaire en Sprint/Mile, Stamina prioritaire en Medium/Long, Speed toujours correcte mais non optimale, Guts/Wit utilisables sans être privilégiées.
+- Ajout d'une compression configurable de l'impact blue selon la distance : faible en Sprint, modérée en Mile, forte en Medium/Long.
+- Nouveaux réglages `aptitude_inheritance.*.s_probability_curve`, `blue_score_influence_by_distance` et `blue_neutral_score` exposés dans l'éditeur de pondérations.
+- Ajout de tests sur les rendements décroissants 40/50/60 %, le nouvel ordre de tri et la spécialisation des blues selon la distance.
+
+## V32 — probabilités d’aptitude et affinités individuelles
+
+- Remplacement du support Distance S heuristique par un modèle probabiliste commun à la distance, au terrain et au style.
+- Calcul du rang d’aptitude au début de la run à partir des étoiles cumulées : 1–3★ = +1 rang, 4–6★ = +2, 7–9★ = +3 et 10+★ = +4, avec plafond initial à A.
+- Calcul des six coefficients d’héritage individuels selon le système moderne G1 : lien Ace↔parent, lien parent↔parent, triples Ace-parent-GP et +3 par G1 commune sur les liens concernés.
+- Taux roses 1/3/5 % pour 1★/2★/3★, multipliés par `(1 + affinité individuelle / 100)`, puis distribution exacte sur les deux Inspiration Events.
+- Un proc rose vaut volontairement un seul rang ; les rares doubles montées sont ignorées.
+- Distance A au départ fortement privilégiée ; Distance B uniquement recommandable si `P(A)`, `P(S)`, whites et blues franchissent tous les seuils de compensation.
+- Distance C ou moins au départ classée `underprepared`; terrain et style utilisent le même calcul avec une pénalisation nettement plus souple.
+- Suppression de l’affinité globale comme composante additive des scores branche parent et paire finale afin d’éviter le double comptage ; elle reste diagnostique et conserve son rôle pour les futurs GP.
+- Mise à jour des recherches locales/uma.moe, du Transfer Helper, des exports JSON/CSV et de l’interface avec rang initial, `P(A)`, `P(S)` et contributions par porteur.
+- Migration automatique des anciens profils V31 et ajout de tests dédiés aux seuils C+3★/C+4★, aux six affinités individuelles et à la compensation Distance B.
+
+## V31 — viabilité Distance S et scores parent séparés
+
+- Séparation des pondérations entre **branche parent**, **paire finale** et **futur grand-parent** ; l'ancien mode partagé `parent_final` reste accepté comme compatibilité descendante.
+- Extraction des pinks de distance dans une composante dédiée `distance_s`; les pinks de surface et de style deviennent `pink_other` et ne peuvent plus compenser une lignée sans la distance cible.
+- Nouveau modèle de support Distance S fondé sur la qualité des étoiles, le nombre de porteurs et la position parent direct / grand-parent.
+- Vérification du nombre brut d'étoiles nécessaire pour démarrer la carrière à Distance A lorsque l'Ace possède une aptitude initiale inférieure.
+- Classification des paires finales en `non_viable`, `fragile`, `viable`, `strong` et `excellent`.
+- Tri lexicographique des paires : la viabilité Distance S est prioritaire sur le score additif, les whites et l'affinité.
+- Classification non bloquante des branches en déficit, légère, équilibrée ou porteuse distance afin de conserver la complémentarité entre deux parents.
+- Recherche de parents uma.moe, optimiseur local, Transfer Helper, interface et exports CSV/JSON alignés sur le nouveau moteur.
+- Ajout de tests garantissant que les pinks de surface/style ne peuvent pas rendre une paire viable pour Distance S.
+
 ## V30 — recherche de parents uma.moe
 
 - Ajout d’un second mode uma.moe : recherche d’un **parent distant pour l’Ace**, associé à un parent local fixé ou à un pool automatique de parents locaux.

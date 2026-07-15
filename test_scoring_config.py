@@ -10,6 +10,7 @@ from scoring_config import (
     deep_merge,
     load_effective_scoring_config,
     materialize_effective_scoring_config,
+    migrate_scoring_overrides,
     read_json_object,
     validate_scoring_config,
     validate_skill_priorities_config,
@@ -30,18 +31,37 @@ class ScoringConfigTests(unittest.TestCase):
         self.assertEqual(default, effective)
         validate_scoring_config(effective)
 
+    def test_default_parent_pair_weights_match_high_roll_profile(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        self.assertEqual(
+            config["mode_weights"]["parent_pair"],
+            {
+                "distance_s": 0.29,
+                "pink_other": 0.07,
+                "white_skill": 0.35,
+                "race_scenario": 0.04,
+                "blue": 0.20,
+                "unique": 0.05,
+            },
+        )
+
     def test_minimal_overrides_round_trip(self) -> None:
         default = read_json_object(DEFAULT_SCORING)
         current = deep_merge(
             default,
             {
                 "blue_stat_weights_by_distance": {"long": {"Stamina": 2.5}},
-                "pink_dimension_weights": {"style": 0.9},
+                "aptitude_inheritance": {
+                    "dimension_weights_by_mode": {"parent_pair": {"style": 0.2}}
+                },
             },
         )
         overrides = build_overrides(default, current)
         self.assertEqual(overrides["blue_stat_weights_by_distance"]["long"]["Stamina"], 2.5)
-        self.assertEqual(overrides["pink_dimension_weights"]["style"], 0.9)
+        self.assertEqual(
+            overrides["aptitude_inheritance"]["dimension_weights_by_mode"]["parent_pair"]["style"],
+            0.2,
+        )
         self.assertNotIn("mode_weights", overrides)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -65,9 +85,110 @@ class ScoringConfigTests(unittest.TestCase):
 
     def test_negative_weight_is_rejected(self) -> None:
         default = read_json_object(DEFAULT_SCORING)
-        invalid = deep_merge(default, {"pink_dimension_weights": {"distance": -1}})
+        invalid = deep_merge(
+            default,
+            {"aptitude_inheritance": {"dimension_weights_by_mode": {"parent_pair": {"distance": -1}}}},
+        )
         with self.assertRaises(ScoringConfigError):
             validate_scoring_config(invalid)
+
+    def test_probability_curve_is_bounded(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["aptitude_inheritance"]["distance"]["s_probability_curve"][-1][0] = 1.2
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["aptitude_inheritance"]["distance"]["s_probability_curve"][-1][1] = 120
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+    def test_white_distinct_skill_curve_is_bounded(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["white_inheritance"]["distinct_skill_probability_curve"][-1][0] = 1.2
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["white_inheritance"]["distinct_skill_probability_curve"][-1][1] = 1.2
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+    def test_blue_influence_requires_every_distance(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        del config["blue_score_influence_by_distance"]["mile"]
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+    def test_legacy_parent_final_weights_are_migrated_to_both_parent_roles(self) -> None:
+        default = read_json_object(DEFAULT_SCORING)
+        migrated = migrate_scoring_overrides(
+            default,
+            {
+                "mode_weights": {
+                    "parent_final": {
+                        "affinity": 0.10,
+                        "pink": 0.40,
+                        "white_skill": 0.50,
+                    }
+                }
+            },
+        )
+
+        self.assertNotIn("parent_final", migrated["mode_weights"])
+        self.assertNotIn("affinity", migrated["mode_weights"]["parent_branch"])
+        self.assertEqual(migrated["mode_weights"]["parent_pair"]["white_skill"], 0.50)
+        self.assertAlmostEqual(
+            migrated["mode_weights"]["parent_branch"]["distance_s"]
+            + migrated["mode_weights"]["parent_branch"]["pink_other"],
+            0.40,
+        )
+        self.assertAlmostEqual(
+            migrated["mode_weights"]["parent_pair"]["distance_s"]
+            + migrated["mode_weights"]["parent_pair"]["pink_other"],
+            0.40,
+        )
+
+    def test_v35_future_gp_probability_weights_migrate_back_to_single_pink(self) -> None:
+        default = read_json_object(DEFAULT_SCORING)
+        migrated = migrate_scoring_overrides(
+            default,
+            {
+                "mode_weights": {
+                    "future_grandparent": {
+                        "distance_s": 0.14,
+                        "pink_other": 0.11,
+                        "white_skill": 0.20,
+                    }
+                },
+                "aptitude_inheritance": {
+                    "dimension_weights_by_mode": {
+                        "future_grandparent": {
+                            "distance": 0.55,
+                            "surface": 0.27,
+                            "style": 0.18,
+                        }
+                    },
+                    "partial_scoring": {
+                        "future_grandparent": {"full_star_reference": 3}
+                    },
+                },
+            },
+        )
+
+        future = migrated["mode_weights"]["future_grandparent"]
+        self.assertAlmostEqual(future["pink"], 0.25)
+        self.assertEqual(future["white_skill"], 0.20)
+        self.assertNotIn("distance_s", future)
+        self.assertNotIn("pink_other", future)
+        self.assertNotIn(
+            "future_grandparent",
+            migrated["aptitude_inheritance"]["dimension_weights_by_mode"],
+        )
+        self.assertNotIn(
+            "future_grandparent",
+            migrated["aptitude_inheritance"]["partial_scoring"],
+        )
 
     def test_default_white_skill_priorities_are_valid(self) -> None:
         validate_skill_priorities_config(read_json_object(DEFAULT_SKILL_PRIORITIES))

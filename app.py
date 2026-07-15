@@ -36,6 +36,7 @@ from scoring_config import (
     get_path_value,
     load_effective_scoring_config,
     materialize_effective_scoring_config,
+    migrate_scoring_overrides,
     read_json_object,
     set_path_value,
     validate_scoring_config,
@@ -963,8 +964,9 @@ class Application:
             help_box,
             text=(
                 "L’éditeur expose les poids globaux des scores, la préférence des blues par stat et par distance, "
-                "la valeur des pinks par catégorie (distance / surface / style), les paliers d’étoiles, les saturations, "
-                "les courbes d’affinité, les green skills, la génération de whites et les poids spécifiques à uma.moe."
+                "l’influence globale des blues selon la distance, le modèle probabiliste des aptitudes (distance / surface / style), "
+                "la courbe saturante de P(S), les seuils de compensation d’une distance B, "
+                "les saturations, les courbes d’affinité, les green skills, la génération de whites et les poids spécifiques à uma.moe."
             ),
             wraplength=1080,
         ).pack(anchor="w")
@@ -985,8 +987,10 @@ class Application:
             examples,
             text=(
                 "Exemples : augmenter blue_stat_weights_by_distance.long.Stamina favorise les lignées Stamina en Long ; "
-                "augmenter pink_dimension_weights.distance donne plus de valeur aux Sparks de distance ; "
-                "modifier uma_moe_pair.weights.white_skill change directement la priorité des whites déjà présentes dans les deux GP."
+                "réduire blue_score_influence_by_distance.sprint rend les mauvaises blues encore moins pénalisantes en Sprint ; "
+                "modifier aptitude_inheritance.distance.s_probability_curve change la valeur marginale de P(S) ; "
+                "modifier white_inheritance.distinct_skill_probability_curve règle l'avantage donné à plusieurs whites utiles distinctes ; "
+                "durcir aptitude_inheritance.distance.b_compensation.minimum_white_score rend les départs en B plus exceptionnels."
             ),
             style="Hint.TLabel",
             wraplength=1080,
@@ -1331,14 +1335,14 @@ class Application:
         ).grid(row=2, column=0, sticky="w", pady=(3, 0))
 
         section_hints = {
-            "mode_weights": "Répartition du score final entre affinité, Sparks bleues/roses/blanches et unique.",
+            "mode_weights": "Répartition du score final entre aptitudes, Sparks bleues/blanches, race/scénario et unique. L’affinité globale n’est plus pondérée pour les paires finales.",
             "blue_stat_weights_by_distance": "Importance relative de chaque stat bleue selon la distance ciblée.",
-            "blue_star_quality": "Qualité accordée aux Sparks bleues 1★, 2★ et 3★.",
-            "pink_star_quality": "Qualité accordée aux Sparks d'aptitude 1★, 2★ et 3★.",
-            "pink_dimension_weights": "Priorité relative des aptitudes de distance, surface et style.",
-            "pink_need_multiplier": "Bonus appliqué quand l'aptitude de base de l'Uma doit réellement être améliorée.",
-            "white_star_quality": "Gain relatif apporté par le nombre d'étoiles d'une white Spark utile.",
-            "white_saturation": "Vitesse à laquelle l'accumulation de whites utiles atteint un plateau.",
+            "blue_score_influence_by_distance": "Compression de l’impact des bonnes ou mauvaises blues selon la distance. Une valeur faible rapproche le score bleu de la valeur neutre.",
+            "blue_star_quality": "Qualité accordée aux Sparks bleues 1★, 2★ et 3★. Les bleues restent volontairement indépendantes du calcul d’affinité individuelle.",
+            "aptitude_inheritance": "Modèle réservé aux parents de l’Ace : rang initial, taux de proc par étoiles, affinités individuelles modernes, courbe de valeur de P(S), chances d’atteindre A/S et compensation stricte d’une distance B.",
+            "white_inheritance": "Modèle réservé aux parents de l’Ace : probabilités de base 1★/2★/3★, affinité individuelle, combinaison des copies et courbe favorisant plusieurs whites utiles distinctes plutôt qu’une seule skill surconcentrée.",
+            "future_grandparent_heuristics": "Modèle volontairement simple des futurs GP : qualité directe des roses et whites, sans estimation de proc, de rang initial ou de P(S).",
+            "white_saturation": "Vitesse à laquelle l’accumulation des probabilités d’obtenir des whites utiles atteint un plateau.",
             "affinity": "Conversion de l'affinité brute et des G1 communes en score utile, avec plateaux.",
             "course_conditions": "Valeur des green skills lorsque la course sélectionnée les active.",
             "white_generation": "Valeur du support de lignée pour générer une white Spark sur le futur parent.",
@@ -1570,7 +1574,7 @@ class Application:
                 return
             try:
                 imported = read_json_object(filename)
-                imported_effective = deep_merge(default, imported)
+                imported_effective = deep_merge(default, migrate_scoring_overrides(default, imported))
                 validate_scoring_config(imported_effective)
             except ScoringConfigError as exc:
                 self._show_error(exc, parent=window)
@@ -1634,7 +1638,7 @@ class Application:
         try:
             default = read_json_object(default_scoring_path())
             imported = read_json_object(filename)
-            effective = deep_merge(default, imported)
+            effective = deep_merge(default, migrate_scoring_overrides(default, imported))
             validate_scoring_config(effective)
             overrides = build_overrides(default, effective)
             path = user_scoring_overrides_path()
@@ -3494,6 +3498,19 @@ class Application:
                 "white_generation": "Soutien de génération des whites",
                 "blue": "Blues des deux GP",
             }
+            aptitude_dimensions = (details.get("pink") or {}).get("dimensions") or row.get("aptitude_summaries") or {}
+            for dimension_key, dimension_label in (("surface", "TERRAIN"), ("style", "STYLE")):
+                aptitude_detail = aptitude_dimensions.get(dimension_key) or {}
+                if aptitude_detail:
+                    lines.extend([
+                        "",
+                        dimension_label,
+                        f"- aptitude naturelle : {aptitude_detail.get('base_rank_label', '-')} → départ : {aptitude_detail.get('initial_rank_label', '-')}",
+                        f"- facteurs : {aptitude_detail.get('total_stars', 0)}★ / {aptitude_detail.get('carrier_count', 0)} porteur(s)",
+                        f"- P(A+) : {100 * float(aptitude_detail.get('probability_reach_a') or 0):.1f}% | P(S) : {100 * float(aptitude_detail.get('probability_reach_s') or 0):.1f}%",
+                        "- A/B restent acceptables ici ; la distance garde la priorité.",
+                    ])
+
             for key, item in (breakdown.get("components") or {}).items():
                 label = label_map.get(key, key)
                 lines.append(
@@ -3572,6 +3589,15 @@ class Application:
             style="Hint.TLabel",
             wraplength=1450,
         ).pack(anchor="w", pady=(3, 0))
+        ttk.Label(
+            header,
+            text=(
+                "Le classement est d’abord séparé par viabilité Distance S ; à statut égal, "
+                "le score pondéré départage les paires."
+            ),
+            style="Hint.TLabel",
+            wraplength=1450,
+        ).pack(anchor="w", pady=(2, 0))
 
         frame = ttk.Frame(window, padding=(10, 0, 10, 10))
         frame.pack(fill=tk.BOTH, expand=True)
@@ -3581,7 +3607,8 @@ class Application:
 
         columns = (
             "rank", "score", "local", "local_eval", "remote", "trainer", "friend", "remote_eval",
-            "affinity", "base", "g1", "parent_link", "pink", "white", "race", "blue", "unique",
+            "distance_status", "distance_factors", "distance_initial", "distance_a", "distance_s_probability",
+            "affinity", "base", "g1", "parent_link", "white", "pink_other", "race", "blue", "unique",
         )
         tree = ttk.Treeview(frame, columns=columns, show="headings")
         headings = {
@@ -3597,7 +3624,12 @@ class Application:
             "base": "Base",
             "g1": "+G1",
             "parent_link": "Lien parents",
-            "pink": "Pinks",
+            "distance_status": "Distance S",
+            "distance_factors": "Étoiles/porteurs",
+            "distance_initial": "Départ",
+            "distance_a": "P(A+)",
+            "distance_s_probability": "P(S)",
+            "pink_other": "Autres pinks",
             "white": "Whites",
             "race": "Race",
             "blue": "Blues",
@@ -3605,7 +3637,7 @@ class Application:
         }
         widths = {
             "local": 270, "remote": 290, "trainer": 120, "friend": 125,
-            "affinity": 105, "parent_link": 105,
+            "affinity": 105, "parent_link": 105, "distance_status": 105,
         }
         for column in columns:
             tree.heading(column, text=headings[column])
@@ -3636,6 +3668,17 @@ class Application:
             online = remote.get("online") or {}
             affinity = row.get("affinity") or {}
             components = row.get("components") or {}
+            viability = row.get("distance_viability") or {}
+            distance_summary = row.get("distance_s_summary") or {}
+            distance_status = {
+                "ready_for_s": "Prête pour S",
+                "distance_b_compensated": "B compensée",
+                "distance_b_uncompensated": "B non compensée",
+                "no_s_support": "A sans support S",
+                "underprepared": "Sous-préparée",
+                "non_viable": "Non viable", "fragile": "Fragile", "viable": "Viable",
+                "strong": "Forte", "excellent": "Excellente",
+            }.get(str(viability.get("key") or ""), str(viability.get("key") or "-"))
             iid = str(rank)
             row_map[iid] = row
             tree.insert("", tk.END, iid=iid, values=(
@@ -3647,12 +3690,17 @@ class Application:
                 online.get("trainer_name") or "",
                 online.get("friend_code") or "",
                 self._format_rank_score(remote.get("rank_score")),
+                distance_status,
+                f"{distance_summary.get('total_stars', 0)}★/{distance_summary.get('carrier_count', 0)}",
+                distance_summary.get("initial_rank_label", "-"),
+                f"{100 * float(distance_summary.get('probability_reach_a') or 0):.1f}%",
+                f"{100 * float(distance_summary.get('probability_reach_s') or 0):.1f}%",
                 affinity.get("total", 0),
                 affinity.get("base", 0),
                 affinity.get("g1_bonus", 0),
                 affinity.get("parent_parent_base", 0),
-                fmt(components.get("pink")),
                 fmt(components.get("white_skill")),
+                fmt(components.get("pink_other")),
                 fmt(components.get("race_scenario")),
                 fmt(components.get("blue")),
                 fmt(components.get("unique")),
@@ -3720,7 +3768,11 @@ class Application:
                 ("unique", "Uniques"),
             ):
                 info = details.get(key) or {}
-                factors = info.get("top_factors") or info.get("factors") or []
+                factors = (
+                    info.get("top_skills")
+                    if key == "white_skill"
+                    else info.get("top_factors") or info.get("factors")
+                ) or []
                 lines.extend(["", f"{label} — détail du moteur local :"])
                 if not factors:
                     lines.append("- aucun")
@@ -3730,11 +3782,29 @@ class Application:
                         continue
                     role = factor.get("role") or "?"
                     stars = int(factor.get("stars") or 0)
-                    contribution = float(factor.get("contribution") or 0)
-                    lines.append(
-                        f"- {role}: {factor.get('name') or '?'} {stars}★ "
-                        f"→ contribution brute {contribution:.4f}"
-                    )
+                    if key == "white_skill":
+                        lines.append(
+                            f"- {factor.get('name') or '?'} "
+                            f"| poids profil={float(factor.get('profile_weight') or 0):.3f} "
+                            f"| P(héritée au moins une fois)={100 * float(factor.get('probability_at_least_once') or 0):.1f}% "
+                            f"| utilité diversité={float(factor.get('probability_utility') or factor.get('probability_at_least_once') or 0):.3f} "
+                            f"| porteurs={int(factor.get('carrier_count') or 0)} "
+                            f"| contribution={float(factor.get('contribution') or 0):.4f}"
+                        )
+                    elif key == "pink":
+                        lines.append(
+                            f"- {role}: {factor.get('name') or '?'} {stars}★ "
+                            f"| catégorie={factor.get('matched_dimension') or 'hors profil'} "
+                            f"| affinité individuelle={float(factor.get('inheritance_affinity') or 0):.1f} "
+                            f"| proc/événement={100 * float(factor.get('proc_probability_per_event') or 0):.1f}% "
+                            f"| au moins un proc/run={100 * float(factor.get('proc_probability_over_run') or 0):.1f}%"
+                        )
+                    else:
+                        contribution = float(factor.get("contribution") or 0)
+                        lines.append(
+                            f"- {role}: {factor.get('name') or '?'} {stars}★ "
+                            f"→ contribution brute {contribution:.4f}"
+                        )
             return lines
 
         def render_detail(row: dict[str, object]) -> str:
@@ -3763,14 +3833,43 @@ class Application:
                 "G1 communes entre les deux parents : "
                 + (", ".join(affinity.get("parent_parent_common_g1") or []) or "aucune"),
                 f"Bonus G1 de ce lien : {affinity.get('parent_parent_common_g1_bonus', 0)}",
-                f"TOTAL : {affinity.get('total', 0)} = base {affinity.get('base', 0)} + bonus G1 {affinity.get('g1_bonus', 0)}",
-                "",
-                "DÉCOMPOSITION DU SCORE FINAL",
+                f"TOTAL GLOBAL : {affinity.get('total', 0)} = base {affinity.get('base', 0)} + bonus G1 {affinity.get('g1_bonus', 0)}",
+                "Le total global reste diagnostique ; les pinks utilisent les coefficients individuels.",
             ])
+            individual = ((affinity.get("inheritance_affinities") or {}).get("values") or {})
+            if individual:
+                lines.extend(["", "AFFINITÉS INDIVIDUELLES DE PROC"])
+                for role, value in individual.items():
+                    lines.append(f"- {role}: {float(value):.1f}")
+            lines.extend(["", "DÉCOMPOSITION DU SCORE FINAL"])
             label_map = {
-                "affinity": "Affinité", "pink": "Pinks", "white_skill": "Whites",
+                "affinity": "Affinité", "distance_s": "Support Distance S", "pink_other": "Autres pinks", "pink": "Pinks bruts", "white_skill": "Whites",
                 "race_scenario": "Race / scénario", "blue": "Blues", "unique": "Uniques",
             }
+            viability = row.get("distance_viability") or {}
+            distance_summary = row.get("distance_s_summary") or {}
+            distance_status = {
+                "ready_for_s": "PRÊTE POUR S",
+                "distance_b_compensated": "B COMPENSÉE",
+                "distance_b_uncompensated": "B NON COMPENSÉE",
+                "no_s_support": "A SANS SUPPORT S",
+                "underprepared": "SOUS-PRÉPARÉE",
+                "non_viable": "NON VIABLE", "fragile": "FRAGILE", "viable": "VIABLE",
+                "strong": "FORTE", "excellent": "EXCELLENTE",
+            }.get(str(viability.get("key") or ""), str(viability.get("key") or "-").upper())
+            lines.extend([
+                "",
+                "VIABILITÉ DISTANCE S",
+                f"- statut prioritaire : {distance_status} (palier {viability.get('tier', 0)})",
+                f"- distance ciblée : {distance_summary.get('total_stars', 0)}★ sur {distance_summary.get('carrier_count', 0)} porteur(s)",
+                f"- aptitude naturelle : {distance_summary.get('base_rank_label', '-')} → départ de run : {distance_summary.get('initial_rank_label', '-')}",
+                f"- procs requis pour A : {distance_summary.get('procs_required_for_a', 0)} | pour S : {distance_summary.get('procs_required_for_s', 0)}",
+                f"- chance d’atteindre au moins A : {100 * float(distance_summary.get('probability_reach_a') or 0):.1f}%",
+                f"- chance d’atteindre S : {100 * float(distance_summary.get('probability_reach_s') or 0):.1f}%",
+                f"- parents directs porteurs : {distance_summary.get('parent_carrier_count', 0)}",
+                "- un départ en B ne devient recommandable que si les probabilités roses, les whites et les bleues franchissent tous les seuils de compensation.",
+                "",
+            ])
             for key, item in (breakdown.get("components") or {}).items():
                 if not isinstance(item, dict):
                     continue
@@ -3837,6 +3936,8 @@ class Application:
             "affinity": "Affinité",
             "g1_potential": "Potentiel G1",
             "blue": "Bleues",
+            "distance_s": "Support Distance S",
+            "pink_other": "Autres roses",
             "pink": "Roses",
             "white_skill": "Whites propres",
             "white_generation": "Bonus de lignée white",
@@ -3851,7 +3952,33 @@ class Application:
                 "grandparent_1": "Grand-parent 1",
                 "grandparent_2": "Grand-parent 2",
                 "candidate": "Candidat",
+                "parent_1": "Parent 1",
+                "parent_1_grandparent_1": "Parent 1 — GP1",
+                "parent_1_grandparent_2": "Parent 1 — GP2",
+                "parent_2": "Parent 2",
+                "parent_2_grandparent_1": "Parent 2 — GP1",
+                "parent_2_grandparent_2": "Parent 2 — GP2",
             }.get(role, role)
+
+        def distance_status_label(status: object) -> str:
+            return {
+                "ready_for_s": "Prête pour S",
+                "distance_b_compensated": "B compensée",
+                "distance_b_uncompensated": "B non compensée",
+                "no_s_support": "A sans support S",
+                "underprepared": "Sous-préparée",
+                "non_viable": "Non viable",
+                "fragile": "Fragile",
+                "viable": "Viable",
+                "strong": "Forte",
+                "excellent": "Excellente",
+                "deficit": "Déficit",
+                "light": "Légère",
+                "balanced": "Équilibrée",
+                "distance_carrier": "Porteuse distance",
+                "matching_distance": "Distance utile",
+                "off_distance": "Hors distance",
+            }.get(str(status or ""), str(status or "-"))
 
         def format_identity(identity: dict[str, object] | None) -> str:
             if not identity:
@@ -3868,7 +3995,11 @@ class Application:
 
         def format_factor_list(details: dict[str, object] | None, kind: str) -> list[str]:
             details = details or {}
-            factors = details.get("top_factors") or details.get("factors") or []
+            factors = (
+                (details.get("top_skills") or details.get("top_factors"))
+                if kind == "white_skill"
+                else details.get("top_factors") or details.get("factors")
+            ) or []
             lines: list[str] = []
             for factor in factors:
                 if not isinstance(factor, dict):
@@ -3878,43 +4009,63 @@ class Application:
                     continue
                 role = role_label(str(factor.get("role") or "?"))
                 stars = int(factor.get("stars") or 0)
-                prefix = f"  - {role}: {name} {stars}★"
                 if kind == "white_skill":
-                    prefix += (
-                        f" | poids profil={float(factor.get('profile_weight') or 0):.3f}"
-                        f" × confort héritage étoiles={float(factor.get('star_quality') or 0):.3f}"
-                        f" × position={float(factor.get('position_weight') or 0):.2f}"
-                        f" => brut={float(factor.get('contribution') or 0):.4f}"
-                    )
-                elif kind == "blue":
-                    prefix += (
-                        f" | palier étoiles={float(factor.get('quality') or 0):.2f}"
-                        f" × pertinence stat={float(factor.get('relevance') or 0):.2f}"
-                        f" => brut={float(factor.get('contribution') or 0):.3f}"
-                    )
-                elif kind == "pink":
-                    matched = factor.get("matched_dimension") or "hors profil"
-                    prefix += (
-                        f" | catégorie={matched}"
-                        f" | palier étoiles={float(factor.get('star_quality') or 0):.2f}"
-                        f" × valeur catégorie={float(factor.get('dimension_weight') or 0):.2f}"
-                        f" × besoin={float(factor.get('need_multiplier') or 0):.2f}"
-                        f" => brut={float(factor.get('contribution') or 0):.3f}"
-                    )
-                elif kind == "race_scenario":
-                    granted = factor.get("granted_skill_keys") or []
-                    if granted:
+                    prefix = f"  - {name}"
+                    if "probability_at_least_once" in factor:
                         prefix += (
-                            f" | skill donnée={', '.join(granted)}"
-                            f" | poids skill={float(factor.get('granted_skill_weight') or 0):.3f}"
+                            f" | poids profil={float(factor.get('profile_weight') or 0):.3f}"
+                            f" × P(héritée au moins une fois)={100 * float(factor.get('probability_at_least_once') or 0):.1f}%"
+                            f" | utilité diversité={float(factor.get('probability_utility') or factor.get('probability_at_least_once') or 0):.3f}"
+                            f" | porteurs={int(factor.get('carrier_count') or 0)}"
+                            f" => brut={float(factor.get('contribution') or 0):.4f}"
                         )
-                    prefix += f" | brut={float(factor.get('contribution') or 0):.4f}"
-                elif kind == "unique":
-                    prefix += (
-                        f" | palier étoiles={float(factor.get('star_quality') or 0):.2f}"
-                        f" × position={float(factor.get('position_weight') or 0):.2f}"
-                        f" => brut={float(factor.get('contribution') or 0):.3f}"
-                    )
+                    else:
+                        prefix += (
+                            f" {stars}★ | poids profil={float(factor.get('profile_weight') or 0):.3f}"
+                            f" × palier étoiles={float(factor.get('star_quality') or 0):.2f}"
+                            f" × position GP={float(factor.get('position_weight') or 0):.2f}"
+                            f" => brut={float(factor.get('contribution') or 0):.4f}"
+                        )
+                else:
+                    prefix = f"  - {role}: {name} {stars}★"
+                    if kind == "blue":
+                            prefix += (
+                            f" | palier étoiles={float(factor.get('quality') or 0):.2f}"
+                            f" × pertinence stat={float(factor.get('relevance') or 0):.2f}"
+                            f" => brut={float(factor.get('contribution') or 0):.3f}"
+                        )
+                    elif kind == "pink":
+                        matched = factor.get("matched_dimension") or "hors profil"
+                        if "proc_probability_per_event" in factor:
+                            prefix += (
+                                f" | catégorie={matched}"
+                                f" | affinité individuelle={float(factor.get('inheritance_affinity') or 0):.1f}"
+                                f" | base={100 * float(factor.get('base_proc_rate') or 0):.1f}%"
+                                f" | proc/événement={100 * float(factor.get('proc_probability_per_event') or 0):.1f}%"
+                                f" | au moins un proc/run={100 * float(factor.get('proc_probability_over_run') or 0):.1f}%"
+                            )
+                        else:
+                            prefix += (
+                                f" | catégorie={matched}"
+                                f" | palier étoiles={float(factor.get('star_quality') or 0):.2f}"
+                                f" × importance={float(factor.get('dimension_weight') or 0):.2f}"
+                                f" × besoin={float(factor.get('need_multiplier') or 0):.2f}"
+                                f" => brut={float(factor.get('contribution') or 0):.3f}"
+                            )
+                    elif kind == "race_scenario":
+                        granted = factor.get("granted_skill_keys") or []
+                        if granted:
+                            prefix += (
+                                f" | skill donnée={', '.join(granted)}"
+                                f" | poids skill={float(factor.get('granted_skill_weight') or 0):.3f}"
+                            )
+                        prefix += f" | brut={float(factor.get('contribution') or 0):.4f}"
+                    elif kind == "unique":
+                        prefix += (
+                            f" | palier étoiles={float(factor.get('star_quality') or 0):.2f}"
+                            f" × position={float(factor.get('position_weight') or 0):.2f}"
+                            f" => brut={float(factor.get('contribution') or 0):.3f}"
+                        )
                 lines.append(prefix)
             return lines or ["  - aucun factor de cette catégorie"]
 
@@ -3940,24 +4091,77 @@ class Application:
             details = row.get("component_details") or {}
 
             lines.extend(["", "Interprétation des composantes (0–100) :"])
-            for key in ("affinity", "g1_potential", "blue", "pink", "white_skill", "white_generation", "race_scenario", "unique"):
+            for key in ("affinity", "g1_potential", "distance_s", "pink_other", "pink", "blue", "white_skill", "white_generation", "race_scenario", "unique"):
                 if key not in components or (key == "race_scenario" and not include_race):
                     continue
                 lines.append(f"- {component_labels[key]}: {float(components.get(key) or 0):.2f}")
 
             white_detail = details.get("white_skill") or {}
             if white_detail:
+                lines.extend(["", "Whites — formule interne :"])
                 lines.extend([
-                    "",
-                    "Whites — formule interne :",
                     f"- brut cumulé = {float(white_detail.get('raw') or 0):.4f}",
                     f"- saturation = {float(white_detail.get('scale') or 0):.2f}",
                     "- score = 100 × (1 - exp(-brut / saturation))",
-                    "- chaque brut = priorité manuelle du skill pour le profil × coefficient de confort d’héritage des étoiles × coefficient parent/grand-parent",
-                    "Whites principales :",
                 ])
+                if white_detail.get("uses_individual_affinity"):
+                    lines.append(
+                        "- chaque skill est valorisée selon sa probabilité cumulée d’héritage sur les porteurs et les deux Inspirations."
+                    )
+                else:
+                    lines.append(
+                        "- futur GP : priorité du skill × qualité des étoiles × position GP ; aucun pourcentage de proc n’est estimé."
+                    )
+                lines.append("Whites principales :")
                 lines.extend(format_factor_list(white_detail, "white_skill"))
 
+            pink_detail = details.get("pink") or {}
+            distance_detail = pink_detail.get("distance_s") or row.get("distance_s_summary") or {}
+            if distance_detail:
+                viability = distance_detail.get("viability") or row.get("distance_viability") or {}
+                lines.extend([
+                    "",
+                    "Distance S — contrainte de la paire finale :",
+                    f"- statut : {distance_status_label(viability.get('key'))} (palier {viability.get('tier', 0)})",
+                    f"- facteurs correspondants : {distance_detail.get('total_stars', 0)}★ sur {distance_detail.get('carrier_count', 0)} porteur(s)",
+                    f"- aptitude naturelle : {distance_detail.get('base_rank_label', '-')} → départ de run : {distance_detail.get('initial_rank_label', '-')}",
+                    f"- procs requis pour A : {distance_detail.get('procs_required_for_a', 0)} | pour S : {distance_detail.get('procs_required_for_s', 0)}",
+                    f"- chance d’atteindre au moins A : {100 * float(distance_detail.get('probability_reach_a') or 0):.1f}%",
+                    f"- chance d’atteindre S : {100 * float(distance_detail.get('probability_reach_s') or 0):.1f}%",
+                    f"- valeur de P(S) après courbe saturante : {float(distance_detail.get('probability_reach_s_quality') or 0):.1f}/100",
+                    f"- score aptitude distance : {float(distance_detail.get('score') or 0):.1f}/100",
+                    f"- dont parents directs : {distance_detail.get('parent_carrier_count', 0)}",
+                    "- repères par défaut : 40 % est correct, 50 % très bon, 60 % atteint le plafond de valeur.",
+                    "- les départs en A restent prioritaires ; un départ en B exige simultanément d’excellentes pinks, whites et bleues.",
+                ])
+
+
+            aptitude_dimensions = pink_detail.get("dimensions") or row.get("aptitude_summaries") or {}
+            for dimension_key, dimension_label in (("surface", "Terrain"), ("style", "Style")):
+                aptitude_detail = aptitude_dimensions.get(dimension_key) or {}
+                if not aptitude_detail:
+                    continue
+                lines.extend([
+                    "",
+                    f"{dimension_label} — optimisation secondaire :",
+                    f"- aptitude naturelle : {aptitude_detail.get('base_rank_label', '-')} → départ : {aptitude_detail.get('initial_rank_label', '-')}",
+                    f"- facteurs : {aptitude_detail.get('total_stars', 0)}★ sur {aptitude_detail.get('carrier_count', 0)} porteur(s)",
+                    f"- chance d’atteindre A : {100 * float(aptitude_detail.get('probability_reach_a') or 0):.1f}%",
+                    f"- chance d’atteindre S : {100 * float(aptitude_detail.get('probability_reach_s') or 0):.1f}%",
+                    "- A/B restent acceptables ici ; ces aptitudes ne prennent jamais la priorité sur la distance.",
+                ])
+
+            blue_detail = details.get("blue") or {}
+            if blue_detail:
+                lines.extend([
+                    "",
+                    "Blues — pertinence selon la distance :",
+                    f"- score brut : {float(blue_detail.get('uncompressed_score') or 0):.1f}/100",
+                    f"- influence de la distance : {float(blue_detail.get('distance_influence') or 0):.2f}",
+                    f"- score neutre : {float(blue_detail.get('neutral_score') or 0):.1f}/100",
+                    f"- score final : {float((row.get('components') or {}).get('blue') or 0):.1f}/100",
+                    "- aucune affinité individuelle ni distinction parent/GP n’est appliquée aux blues.",
+                ])
 
             generation_detail = details.get("white_generation") or {}
             if generation_detail:
@@ -3982,7 +4186,7 @@ class Application:
                         f" | contribution={float(item.get('contribution') or 0):.4f}"
                     )
 
-            for key, label in (("blue", "Bleues"), ("pink", "Roses"), ("unique", "Vertes / uniques")):
+            for key, label in (("blue", "Bleues"), ("pink", "Roses — détail brut"), ("unique", "Vertes / uniques")):
                 detail = details.get(key) or {}
                 if not detail:
                     continue
@@ -4016,15 +4220,21 @@ class Application:
                 f"  GP2 : {parent_2.get('grandparent_2') or '-'}",
                 f"  Stats : {self._format_stats(parent_2.get('stats'))}",
                 "",
-                "Affinité exacte de la paire finale :",
+                "Affinité moderne — diagnostic global :",
                 f"- Base totale : {affinity.get('base', 0)}",
                 f"- Bonus G1 total : {affinity.get('g1_bonus', 0)}",
-                f"- Total utilisé : {affinity.get('total', 0)}",
+                f"- Total global : {affinity.get('total', 0)}",
                 f"- Base parent↔parent : {affinity.get('parent_parent_base', 0)}",
-                "- Le score d'affinité plafonne progressivement à partir du seuil ◎ ; dépasser largement ce seuil rapporte peu.",
+                "- Ce total reproduit l’indicateur global du jeu mais n’est pas pondéré dans le score final.",
+                "- Les probabilités de pink utilisent les coefficients individuels ci-dessous.",
             ]
             common = affinity.get("parent_parent_common_g1") or []
             lines.append("- G1 communes entre les deux parents : " + (", ".join(common) if common else "aucune"))
+            individual = ((affinity.get("inheritance_affinities") or {}).get("values") or {})
+            if individual:
+                lines.extend(["", "Coefficients individuels utilisés pour les procs :"])
+                for role, value in individual.items():
+                    lines.append(f"- {role_label(str(role))}: {float(value):.1f}")
             lines.extend([""] + render_common_components(row, include_race=True))
             return "\n".join(lines)
 
@@ -4086,16 +4296,25 @@ class Application:
                 header,
                 text=f"Parent à produire : {future_parent['card_name']} — triple exact Ace × parent cible × candidat.",
             ).pack(anchor="w", pady=(2, 0))
-        parent_weights = (result.scoring_weights or {}).get("parent_final") or {}
+        branch_weights = (result.scoring_weights or {}).get("parent_branch") or {}
+        pair_weights = (result.scoring_weights or {}).get("parent_pair") or {}
         future_weights = (result.scoring_weights or {}).get("future_grandparent") or {}
         ttk.Label(
             header,
             text=(
-                "Score parent final : "
-                + " + ".join(f"{component_labels.get(key, key)} {100 * float(value):.0f}%" for key, value in parent_weights.items())
+                "Score paire finale : "
+                + " + ".join(f"{component_labels.get(key, key)} {100 * float(value):.0f}%" for key, value in pair_weights.items())
             ),
             foreground="#555555",
         ).pack(anchor="w", pady=(4, 0))
+        ttk.Label(
+            header,
+            text=(
+                "Score branche parent : "
+                + " + ".join(f"{component_labels.get(key, key)} {100 * float(value):.0f}%" for key, value in branch_weights.items())
+            ),
+            foreground="#555555",
+        ).pack(anchor="w", pady=(2, 0))
         ttk.Label(
             header,
             text=(
@@ -4171,24 +4390,32 @@ class Application:
         pair_values = [(
             rank, f"{row['score']:.2f}", format_identity(row['parent_1']), format_identity(row['parent_2']),
             row['affinity']['base'], row['affinity']['g1_bonus'], row['affinity']['total'],
-            f"{row['components']['pink']:.1f}", f"{row['components']['white_skill']:.1f}", f"{row['components']['blue']:.1f}"
+            distance_status_label((row.get('distance_viability') or {}).get('key')),
+            f"{(row.get('distance_s_summary') or {}).get('total_stars', 0)}★/{(row.get('distance_s_summary') or {}).get('carrier_count', 0)}",
+            (row.get('distance_s_summary') or {}).get('initial_rank_label', '-'),
+            f"{100 * float((row.get('distance_s_summary') or {}).get('probability_reach_a') or 0):.1f}%",
+            f"{100 * float((row.get('distance_s_summary') or {}).get('probability_reach_s') or 0):.1f}%",
+            f"{row['components']['white_skill']:.1f}", f"{row['components']['blue']:.1f}"
         ) for rank, row in enumerate(pair_payloads, 1)]
         add_tree(
             "Paires finales",
-            ("rank", "score", "parent_1", "parent_2", "aff_base", "g1_bonus", "affinity", "pink", "white", "blue"),
-            {"rank": "#", "score": "Score", "parent_1": "Parent 1", "parent_2": "Parent 2", "aff_base": "Aff. base", "g1_bonus": "+G1", "affinity": "Aff. totale", "pink": "Roses", "white": "Whites", "blue": "Bleues"},
+            ("rank", "score", "parent_1", "parent_2", "aff_base", "g1_bonus", "affinity", "distance_status", "distance_factors", "distance_initial", "distance_a", "distance_s_probability", "white", "blue"),
+            {"rank": "#", "score": "Score", "parent_1": "Parent 1", "parent_2": "Parent 2", "aff_base": "Aff. base", "g1_bonus": "+G1", "affinity": "Aff. diagnostic", "distance_status": "Distance", "distance_factors": "Étoiles/porteurs", "distance_initial": "Départ", "distance_a": "P(A+)", "distance_s_probability": "P(S)", "white": "Whites", "blue": "Bleues"},
             pair_payloads, pair_values, render_pair_detail,
         )
 
         branch_payloads = list(result.top_parent_candidates)
         branch_values = [(
             rank, f"{row['score']:.2f}", format_identity(row), row['affinity']['base'], row['affinity']['g1_bonus'], row['affinity']['total'],
-            f"{row['components']['pink']:.1f}", f"{row['components']['white_skill']:.1f}", f"{row['components']['blue']:.1f}"
+            distance_status_label((row.get('distance_viability') or {}).get('key')),
+            f"{(row.get('distance_s_summary') or {}).get('total_stars', 0)}★/{(row.get('distance_s_summary') or {}).get('carrier_count', 0)}",
+            f"{100 * float((row.get('distance_s_summary') or {}).get('probability_reach_s') or 0):.1f}%",
+            f"{row['components']['white_skill']:.1f}", f"{row['components']['blue']:.1f}"
         ) for rank, row in enumerate(branch_payloads, 1)]
         add_tree(
             "Lignées candidates",
-            ("rank", "score", "parent", "aff_base", "g1_bonus", "affinity", "pink", "white", "blue"),
-            {"rank": "#", "score": "Score", "parent": "Parent", "aff_base": "Aff. base", "g1_bonus": "+G1", "affinity": "Aff. branche", "pink": "Roses", "white": "Whites", "blue": "Bleues"},
+            ("rank", "score", "parent", "aff_base", "g1_bonus", "affinity", "distance_status", "distance_factors", "distance_s_probability", "white", "blue"),
+            {"rank": "#", "score": "Score", "parent": "Parent", "aff_base": "Aff. base", "g1_bonus": "+G1", "affinity": "Aff. branche", "distance_status": "Rôle distance", "distance_factors": "Étoiles/porteurs", "distance_s_probability": "P(S) partielle", "white": "Whites", "blue": "Bleues"},
             branch_payloads, branch_values, render_branch_detail,
         )
 
@@ -4201,7 +4428,7 @@ class Application:
         add_tree(
             "Futurs grands-parents",
             ("rank", "score", "candidate", "triple", "branch_total", "g1", "aff_score", "pink", "white", "generation", "blue"),
-            {"rank": "#", "score": "Score", "candidate": "Candidat", "triple": "Triple", "branch_total": "Base branche", "g1": "G1 diff.", "aff_score": "Score aff.", "pink": "Roses", "white": "Whites propres", "generation": "Bonus lignée", "blue": "Bleues"},
+            {"rank": "#", "score": "Score", "candidate": "Candidat", "triple": "Triple", "branch_total": "Base branche", "g1": "G1 diff.", "aff_score": "Score aff.", "pink": "Rose propre", "white": "Whites propres", "generation": "Bonus lignée", "blue": "Bleues"},
             future_payloads, future_values, render_future_detail,
         )
         self._apply_translations(window)
@@ -4397,7 +4624,10 @@ def run_cli(args: argparse.Namespace) -> int:
             effective_payload = default_payload
             if args.scoring_config:
                 custom_payload = read_json_object(args.scoring_config)
-                effective_payload = deep_merge(default_payload, custom_payload)
+                effective_payload = deep_merge(
+                    default_payload,
+                    migrate_scoring_overrides(default_payload, custom_payload),
+                )
             validate_scoring_config(effective_payload)
             scoring = write_json_object(
                 Path(args.output).expanduser().resolve() / "active_parent_scoring.json",
@@ -4458,7 +4688,10 @@ def run_cli(args: argparse.Namespace) -> int:
             effective_payload = default_payload
             if args.scoring_config:
                 custom_payload = read_json_object(args.scoring_config)
-                effective_payload = deep_merge(default_payload, custom_payload)
+                effective_payload = deep_merge(
+                    default_payload,
+                    migrate_scoring_overrides(default_payload, custom_payload),
+                )
             validate_scoring_config(effective_payload)
             scoring = write_json_object(
                 Path(args.output).expanduser().resolve() / "active_parent_scoring.json",

@@ -20,10 +20,14 @@ from parent_optimizer import (
     _affinity_score,
     _blue_score,
     _branch_affinity,
+    _branch_inheritance_affinities,
     _candidate_identity,
     _factor_list,
+    _future_grandparent_pink_score,
+    _future_grandparent_white_score,
     _lineage_members,
     _member_g1,
+    _mode_weights,
     _pink_score,
     _race_scenario_score,
     _race_skill_map,
@@ -766,8 +770,8 @@ def analyze_transfer_candidates(
     g1_bonus_value = int(affinity_cfg.get("g1_common_bonus", 3))
     branch_thresholds = affinity_cfg.get("parent_branch_thresholds") or [[0, 0], [95, 100]]
     future_g1_thresholds = affinity_cfg.get("future_g1_thresholds") or [[0, 0], [20, 100]]
-    parent_weights = (config.get("mode_weights") or {}).get("parent_final") or {}
-    grandparent_weights = (config.get("mode_weights") or {}).get("future_grandparent") or {}
+    parent_weights = _mode_weights(config, "parent_branch")
+    grandparent_weights = _mode_weights(config, "future_grandparent")
     course_condition_config = config.get("course_conditions") or {}
     active_green_floor = float(course_condition_config.get("active_green_floor", 0.12))
     green_floors = {str(key): float(value) for key, value in (course_condition_config.get("floors") or {}).items()}
@@ -813,7 +817,6 @@ def analyze_transfer_candidates(
             for veteran in veterans:
                 parent_members = _lineage_members(veteran)
                 blue, _ = _blue_score(parent_members, context.distance, config)
-                white, _ = _white_score(parent_members, weight_lookup, config, "parent_branch")
                 race, _ = _race_scenario_score(
                     parent_members, weight_lookup, race_skills, config, "parent_branch"
                 )
@@ -821,7 +824,6 @@ def analyze_transfer_candidates(
                 parent_static.append(
                     {
                         "blue": blue,
-                        "white_skill": white,
                         "race_scenario": race,
                         "unique": unique,
                     }
@@ -829,8 +831,8 @@ def analyze_transfer_candidates(
 
                 own_member = [(veteran, "grandparent", "candidate")]
                 gp_blue, _ = _blue_score(own_member, context.distance, config)
-                gp_white, _ = _white_score(
-                    own_member, weight_lookup, config, "future_grandparent"
+                gp_white, _ = _future_grandparent_white_score(
+                    own_member, weight_lookup, config
                 )
                 gp_generation, _ = _white_generation_support_score(
                     _lineage_members(veteran), weight_lookup, config
@@ -874,15 +876,30 @@ def analyze_transfer_candidates(
                             )
                             affinity_cache[affinity_key] = affinity
                         parent_components = dict(parent_static[veteran_index])
-                        parent_pink, _ = _pink_score(
+                        parent_inheritance_affinities = _branch_inheritance_affinities(
+                            resolver, ace_chara, veteran, g1_bonus_value
+                        )
+                        parent_white, _ = _white_score(
+                            _lineage_members(veteran),
+                            weight_lookup,
+                            config,
+                            "parent_branch",
+                            inheritance_affinities=parent_inheritance_affinities,
+                        )
+                        parent_components["white_skill"] = parent_white
+                        parent_pink, parent_pink_detail = _pink_score(
                             _lineage_members(veteran),
                             ace,
                             context.surface,
                             context.distance,
                             context.style,
                             config,
+                            mode="parent_branch",
+                            inheritance_affinities=parent_inheritance_affinities,
                         )
                         parent_components["pink"] = parent_pink
+                        parent_components["distance_s"] = float(parent_pink_detail["distance_s"]["score"])
+                        parent_components["pink_other"] = float(parent_pink_detail["pink_other"]["score"])
                         parent_components["affinity"] = _affinity_score(
                             float(affinity["total"]), branch_thresholds
                         )
@@ -893,7 +910,7 @@ def analyze_transfer_candidates(
                             profile_parent_max[veteran_index] = parent_score
 
                     gp_components = dict(gp_static[veteran_index])
-                    gp_pink, _ = _pink_score(
+                    gp_pink, _ = _future_grandparent_pink_score(
                         [(veteran, "grandparent", "candidate")],
                         ace,
                         context.surface,

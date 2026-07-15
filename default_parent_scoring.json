@@ -1,14 +1,22 @@
 {
-  "schema_version": 10,
-  "description": "Manual-priority scoring. Direct white-skill value is driven first by the strategic priority of the skill; white Spark stars use a moderate inheritance-comfort curve (1★=1.00, 2★=1.35, 3★=1.80) instead of a linear quality scale. Online GP-pair affinity estimates the future parent branch with the Ace, stopping at the selected grandparents; deeper ancestors are used only for parent-generation diagnostics and white-gene support.",
+  "schema_version": 15,
+  "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Future-GP mode keeps the simpler direct-factor heuristic. Distance-S probability and distinct white-skill inheritance use configurable diminishing-return utility curves; Blue Sparks remain affinity-independent.",
   "mode_weights": {
-    "parent_final": {
-      "affinity": 0.22,
-      "pink": 0.28,
-      "white_skill": 0.36,
-      "race_scenario": 0.03,
-      "blue": 0.05,
-      "unique": 0.06
+    "parent_branch": {
+      "distance_s": 0.22,
+      "pink_other": 0.1,
+      "white_skill": 0.47,
+      "race_scenario": 0.04,
+      "blue": 0.08,
+      "unique": 0.09
+    },
+    "parent_pair": {
+      "distance_s": 0.29,
+      "pink_other": 0.07,
+      "white_skill": 0.35,
+      "race_scenario": 0.04,
+      "blue": 0.2,
+      "unique": 0.05
     },
     "future_grandparent": {
       "affinity": 0.15,
@@ -22,52 +30,38 @@
   },
   "blue_stat_weights_by_distance": {
     "sprint": {
-      "Speed": 1.0,
-      "Stamina": 0.2,
+      "Speed": 0.65,
+      "Stamina": 0.05,
       "Power": 1.0,
-      "Guts": 0.45,
-      "Wit": 0.8
+      "Guts": 0.35,
+      "Wit": 0.45
     },
     "mile": {
-      "Speed": 1.0,
-      "Stamina": 0.35,
-      "Power": 0.9,
-      "Guts": 0.45,
-      "Wit": 0.8
+      "Speed": 0.65,
+      "Stamina": 0.25,
+      "Power": 1.0,
+      "Guts": 0.4,
+      "Wit": 0.5
     },
     "medium": {
-      "Speed": 1.0,
-      "Stamina": 0.75,
-      "Power": 0.82,
-      "Guts": 0.5,
-      "Wit": 0.8
+      "Speed": 0.65,
+      "Stamina": 1.0,
+      "Power": 0.8,
+      "Guts": 0.45,
+      "Wit": 0.5
     },
     "long": {
-      "Speed": 1.0,
+      "Speed": 0.65,
       "Stamina": 1.0,
-      "Power": 0.72,
-      "Guts": 0.6,
-      "Wit": 0.78
+      "Power": 0.75,
+      "Guts": 0.45,
+      "Wit": 0.5
     }
   },
   "blue_star_quality": {
     "1": 0.12,
     "2": 0.78,
     "3": 1.0
-  },
-  "pink_star_quality": {
-    "1": 0.55,
-    "2": 0.72,
-    "3": 1.0
-  },
-  "pink_dimension_weights": {
-    "distance": 1.0,
-    "surface": 0.72,
-    "style": 0.55
-  },
-  "pink_need_multiplier": {
-    "below_a": 1.1,
-    "a_or_s": 1.0
   },
   "unique_star_quality": {
     "1": 0.82,
@@ -84,9 +78,9 @@
     "3": 1.0
   },
   "white_saturation": {
-    "future_grandparent": 3.96,
-    "parent_branch": 9.0,
-    "parent_pair": 16.2
+    "future_grandparent": 0.73,
+    "parent_branch": 1.67,
+    "parent_pair": 3.0
   },
   "race_saturation": {
     "parent_branch": 1.7,
@@ -203,7 +197,8 @@
         30,
         100
       ]
-    ]
+    ],
+    "system": "modern_g1"
   },
   "course_conditions": {
     "active_green_floor": 0.12,
@@ -234,7 +229,7 @@
     "description": "Production-only score. Every lineage member carrying the same white skill Spark adds the same +2.5 percentage-point generation bonus. Base chance and learned basic/gold form are intentionally ignored. Race/scenario Sparks are excluded."
   },
   "uma_moe_pair": {
-    "description": "Rank local + remote grandparent pairs. Direct useful white Sparks on the selected grandparents are weighted above projected final-parent affinity; affinity remains important because it helps transmit those Sparks, while lineage white-generation support remains a major component.",
+    "description": "Rank local + remote grandparent pairs. Direct useful white Sparks on GP1/GP2 are valued with their projected final grandparent affinities in the Ace run. Their current parents contribute only to white-generation support for the future parent; production-run compatibility remains a separate low-weight component.",
     "weights": {
       "final_parent_affinity": 0.22,
       "production_run_affinity": 0.04,
@@ -390,7 +385,7 @@
       "final_parent": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2) + planned G1(parent↔GP1/GP2). The unknown other final parent is excluded.",
       "planned_g1": "Within the race budget, G1s shared by both grandparents count at full double-link value. One-sided G1s remain useful but are discounted by the configurable realization factor (default 60%).",
       "production_run": "The deeper GP ancestors only affect the run that creates the future parent; they do not remain in the final Ace lineage.",
-      "weighting_priority": "Direct white Sparks on GP1/GP2 are more valuable than projected final affinity. Final affinity facilitates inheritance but cannot replace already carrying the desired genes; lineage support remains strongly weighted."
+      "weighting_priority": "Direct white Sparks on GP1/GP2 are final-lineage GP factors and use projected GP proc odds. The deeper lineage is production support only and cannot be counted as direct Ace inheritance."
     },
     "preselection_weights": {
       "candidate_affinity": 0.18,
@@ -420,11 +415,6 @@
     ],
     "single_g1_weight_default": 0.6
   },
-  "white_star_quality": {
-    "1": 1.0,
-    "2": 1.35,
-    "3": 1.8
-  },
   "transfer_helper": {
     "description": "Distribution-aware local-veteran cleanup analysis. Utility combines absolute score, proximity to the context leader, and a small percentile component. Keep requires elite utility or repeated competitive utility across multiple contexts and course profiles.",
     "competitive_score_floor": 67.5,
@@ -442,5 +432,204 @@
     "utility_absolute_weight": 0.5,
     "utility_leader_weight": 0.4,
     "utility_percentile_weight": 0.1
+  },
+  "aptitude_inheritance": {
+    "description": "Pink aptitude model. Each matching Spark rolls independently at both April Inspiration Events. Base proc rates are multiplied by the modern individual inheritance affinity. One proc is treated as exactly one aptitude rank; rare multi-rank procs are deliberately ignored.",
+    "pink_base_proc_rates": {
+      "1": 0.01,
+      "2": 0.03,
+      "3": 0.05
+    },
+    "inspiration_event_count": 2,
+    "ignore_multi_rank_procs": true,
+    "dimension_weights_by_mode": {
+      "parent_pair": {
+        "distance": 0.72,
+        "surface": 0.18,
+        "style": 0.1
+      },
+      "parent_branch": {
+        "distance": 0.65,
+        "surface": 0.22,
+        "style": 0.13
+      }
+    },
+    "partial_scoring": {
+      "parent_branch": {
+        "full_star_reference": 6,
+        "full_proc_probability": 0.4,
+        "star_weight": 0.6,
+        "proc_weight": 0.4
+      }
+    },
+    "distance": {
+      "start_a_base_score": 70,
+      "start_a_s_probability_weight": 30,
+      "start_b_base_score": 20,
+      "start_b_a_probability_weight": 45,
+      "start_b_s_probability_weight": 35,
+      "below_b": {
+        "base_score": 0,
+        "a_probability_weight": 0,
+        "s_probability_weight": 0
+      },
+      "b_compensation": {
+        "minimum_probability_a": 0.55,
+        "minimum_probability_s": 0.15,
+        "minimum_white_score": 85,
+        "minimum_blue_score": 75
+      },
+      "s_probability_curve": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.15,
+          10.0
+        ],
+        [
+          0.25,
+          30.0
+        ],
+        [
+          0.4,
+          70.0
+        ],
+        [
+          0.5,
+          90.0
+        ],
+        [
+          0.6,
+          100.0
+        ]
+      ]
+    },
+    "surface": {
+      "start_a_base_score": 80,
+      "start_a_s_probability_weight": 20,
+      "start_b_base_score": 55,
+      "start_b_a_probability_weight": 30,
+      "start_b_s_probability_weight": 15,
+      "below_b": {
+        "base_score": 10,
+        "a_probability_weight": 25,
+        "s_probability_weight": 10
+      },
+      "s_probability_curve": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          100.0
+        ]
+      ]
+    },
+    "style": {
+      "start_a_base_score": 90,
+      "start_a_s_probability_weight": 10,
+      "start_b_base_score": 70,
+      "start_b_a_probability_weight": 25,
+      "start_b_s_probability_weight": 5,
+      "below_b": {
+        "base_score": 10,
+        "a_probability_weight": 30,
+        "s_probability_weight": 5
+      },
+      "s_probability_curve": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          1.0,
+          100.0
+        ]
+      ]
+    }
+  },
+  "blue_score_influence_by_distance": {
+    "sprint": 0.45,
+    "mile": 0.65,
+    "medium": 0.9,
+    "long": 1.0
+  },
+  "blue_neutral_score": 50.0,
+  "white_inheritance": {
+    "description": "White Skill Spark model reserved for Ace-parent branches and final pairs. Copies of the same skill are combined into P(inherited at least once), then converted through a distinct-skill utility curve. The curve suppresses very low chances and applies diminishing returns to one highly concentrated skill, so several different useful rare whites are preferred for high-roll potential.",
+    "base_proc_rates": {
+      "1": 0.03,
+      "2": 0.06,
+      "3": 0.09
+    },
+    "inspiration_event_count": 2,
+    "per_event_probability_cap": 1.0,
+    "distinct_skill_probability_curve": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.05,
+        0.02
+      ],
+      [
+        0.1,
+        0.1
+      ],
+      [
+        0.2,
+        0.3
+      ],
+      [
+        0.3,
+        0.43
+      ],
+      [
+        0.4,
+        0.52
+      ],
+      [
+        0.5,
+        0.59
+      ],
+      [
+        0.6,
+        0.64
+      ],
+      [
+        0.8,
+        0.7
+      ],
+      [
+        1.0,
+        0.73
+      ]
+    ]
+  },
+  "future_grandparent_heuristics": {
+    "description": "Simple future-GP model. No Inspiration proc probability or final Ace P(S) is calculated. The candidate is one of six final factors, so acceptable direct pink/blue/white quality is valued alongside affinity, G1 overlap and lineage white-generation support.",
+    "pink_dimension_weights": {
+      "distance": 1.0,
+      "surface": 0.72,
+      "style": 0.55
+    },
+    "pink_star_quality": {
+      "1": 0.55,
+      "2": 0.72,
+      "3": 1.0
+    },
+    "pink_need_multiplier": {
+      "below_a": 1.1,
+      "a_or_s": 1.0
+    },
+    "white_star_quality": {
+      "1": 1.0,
+      "2": 1.35,
+      "3": 1.8
+    }
   }
 }

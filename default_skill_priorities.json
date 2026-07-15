@@ -1,422 +1,427 @@
 {
-  "schema_version": 2,
-  "description": "Manual white-spark priorities based on community parent-farming guidance. Values directly include strategic importance and practical desirability; no separate scarcity/rarity multiplier is applied.",
-  "default_weight": 0.04,
+  "schema_version": 3,
+  "description": "Manual white-spark priorities for parent selection. Values deliberately combine strategic usefulness with practical acquisition scarcity: strong but ubiquitous support-card skills stay modest, while rare and build-defining Sparks receive the highest scores. No separate rarity multiplier is applied.",
+  "default_weight": 0.02,
   "skills": {
     "tail_held_high": {
-      "base": 0.95,
+      "base": 0.92,
       "style": {
-        "front_runner": 0.78,
-        "pace_chaser": 0.95,
-        "late_surger": 1.0,
-        "end_closer": 1.0
+        "front_runner": 0.72,
+        "pace_chaser": 0.9,
+        "late_surger": 0.96,
+        "end_closer": 0.96
       },
-      "notes": "Major general mid-race speed; valued as a sought parent spark."
+      "notes": "Rare, sought-after general mid-race speed; high parent value despite broad applicability."
     },
     "playtime_s_over": {
-      "base": 0.93,
+      "base": 0.88,
       "style": {
-        "front_runner": 0.78,
-        "pace_chaser": 0.95,
-        "late_surger": 0.98,
-        "end_closer": 0.98
+        "front_runner": 0.7,
+        "pace_chaser": 0.9,
+        "late_surger": 0.92,
+        "end_closer": 0.92
       }
     },
     "uma_stan": {
       "base": 1.08,
       "style": {
-        "front_runner": 0.28,
-        "pace_chaser": 0.94,
-        "late_surger": 1.16,
+        "front_runner": 0.22,
+        "pace_chaser": 0.95,
+        "late_surger": 1.15,
         "end_closer": 1.18
       },
       "distance": {
-        "sprint": 0.86,
-        "mile": 1.0,
+        "sprint": 0.82,
+        "mile": 0.98,
         "medium": 1.12,
         "long": 1.18
       },
-      "notes": "Multi-proc potential and practical scarcity; intentionally high outside Front."
+      "notes": "Rare and potentially multi-proc; intentionally one of the strongest non-Front parent Sparks.",
+      "profiles": [
+        {
+          "match": {
+            "style": "front_runner"
+          },
+          "operation": "cap",
+          "value": 0.3,
+          "reason": "Front remains a poor practical Uma Stan profile even on longer distances; do not let distance averaging erase the style penalty."
+        }
+      ]
     },
     "slipstream": {
-      "base": 0.83,
+      "base": 0.76,
       "style": {
-        "front_runner": 0.4,
-        "pace_chaser": 0.88,
-        "late_surger": 0.9,
-        "end_closer": 0.9
+        "front_runner": 0.3,
+        "pace_chaser": 0.78,
+        "late_surger": 0.82,
+        "end_closer": 0.82
       }
     },
     "nimble_navigator": {
       "base": 1.02,
       "style": {
         "front_runner": 0.02,
-        "pace_chaser": 0.9,
+        "pace_chaser": 0.88,
         "late_surger": 1.08,
         "end_closer": 1.1
       },
       "distance": {
-        "sprint": 0.72,
+        "sprint": 0.7,
         "mile": 0.9,
         "medium": 1.06,
         "long": 1.1
-      }
+      },
+      "notes": "Rare traffic insurance and gold-skill discount; poor for Front, premium for backliners.",
+      "profiles": [
+        {
+          "match": {
+            "style": "front_runner"
+          },
+          "operation": "cap",
+          "value": 0.08,
+          "reason": "Front is rarely traffic-blocked in the relevant way; do not let a long-distance bonus erase the style penalty."
+        }
+      ]
     },
     "ramp_up": {
-      "base": 0.8,
+      "base": 0.72,
       "style": {
-        "front_runner": 0.32,
-        "pace_chaser": 0.83,
-        "late_surger": 0.88,
-        "end_closer": 0.88
+        "front_runner": 0.22,
+        "pace_chaser": 0.72,
+        "late_surger": 0.78,
+        "end_closer": 0.78
       }
     },
     "corner_adept": {
-      "base": 0.75
+      "base": 0.35,
+      "notes": "Useful but ubiquitous, notably guaranteed by commonly played Kitasan Black Speed."
     },
     "straightaway_adept": {
-      "base": 0.62
+      "base": 0.3,
+      "notes": "Useful but ubiquitous, notably guaranteed by commonly played Kitasan Black Speed."
     },
     "corner_recovery": {
-      "base": 0.58,
+      "base": 0.28,
       "distance": {
-        "sprint": 0.18,
-        "mile": 0.36,
-        "medium": 0.65,
-        "long": 0.78
+        "sprint": 0.08,
+        "mile": 0.16,
+        "medium": 0.25,
+        "long": 0.4
       }
     },
     "straightaway_recovery": {
-      "base": 0.45,
+      "base": 0.28,
       "distance": {
-        "sprint": 0.1,
-        "mile": 0.28,
-        "medium": 0.52,
-        "long": 0.64
+        "sprint": 0.05,
+        "mile": 0.13,
+        "medium": 0.2,
+        "long": 0.35
       }
     },
     "focus": {
-      "base": 0.48,
+      "base": 0.2,
       "style": {
-        "front_runner": 0.68,
-        "pace_chaser": 0.45,
-        "late_surger": 0.4,
-        "end_closer": 0.4
+        "front_runner": 0.48,
+        "pace_chaser": 0.25,
+        "late_surger": 0.1,
+        "end_closer": 0.1
       }
     },
     "go_with_the_flow": {
-      "base": 0.62,
+      "base": 0.1,
       "style": {
-        "front_runner": 0.2,
-        "pace_chaser": 0.64,
-        "late_surger": 0.72,
-        "end_closer": 0.74
+        "front_runner": 0.1,
+        "pace_chaser": 0.15,
+        "late_surger": 0.16,
+        "end_closer": 0.16
       }
     },
     "inside_scoop": {
-      "base": 0.62,
+      "base": 0.28,
       "style": {
-        "front_runner": 0.72,
-        "pace_chaser": 0.68,
-        "late_surger": 0.58,
-        "end_closer": 0.5
-      }
+        "front_runner": 0.42,
+        "pace_chaser": 0.38,
+        "late_surger": 0.32,
+        "end_closer": 0.28
+      },
+      "notes": "Good when the rail condition cooperates, but too conditional and accessible to carry a large parent premium."
     },
     "straightaway_acceleration": {
-      "base": 0.38,
-      "notes": "Course dependent; exact-course overrides should raise it when valid."
+      "base": 0.3,
+      "notes": "Course-dependent and not inherently rare; exact-course overrides should raise it only when valid."
     },
     "corner_acceleration": {
-      "base": 0.22,
-      "notes": "Highly course dependent."
+      "base": 0.18,
+      "notes": "Highly course-dependent and normally a modest generic parent target."
     },
     "homestretch_haste": {
-      "base": 0.18
+      "base": 0.12
     },
     "groundwork": {
-      "base": 0.12,
-      "style": {
-        "front_runner": 1.25,
-        "pace_chaser": 0.48,
-        "late_surger": 0.12,
-        "end_closer": 0.08
-      }
-    },
-    "prudent_positioning": {
       "base": 0.1,
       "style": {
-        "front_runner": 1.02,
-        "pace_chaser": 0.36,
+        "front_runner": 1.25,
+        "pace_chaser": 0.38,
         "late_surger": 0.1,
-        "end_closer": 0.08
-      }
+        "end_closer": 0.06
+      },
+      "notes": "Rare, build-defining Front acceleration. Premium assumes the lineage can also supply enough early triggers."
     },
-    "dodging_danger": {
+    "prudent_positioning": {
       "base": 0.08,
       "style": {
-        "front_runner": 0.94,
-        "pace_chaser": 0.28,
+        "front_runner": 0.95,
+        "pace_chaser": 0.26,
         "late_surger": 0.08,
         "end_closer": 0.06
-      }
+      },
+      "notes": "Rare and valuable chiefly as part of the Front lane-control / Groundwork package."
+    },
+    "dodging_danger": {
+      "base": 0.06,
+      "style": {
+        "front_runner": 0.82,
+        "pace_chaser": 0.2,
+        "late_surger": 0.06,
+        "end_closer": 0.04
+      },
+      "notes": "Valuable in the complete Front positioning package; substantially weaker in isolation."
     },
     "ignited_spirit_wit": {
-      "base": 0.08,
+      "base": 0.06,
       "style": {
-        "front_runner": 1.22,
-        "pace_chaser": 0.25,
-        "late_surger": 0.08,
-        "end_closer": 0.08
-      }
+        "front_runner": 1.15,
+        "pace_chaser": 0.18,
+        "late_surger": 0.06,
+        "end_closer": 0.06
+      },
+      "notes": "Scenario-limited and premium for Front lane control; overlaps partly with Prudent Positioning."
     },
     "leader_s_pride": {
-      "base": 0.3,
+      "base": 0.22,
       "style": {
-        "front_runner": 0.94,
-        "pace_chaser": 0.52,
-        "late_surger": 0.28,
-        "end_closer": 0.22
+        "front_runner": 0.76,
+        "pace_chaser": 0.4,
+        "late_surger": 0.2,
+        "end_closer": 0.16
       }
     },
     "early_lead": {
-      "base": 0.22,
+      "base": 0.16,
       "style": {
-        "front_runner": 0.88,
-        "pace_chaser": 0.36,
-        "late_surger": 0.12,
-        "end_closer": 0.08
-      }
+        "front_runner": 0.46,
+        "pace_chaser": 0.22,
+        "late_surger": 0.08,
+        "end_closer": 0.06
+      },
+      "notes": "Mechanically useful for Front but commonly covered by Front-oriented support decks."
     },
     "fast_paced": {
-      "base": 0.2,
+      "base": 0.16,
       "style": {
-        "front_runner": 0.86,
-        "pace_chaser": 0.28,
-        "late_surger": 0.1,
-        "end_closer": 0.08
-      }
+        "front_runner": 0.48,
+        "pace_chaser": 0.2,
+        "late_surger": 0.08,
+        "end_closer": 0.06
+      },
+      "notes": "Good routine Front speed, with limited scarcity premium."
     },
     "front_runner_savvy": {
-      "base": 0.04,
+      "base": 0.03,
       "style": {
-        "front_runner": 0.4,
+        "front_runner": 0.18,
         "pace_chaser": 0.0,
         "late_surger": 0.0,
         "end_closer": 0.0
       }
     },
     "second_wind": {
-      "base": 0.08,
+      "base": 0.05,
       "style": {
-        "front_runner": 0.18,
-        "pace_chaser": 0.08,
-        "late_surger": 0.04,
-        "end_closer": 0.04
+        "front_runner": 0.1,
+        "pace_chaser": 0.05,
+        "late_surger": 0.03,
+        "end_closer": 0.03
       }
     },
     "keeping_the_lead": {
-      "base": 0.08,
+      "base": 0.05,
       "style": {
-        "front_runner": 0.18,
+        "front_runner": 0.1,
         "pace_chaser": 0.0,
         "late_surger": 0.0,
         "end_closer": 0.0
       }
     },
     "head_on": {
-      "base": 0.05,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 1.04,
-        "late_surger": 0.0,
-        "end_closer": 0.0
-      }
-    },
-    "straight_descent": {
-      "base": 0.2,
-      "style": {
-        "front_runner": 0.08,
-        "pace_chaser": 0.42,
-        "late_surger": 0.25,
-        "end_closer": 0.22
-      },
-      "notes": "Course-dependent downhill acceleration."
-    },
-    "prepared_to_pass": {
-      "base": 0.18,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 0.72,
-        "late_surger": 0.0,
-        "end_closer": 0.0
-      }
-    },
-    "ignited_spirit_pwr": {
-      "base": 0.72,
-      "style": {
-        "front_runner": 0.2,
-        "pace_chaser": 0.92,
-        "late_surger": 1.02,
-        "end_closer": 1.02
-      }
-    },
-    "pace_chaser_savvy": {
       "base": 0.04,
       "style": {
         "front_runner": 0.0,
-        "pace_chaser": 0.25,
-        "late_surger": 0.0,
-        "end_closer": 0.0
-      }
-    },
-    "moxie": {
-      "base": 0.12,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 0.58,
+        "pace_chaser": 1.02,
         "late_surger": 0.0,
         "end_closer": 0.0
       },
-      "distance": {
-        "sprint": 0.1,
-        "mile": 0.3,
-        "medium": 0.58,
-        "long": 0.7
-      }
+      "notes": "Rare and often decisive Pace acceleration; course overrides may still adjust reliability."
     },
-    "preferred_position": {
-      "base": 0.1,
+    "straight_descent": {
+      "base": 0.14,
+      "style": {
+        "front_runner": 0.06,
+        "pace_chaser": 0.38,
+        "late_surger": 0.24,
+        "end_closer": 0.2
+      },
+      "notes": "Course-dependent downhill acceleration; valuable only when the slope aligns with acceleration phase."
+    },
+    "prepared_to_pass": {
+      "base": 0.12,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.4,
         "late_surger": 0.0,
         "end_closer": 0.0
+      },
+      "notes": "Useful Pace speed but relatively accessible and strongly timing-dependent."
+    },
+    "ignited_spirit_pwr": {
+      "base": 0.68,
+      "style": {
+        "front_runner": 0.16,
+        "pace_chaser": 0.92,
+        "late_surger": 1.0,
+        "end_closer": 1.0
+      },
+      "notes": "Scenario-limited and strategically strong; retains a real rarity premium."
+    },
+    "pace_chaser_savvy": {
+      "base": 0.03,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.14,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      }
+    },
+    "moxie": {
+      "base": 0.08,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.28,
+        "late_surger": 0.0,
+        "end_closer": 0.0
+      },
+      "distance": {
+        "sprint": 0.06,
+        "mile": 0.14,
+        "medium": 0.28,
+        "long": 0.38
+      },
+      "notes": "Useful recovery but generally covered by Pace decks; modest parent premium."
+    },
+    "preferred_position": {
+      "base": 0.06,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.18,
+        "late_surger": 0.0,
+        "end_closer": 0.0
       }
     },
     "slick_surge": {
-      "base": 0.05,
+      "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
-        "late_surger": 1.1,
+        "late_surger": 1.08,
         "end_closer": 0.0
-      }
+      },
+      "notes": "Rare, high-impact Late acceleration and a genuine lineage differentiator."
     },
     "ignited_spirit_guts": {
-      "base": 0.65,
-      "style": {
-        "front_runner": 0.16,
-        "pace_chaser": 0.7,
-        "late_surger": 0.82,
-        "end_closer": 0.82
-      }
-    },
-    "highlander": {
-      "base": 0.18,
+      "base": 0.48,
       "style": {
         "front_runner": 0.12,
-        "pace_chaser": 0.22,
-        "late_surger": 0.42,
-        "end_closer": 0.38
+        "pace_chaser": 0.54,
+        "late_surger": 0.64,
+        "end_closer": 0.64
+      },
+      "notes": "Rare scenario Spark, but mechanically below Ignited Spirit PWR."
+    },
+    "highlander": {
+      "base": 0.16,
+      "style": {
+        "front_runner": 0.1,
+        "pace_chaser": 0.24,
+        "late_surger": 0.62,
+        "end_closer": 0.58
       },
       "distance": {
-        "sprint": 0.12,
+        "sprint": 0.1,
         "mile": 0.18,
-        "medium": 0.26,
-        "long": 0.42
+        "medium": 0.38,
+        "long": 0.62
       },
-      "notes": "Course-dependent uphill acceleration."
+      "notes": "Rare uphill acceleration. Its scarcity matters, while exact-course overrides should lift valid courses further."
     },
     "position_pilfer": {
-      "base": 0.05,
+      "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
-        "late_surger": 0.88,
+        "late_surger": 0.7,
         "end_closer": 0.0
-      }
+      },
+      "notes": "Strong and comparatively scarce Late mid-race positioning, but below the defining acceleration Sparks."
     },
     "outer_swell": {
-      "base": 0.05,
+      "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
-        "late_surger": 0.82,
+        "late_surger": 0.56,
         "end_closer": 0.0
-      }
+      },
+      "notes": "Good Late speed, but conditional enough to remain a secondary parent target."
     },
     "fighter": {
-      "base": 0.05,
+      "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
-        "late_surger": 0.46,
+        "late_surger": 0.28,
         "end_closer": 0.0
       }
     },
     "late_surger_savvy": {
-      "base": 0.04,
+      "base": 0.03,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
-        "late_surger": 0.25,
+        "late_surger": 0.14,
         "end_closer": 0.0
       }
     },
     "straightaway_spurt": {
-      "base": 0.05,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 0.0,
-        "late_surger": 0.0,
-        "end_closer": 0.72
-      },
-      "notes": "Meta-defining only on valid courses; course override may lift to S+."
-    },
-    "end_closer_savvy": {
       "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
         "late_surger": 0.0,
-        "end_closer": 0.25
+        "end_closer": 0.82
+      },
+      "notes": "Rare and meta-defining on valid courses; exact-course overrides may lift it to the top tier."
+    },
+    "end_closer_savvy": {
+      "base": 0.03,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.14
       }
     },
     "masterful_gambit": {
-      "base": 0.05,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 0.0,
-        "late_surger": 0.0,
-        "end_closer": 0.2
-      }
-    },
-    "standing_by": {
-      "base": 0.05,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 0.0,
-        "late_surger": 0.0,
-        "end_closer": 0.42
-      },
-      "distance": {
-        "sprint": 0.08,
-        "mile": 0.22,
-        "medium": 0.44,
-        "long": 0.55
-      }
-    },
-    "after_school_stroll": {
-      "base": 0.06,
-      "style": {
-        "front_runner": 0.0,
-        "pace_chaser": 0.0,
-        "late_surger": 0.0,
-        "end_closer": 0.38
-      }
-    },
-    "pressure": {
-      "base": 0.05,
+      "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
@@ -424,8 +429,33 @@
         "end_closer": 0.12
       }
     },
-    "early_start": {
-      "base": 0.05,
+    "standing_by": {
+      "base": 0.04,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.24
+      },
+      "distance": {
+        "sprint": 0.05,
+        "mile": 0.12,
+        "medium": 0.24,
+        "long": 0.35
+      }
+    },
+    "after_school_stroll": {
+      "base": 0.04,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.2
+      },
+      "notes": "Course-dependent recovery; useful but not a defining parent Spark."
+    },
+    "pressure": {
+      "base": 0.04,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
@@ -433,427 +463,466 @@
         "end_closer": 0.08
       }
     },
-    "ignited_spirit_spd": {
-      "base": 0.58
-    },
-    "ignited_spirit_sta": {
-      "base": 0.35,
-      "distance": {
-        "sprint": 0.12,
-        "mile": 0.25,
-        "medium": 0.48,
-        "long": 0.7
+    "early_start": {
+      "base": 0.03,
+      "style": {
+        "front_runner": 0.0,
+        "pace_chaser": 0.0,
+        "late_surger": 0.0,
+        "end_closer": 0.05
       }
     },
-    "sprinting_gear": {
-      "base": 0.05,
+    "ignited_spirit_spd": {
+      "base": 0.38,
+      "notes": "Scenario-limited but only moderate mechanically; rarity alone does not make it a top target."
+    },
+    "ignited_spirit_sta": {
+      "base": 0.18,
       "distance": {
-        "sprint": 0.72,
+        "sprint": 0.08,
+        "mile": 0.16,
+        "medium": 0.3,
+        "long": 0.46
+      },
+      "notes": "Rare scenario recovery, but recovery value remains secondary outside stamina-sensitive races."
+    },
+    "sprinting_gear": {
+      "base": 0.03,
+      "distance": {
+        "sprint": 0.38,
         "mile": 0.0,
         "medium": 0.0,
         "long": 0.0
-      }
+      },
+      "notes": "Useful Sprint acceleration, but commonly available enough to carry only a modest scarcity premium."
     },
     "gap_closer": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
-        "sprint": 0.78,
+        "sprint": 0.62,
         "mile": 0.0,
         "medium": 0.0,
         "long": 0.0
       },
       "style": {
         "front_runner": 0.0,
-        "pace_chaser": 0.2,
-        "late_surger": 0.82,
-        "end_closer": 0.86
-      }
+        "pace_chaser": 0.16,
+        "late_surger": 0.66,
+        "end_closer": 0.7
+      },
+      "notes": "Scarce and valuable specifically for backline Sprint builds."
     },
     "shifting_gears": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
-        "mile": 0.82,
+        "mile": 0.42,
         "medium": 0.0,
         "long": 0.0
       },
       "style": {
-        "front_runner": 0.84,
-        "pace_chaser": 0.84,
-        "late_surger": 0.28,
-        "end_closer": 0.18
-      }
+        "front_runner": 0.44,
+        "pace_chaser": 0.44,
+        "late_surger": 0.2,
+        "end_closer": 0.12
+      },
+      "notes": "Good Mile speed but routinely covered by relevant support decks."
     },
     "speed_eater": {
       "base": 0.03,
       "distance": {
         "sprint": 0.0,
-        "mile": 0.78,
+        "mile": 0.68,
         "medium": 0.0,
         "long": 0.0
       },
       "style": {
-        "front_runner": 0.94,
-        "pace_chaser": 0.35,
-        "late_surger": 0.1,
-        "end_closer": 0.08
-      }
+        "front_runner": 0.78,
+        "pace_chaser": 0.28,
+        "late_surger": 0.08,
+        "end_closer": 0.06
+      },
+      "notes": "Comparatively distinctive Mile Front skill; retains a meaningful parent premium."
     },
     "acceleration": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
-        "mile": 0.52,
+        "mile": 0.32,
         "medium": 0.0,
         "long": 0.0
-      }
+      },
+      "notes": "Course-dependent Mile acceleration; exact-course validation should dominate its final value."
     },
     "up_tempo": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
         "mile": 0.0,
-        "medium": 0.84,
+        "medium": 0.42,
         "long": 0.0
       },
       "style": {
-        "front_runner": 0.7,
-        "pace_chaser": 0.84,
-        "late_surger": 0.28,
-        "end_closer": 0.2
-      }
+        "front_runner": 0.36,
+        "pace_chaser": 0.42,
+        "late_surger": 0.18,
+        "end_closer": 0.12
+      },
+      "notes": "Good Medium speed, but common enough in Medium/Pace support pools to remain a modest parent target."
     },
     "rosy_outlook": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
         "mile": 0.0,
-        "medium": 0.48,
+        "medium": 0.24,
         "long": 0.0
       },
       "style": {
-        "front_runner": 0.48,
-        "pace_chaser": 0.48,
+        "front_runner": 0.24,
+        "pace_chaser": 0.24,
         "late_surger": 0.0,
         "end_closer": 0.0
       }
     },
     "soft_step": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
         "mile": 0.0,
-        "medium": 0.35,
+        "medium": 0.18,
         "long": 0.0
       }
     },
     "deep_breaths": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
         "mile": 0.0,
         "medium": 0.0,
-        "long": 0.72
-      }
+        "long": 0.32
+      },
+      "notes": "Solid Long recovery, but common enough to be a secondary parent target."
     },
     "feature_act": {
-      "base": 0.04,
+      "base": 0.03,
       "distance": {
         "sprint": 0.0,
         "mile": 0.0,
         "medium": 0.0,
-        "long": 0.74
-      }
+        "long": 0.54
+      },
+      "notes": "Useful and less routine Long positioning speed; meaningful but not defining."
     },
     "stamina_eater": {
-      "base": 0.22,
+      "base": 0.12,
       "distance": {
-        "sprint": 0.04,
-        "mile": 0.12,
-        "medium": 0.35,
-        "long": 0.68
-      }
+        "sprint": 0.03,
+        "mile": 0.08,
+        "medium": 0.22,
+        "long": 0.46
+      },
+      "notes": "Niche recovery/debuff with real Long value, but not a generic high-priority Spark."
     },
     "top_pick": {
-      "base": 0.03,
+      "base": 0.02,
       "surface": {
         "turf": 0.0,
-        "dirt": 0.72
+        "dirt": 0.46
       },
       "style": {
-        "front_runner": 0.8,
-        "pace_chaser": 0.4,
-        "late_surger": 0.14,
-        "end_closer": 0.1
-      }
+        "front_runner": 0.52,
+        "pace_chaser": 0.26,
+        "late_surger": 0.08,
+        "end_closer": 0.06
+      },
+      "notes": "Good Dirt Front skill, yet still below rare meta-defining lineage targets."
     },
     "dirt_savvy": {
-      "base": 0.03,
+      "base": 0.02,
       "surface": {
         "turf": 0.0,
-        "dirt": 0.3
+        "dirt": 0.14
       }
     },
     "triple_7s": {
-      "base": 0.28,
-      "notes": "Generic B; can become S on specific Christmas Oguri timing builds."
+      "base": 0.08,
+      "notes": "Low generic value; exact Christmas Oguri timing profiles should override it sharply upward."
     },
     "lay_low": {
-      "base": 0.3
+      "base": 0.18
     },
     "intense_gaze": {
-      "base": 0.18,
+      "base": 0.1,
       "style": {
         "front_runner": 0.0,
         "pace_chaser": 0.0,
         "late_surger": 0.0,
-        "end_closer": 0.35
+        "end_closer": 0.2
       }
     },
     "hesitant_front_runners": {
-      "base": 0.24
+      "base": 0.14
     },
     "hesitant_pace_chasers": {
-      "base": 0.24
+      "base": 0.14
     },
     "hesitant_late_surgers": {
-      "base": 0.24
+      "base": 0.14
     },
     "hesitant_end_closers": {
-      "base": 0.24
+      "base": 0.14
     },
     "flustered_front_runners": {
-      "base": 0.1
+      "base": 0.05
     },
     "flustered_pace_chasers": {
-      "base": 0.1
+      "base": 0.05
     },
     "flustered_late_surgers": {
-      "base": 0.1
+      "base": 0.05
     },
     "flustered_end_closers": {
-      "base": 0.1
+      "base": 0.05
     },
     "subdued_front_runners": {
-      "base": 0.1
+      "base": 0.05
     },
     "subdued_pace_chasers": {
-      "base": 0.1
+      "base": 0.05
     },
     "subdued_late_surgers": {
-      "base": 0.1
+      "base": 0.05
     },
     "subdued_end_closers": {
-      "base": 0.1
+      "base": 0.05
     },
     "frenzied_front_runners": {
-      "base": 0.1
+      "base": 0.05
     },
     "frenzied_pace_chasers": {
-      "base": 0.1
+      "base": 0.05
     },
     "frenzied_late_surgers": {
-      "base": 0.1
+      "base": 0.05
     },
     "frenzied_end_closers": {
-      "base": 0.1
+      "base": 0.05
     },
     "front_runner_corners": {
       "base": 0.0,
       "style": {
-        "front_runner": 0.84
-      }
+        "front_runner": 0.35
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "pace_chaser_corners": {
       "base": 0.0,
       "style": {
-        "pace_chaser": 0.84
-      }
+        "pace_chaser": 0.35
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "late_surger_corners": {
       "base": 0.0,
       "style": {
-        "late_surger": 0.84
-      }
+        "late_surger": 0.35
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "end_closer_corners": {
       "base": 0.0,
       "style": {
-        "end_closer": 0.84
-      }
+        "end_closer": 0.35
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "front_runner_straightaways": {
       "base": 0.0,
       "style": {
-        "front_runner": 0.7
-      }
+        "front_runner": 0.3
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "pace_chaser_straightaways": {
       "base": 0.0,
       "style": {
-        "pace_chaser": 0.7
-      }
+        "pace_chaser": 0.3
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "late_surger_straightaways": {
       "base": 0.0,
       "style": {
-        "late_surger": 0.7
-      }
+        "late_surger": 0.3
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "end_closer_straightaways": {
       "base": 0.0,
       "style": {
-        "end_closer": 0.7
-      }
+        "end_closer": 0.3
+      },
+      "notes": "Good matching-style speed, but common in relevant support decks."
     },
     "sprint_corners": {
       "base": 0.0,
       "distance": {
-        "sprint": 0.84
-      }
+        "sprint": 0.35
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "mile_corners": {
       "base": 0.0,
       "distance": {
-        "mile": 0.84
-      }
+        "mile": 0.35
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "medium_corners": {
       "base": 0.0,
       "distance": {
-        "medium": 0.84
-      }
+        "medium": 0.35
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "long_corners": {
       "base": 0.0,
       "distance": {
-        "long": 0.84
-      }
+        "long": 0.35
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "sprint_straightaways": {
       "base": 0.0,
       "distance": {
-        "sprint": 0.7
-      }
+        "sprint": 0.3
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "mile_straightaways": {
       "base": 0.0,
       "distance": {
-        "mile": 0.7
-      }
+        "mile": 0.3
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "medium_straightaways": {
       "base": 0.0,
       "distance": {
-        "medium": 0.7
-      }
+        "medium": 0.3
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "long_straightaways": {
       "base": 0.0,
       "distance": {
-        "long": 0.7
-      }
+        "long": 0.3
+      },
+      "notes": "Good matching-distance speed, but common in relevant support decks."
     },
     "dirt_corners": {
       "base": 0.0,
       "surface": {
-        "dirt": 0.84,
+        "dirt": 0.4,
         "turf": 0.0
-      }
+      },
+      "notes": "Useful Dirt speed and slightly scarcer than generic distance/style corners, but still not a defining Spark."
     },
     "dirt_straightaways": {
       "base": 0.0,
       "surface": {
-        "dirt": 0.7,
+        "dirt": 0.34,
         "turf": 0.0
-      }
+      },
+      "notes": "Useful Dirt speed and slightly scarcer than generic distance/style straights, but still not a defining Spark."
     },
     "spring_runner": {
-      "base": 0.05
+      "base": 0.04
     },
     "summer_runner": {
-      "base": 0.05
+      "base": 0.04
     },
     "fall_runner": {
-      "base": 0.05
+      "base": 0.04
     },
     "winter_runner": {
-      "base": 0.05
+      "base": 0.04
     },
     "left_handed": {
-      "base": 0.05
+      "base": 0.04
     },
     "right_handed": {
-      "base": 0.05
+      "base": 0.04
     },
     "firm_conditions": {
-      "base": 0.04
+      "base": 0.03
     },
     "wet_conditions": {
-      "base": 0.04
+      "base": 0.03
     },
     "standard_distance": {
-      "base": 0.04
+      "base": 0.03
     },
     "non_standard_distance": {
-      "base": 0.04
+      "base": 0.03
     },
     "sunny_days": {
-      "base": 0.03
+      "base": 0.02
     },
     "cloudy_days": {
-      "base": 0.03
+      "base": 0.02
     },
     "rainy_days": {
-      "base": 0.03
+      "base": 0.02
     },
     "snowy_days": {
-      "base": 0.03
+      "base": 0.02
     },
     "tokyo_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "nakayama_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "hanshin_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "kyoto_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "chukyo_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "sapporo_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "hakodate_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "fukushima_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "niigata_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "kokura_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "oi_racecourse": {
-      "base": 0.04
+      "base": 0.03
     },
     "inner_post_proficiency": {
-      "base": 0.03
+      "base": 0.02
     },
     "outer_post_proficiency": {
-      "base": 0.03
+      "base": 0.02
     },
     "sympathy": {
-      "base": 0.03
+      "base": 0.02
     },
     "maverick": {
-      "base": 0.03
+      "base": 0.02
     }
   }
 }

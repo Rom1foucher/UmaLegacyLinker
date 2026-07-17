@@ -13,6 +13,19 @@ from i18n import (
 
 
 class I18nTests(unittest.TestCase):
+    def test_api_key_persistence_labels_are_translated(self) -> None:
+        self.assertEqual(
+            translate_text("Mémoriser la clé sur ce PC", "en"),
+            "Remember the key on this PC",
+        )
+        self.assertEqual(
+            translate_text(
+                "La clé mémorisée est chiffrée par Windows pour ce compte utilisateur.",
+                "en",
+            ),
+            "The saved key is encrypted by Windows for this user account.",
+        )
+
     def test_language_labels_round_trip(self) -> None:
         self.assertEqual(language_from_label(language_label("fr")), "fr")
         self.assertEqual(language_from_label(language_label("en")), "en")
@@ -57,6 +70,31 @@ class I18nTests(unittest.TestCase):
         for source, expected in samples.items():
             with self.subTest(source=source):
                 self.assertEqual(translate_text(source, "en"), expected)
+
+    def test_optimizer_detail_panel_is_fully_translated(self) -> None:
+        source = """Vertes / uniques
+Roses — détail brut
+Blues — pertinence selon la distance :
+Style — optimisation secondaire :
+Terrain — optimisation secondaire :
+- dont parents directs : 1
+- procs requis pour A : 0 | pour S : 1
+Distance S — contrainte de la paire finale :
+- statut : Prête pour S (palier 4)
+Calcul du score global :
+Affinité moderne — diagnostic global :"""
+        expected = """Green / Unique Sparks
+Pink Sparks — raw detail
+Blue Sparks — relevance by distance:
+Running style — secondary optimisation:
+Surface — secondary optimisation:
+- including direct parents: 1
+- procs required for A: 0 | for S: 1
+Distance S — final-pair constraint:
+- status: Ready for S (tier 4)
+Overall score calculation:
+Modern affinity — global diagnostic:"""
+        self.assertEqual(translate_text(source, "en"), expected)
 
     def test_weight_examples_are_human_readable_in_english(self) -> None:
         source = (

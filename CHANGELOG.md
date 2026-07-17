@@ -2,6 +2,18 @@
 
 This project uses feature-level semantic versioning. Small internal iterations are consolidated into the nearest meaningful release instead of receiving their own public version.
 
+## 1.5.0 — uma.moe Lineage Planner export
+
+- Added a standalone, one-file Windows executable build with embedded default profiles and version metadata.
+- Added tag-driven GitHub releases containing the Windows executable and its SHA-256 checksum.
+- Added optional uma.moe API-key persistence protected by Windows DPAPI for the current user account.
+- Added native Lineage Planner v1 JSON export for selected final parent pairs.
+- Added export actions to both local optimiser results and local × uma.moe parent results.
+- Preserved complete local veteran, Spark, race and succession data from `data.json`, including great-grandparents when present.
+- Added compact Spark-based fallback export for remote lineage members returned by uma.moe.
+- Completed English translations for optimiser detail panels and related runtime diagnostics.
+- Prevented a target parent Uma from being selected as its own grandparent, including alternate costumes; the target Ace remains eligible.
+
 ## 1.4.0 — Interface polish, diagnostics and terminology
 
 - Completed the English coverage of dynamic UI text, runtime logs and scoring details, with consistent terminology for costume variants, trained veterans and Sparks.

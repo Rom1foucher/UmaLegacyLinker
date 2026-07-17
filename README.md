@@ -65,6 +65,8 @@ The active Ace, target parent, profile and course conditions come from the **Lin
 
 Friend IDs can be copied directly from result tables. Online retrieval is capped at **2,000 candidates per search**.
 
+Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format. In the planner, use **Save / Load** to import the generated file. Local branches retain their full `data.json` veteran and succession records; remote branches export every Spark and lineage member available from the API result.
+
 ## Scoring model
 
 The model is configurable and intentionally differs by workflow.
@@ -91,16 +93,17 @@ See [`docs/SCORING.md`](docs/SCORING.md) for formulas and implementation details
 ## Requirements
 
 - Windows is the primary supported platform.
-- Python **3.10+**.
+- The Windows release executable requires no Python installation.
+- Running from source requires Python **3.10+**.
 - Tkinter, included with the standard Windows Python installer.
 - A current Umamusume `master.mdb`.
 - A veteran export in `data.json` format.
 - `PyYAML` for live uma.moe searches when running from source.
 
-Install the optional dependency with:
+Install the source dependency with:
 
 ```powershell
-py -m pip install PyYAML
+py -m pip install -r requirements.txt
 ```
 
 ## Veteran data extraction
@@ -117,7 +120,7 @@ Both are separate projects with their own requirements, licences and warnings. T
 ```powershell
 git clone https://github.com/Rom1foucher/UmaLegacyLinker.git
 cd UmaLegacyLinker
-py -m pip install PyYAML
+py -m pip install -r requirements.txt
 py app.py
 ```
 
@@ -158,6 +161,7 @@ The effective profiles used by a run are exported as:
 | `parent_optimizer.py` | Local branch, pair and future-GP scoring |
 | `transfer_helper.py` | Collection cleanup analysis and dominance checks |
 | `uma_moe.py` | uma.moe API discovery, normalisation and online pairing |
+| `lineage_planner.py` | Native uma.moe Lineage Planner JSON export |
 | `scoring_config.py` | Scoring profile loading, migration and validation |
 | `default_parent_scoring.json` | Bundled structural scoring defaults |
 | `default_skill_priorities.json` | Bundled per-skill White Spark priorities |
@@ -193,13 +197,32 @@ py app.py --help
 .\build_windows.ps1
 ```
 
-The executable is generated in `dist\UmaLegacyLinker.exe`. Keep the bundled `default_*.json` files next to it.
+The script runs the complete test suite and generates:
+
+- `dist\UmaLegacyLinker.exe`, a standalone one-file application containing Python, PyYAML and the default profiles;
+- `dist\UmaLegacyLinker.exe.sha256`, used to verify the download.
+
+No Python installation and no adjacent `default_*.json` files are required on the destination PC.
+
+The uma.moe API key can be remembered from the application. On Windows it is encrypted with DPAPI for the current Windows account and stored under `%APPDATA%\UmaLegacyLinker`; it is never written in clear text to `config.json`.
+
+### Publishing a GitHub release
+
+The `Windows release` GitHub Actions workflow builds the same executable on every `v*` tag and attaches the EXE and checksum to the corresponding GitHub release:
+
+```powershell
+git tag v1.5.0
+git push origin v1.5.0
+```
+
+The workflow can also be started manually to obtain a downloadable build artifact without creating a release.
 
 ## Documentation
 
 - [`docs/SCORING.md`](docs/SCORING.md) — scoring model and formulas;
 - [`docs/WEIGHTS_FORMAT.md`](docs/WEIGHTS_FORMAT.md) — White Spark priority format;
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — proposed process-based multicore design;
+- [`docs/RELEASING.md`](docs/RELEASING.md) — Windows build and GitHub release procedure;
 - [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md) — external tools and services;
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 

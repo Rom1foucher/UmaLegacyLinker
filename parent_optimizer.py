@@ -402,6 +402,23 @@ def _lineage_members(
     return result
 
 
+def _valid_grandparent_for_target_parent(
+    veteran: dict[str, Any], target_parent_chara_id: int | None,
+) -> bool:
+    """Reject the target parent itself as a GP across all costume variants."""
+    try:
+        candidate_chara_id = int(veteran.get("chara_id") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (
+        candidate_chara_id > 0
+        and (
+            target_parent_chara_id is None
+            or candidate_chara_id != target_parent_chara_id
+        )
+    )
+
+
 def _condition_values(selected_values: Any) -> tuple[int | float, ...]:
     """Normalize GUI, preset and CLI condition values to an iterable.
 
@@ -2200,8 +2217,7 @@ def optimize_parents(
         future_candidates = [
             veteran
             for veteran in veterans
-            if future_parent_chara is None
-            or int(veteran.get("chara_id") or 0) != future_parent_chara
+            if _valid_grandparent_for_target_parent(veteran, future_parent_chara)
         ]
         future_branch_base = (
             resolver.pair(ace_chara, future_parent_chara)

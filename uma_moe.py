@@ -40,6 +40,7 @@ from parent_optimizer import (
     _score_breakdown,
     _selected_weight_lookup,
     _static_condition_state,
+    _valid_grandparent_for_target_parent,
     _white_generation_support_score,
     _white_score,
     evaluate_parent_branch,
@@ -1776,8 +1777,9 @@ def rank_online_grandparent_pairs(
         production_full_score_at = full_score_threshold(production_thresholds)
 
         def eligible(member: dict[str, Any]) -> bool:
-            chara = int(member.get("chara_id") or 0)
-            return chara > 0 and chara != target_parent_chara
+            return _valid_grandparent_for_target_parent(
+                member, target_parent_chara
+            )
 
         def individual_score(member: dict[str, Any]) -> dict[str, Any]:
             members = [(member, "grandparent", "candidate")]
@@ -1809,8 +1811,16 @@ def rank_online_grandparent_pairs(
             }
 
         remote_eligible = [member for member in online_candidates if eligible(member)]
+        if not remote_eligible:
+            raise UmaMoeError(
+                "Aucun GP distant valide après exclusion du parent à produire."
+            )
         if exhaustive_pairs:
             local_eligible = [member for member in veterans if eligible(member)]
+            if not local_eligible:
+                raise UmaMoeError(
+                    "Aucun GP local valide après exclusion du parent à produire."
+                )
             log(f"Préclassement de {len(local_eligible)} GP locaux et {len(remote_eligible)} GP distants…")
             local_pre = sorted((individual_score(member) for member in local_eligible), key=lambda row: row["score"], reverse=True)
             remote_pre = sorted((individual_score(member) for member in remote_eligible), key=lambda row: row["score"], reverse=True)
@@ -1820,6 +1830,10 @@ def rank_online_grandparent_pairs(
         else:
             if fixed is None:
                 raise UmaMoeError("Sélectionne un GP local ou active le test automatique des paires.")
+            if not eligible(fixed):
+                raise UmaMoeError(
+                    "Le GP local sélectionné est la même Uma que le parent à produire."
+                )
             selected_locals = [fixed]
             selected_remotes = remote_eligible
             local_pre = [individual_score(fixed)]

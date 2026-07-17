@@ -1,18 +1,24 @@
+param(
+    [switch]$SkipInstall
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-py -m pip install --upgrade pyinstaller pyyaml
-py -m PyInstaller `
-  --noconfirm `
-  --clean `
-  --onefile `
-  --windowed `
-  --name UmaLegacyLinker `
-  app.py
+$Python = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
 
-Copy-Item default_manual_adjustments.json dist\default_manual_adjustments.json -Force
-Copy-Item default_course_overrides.json dist\default_course_overrides.json -Force
-Copy-Item default_parent_scoring.json dist\default_parent_scoring.json -Force
-Copy-Item default_skill_priorities.json dist\default_skill_priorities.json -Force
+if (-not $SkipInstall) {
+    & $Python -m pip install --upgrade -r requirements-build.txt
+}
 
-Write-Host "Build termine : $PSScriptRoot\dist\UmaLegacyLinker.exe"
+& $Python -m unittest discover -v
+& $Python -m PyInstaller --noconfirm --clean UmaLegacyLinker.spec
+
+$Executable = Join-Path $PSScriptRoot "dist\UmaLegacyLinker.exe"
+$Checksum = (Get-FileHash $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
+"$Checksum  UmaLegacyLinker.exe" | Set-Content `
+    (Join-Path $PSScriptRoot "dist\UmaLegacyLinker.exe.sha256") `
+    -Encoding ascii
+
+Write-Host "Build termine : $Executable"
+Write-Host "SHA-256 : $Checksum"

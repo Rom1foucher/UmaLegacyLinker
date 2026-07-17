@@ -16,6 +16,7 @@ venv/
 build/
 dist/
 *.spec
+!UmaLegacyLinker.spec
 
 # Generated application data
 output/

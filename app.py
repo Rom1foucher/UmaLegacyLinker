@@ -21,6 +21,7 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 from autocomplete import AutocompleteCombobox
 from legacy_linker import LinkerError, link_veterans, normalize_json_root
+from lineage_planner import LineagePlannerError, write_lineage_planner_export
 from skill_catalog import generate_skill_catalogs
 from simulator_weights import generate_simulator_weights
 from manual_weights import generate_manual_skill_weights
@@ -63,6 +64,7 @@ from i18n import (
     scoring_label,
     translate_text,
 )
+from secret_store import SecretStoreError, load_api_key, save_api_key
 
 from uma_moe import (
     DEFAULT_API_BASE,
@@ -75,6 +77,7 @@ from uma_moe import (
 )
 
 APP_NAME = "Uma Legacy Linker"
+APP_VERSION = "1.5.0"
 UMAEXTRACTOR_RELEASES = "https://github.com/xancia/UmaExtractor/releases/latest"
 UMADUMP_REPOSITORY = "https://github.com/Werseter/umadump"
 
@@ -93,12 +96,23 @@ def app_base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def resource_base_dir() -> Path:
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and bundle_dir:
+        return Path(bundle_dir).resolve()
+    return Path(__file__).resolve().parent
+
+
 def config_path() -> Path:
     if os.name == "nt":
         root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     else:
         root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return root / "UmaLegacyLinker" / "config.json"
+
+
+def api_key_path() -> Path:
+    return config_path().parent / "uma_moe_api_key.dat"
 
 
 def load_config() -> dict[str, str]:
@@ -116,7 +130,7 @@ def save_config(data: dict[str, str]) -> None:
 
 
 def default_scoring_path() -> Path:
-    return app_base_dir() / "default_parent_scoring.json"
+    return resource_base_dir() / "default_parent_scoring.json"
 
 
 def user_scoring_overrides_path() -> Path:
@@ -124,7 +138,7 @@ def user_scoring_overrides_path() -> Path:
 
 
 def default_skill_priorities_path() -> Path:
-    return app_base_dir() / "default_skill_priorities.json"
+    return resource_base_dir() / "default_skill_priorities.json"
 
 
 def user_skill_priorities_path() -> Path:
@@ -193,7 +207,7 @@ def open_path(path: Path) -> None:
 class Application:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(APP_NAME)
+        self.root.title(f"{APP_NAME} {APP_VERSION}")
         self.root.geometry("1240x900")
         self.root.minsize(1000, 700)
         self.queue: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -217,7 +231,7 @@ class Application:
             or (str(detected_extractor) if detected_extractor else "")
         )
         self.batch_var = tk.StringVar(value=config.get("umalator_batch_path", ""))
-        default_course_overrides = app_base_dir() / "default_course_overrides.json"
+        default_course_overrides = resource_base_dir() / "default_course_overrides.json"
         resolved_course_overrides = resolve_course_overrides_path(
             config.get("course_overrides_path"), default_course_overrides
         )
@@ -271,7 +285,15 @@ class Application:
         self.uma_moe_base_var = tk.StringVar(value=config.get("uma_moe_base_url", DEFAULT_API_BASE))
         self.uma_moe_query_var = tk.StringVar(value=config.get("uma_moe_query", ""))
         self.uma_moe_response_var = tk.StringVar(value=config.get("uma_moe_response_path", ""))
-        self.uma_moe_token_var = tk.StringVar(value=os.environ.get("UMA_MOE_API_KEY", ""))
+        environment_api_key = os.environ.get("UMA_MOE_API_KEY", "").strip()
+        stored_api_key = load_api_key(api_key_path()) if os.name == "nt" else ""
+        self.uma_moe_token_var = tk.StringVar(
+            value=environment_api_key or stored_api_key
+        )
+        self.uma_moe_remember_token_var = tk.BooleanVar(
+            value=config.get("uma_moe_remember_api_key", "1")
+            not in {"0", "false", "False"}
+        )
         self.fixed_gp_var = tk.StringVar(value="")
         self.parent_required_card_var = tk.StringVar(value="")
         self._saved_required_parent_card_id = int(config.get("uma_moe_required_parent_card_id", "0") or 0)
@@ -607,7 +629,11 @@ class Application:
 
         header = ttk.Frame(root_frame)
         header.pack(fill=tk.X)
-        ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Label(
+            header,
+            text=f"{APP_NAME} {APP_VERSION}",
+            style="Title.TLabel",
+        ).pack(side=tk.LEFT)
         ttk.Label(
             header,
             text="Sparks, G1 et lignées résolus depuis le master.mdb courant.",
@@ -1068,19 +1094,24 @@ class Application:
         ttk.Entry(api, textvariable=self.uma_moe_base_var).grid(row=0, column=1, sticky="ew", padx=(0, 12))
         ttk.Label(api, text="Clé API").grid(row=0, column=2, sticky="e", padx=(0, 5))
         ttk.Entry(api, textvariable=self.uma_moe_token_var, show="•").grid(row=0, column=3, sticky="ew")
+        ttk.Checkbutton(
+            api,
+            text="Mémoriser la clé sur ce PC",
+            variable=self.uma_moe_remember_token_var,
+        ).grid(row=1, column=3, sticky="w", pady=(3, 0))
         ttk.Label(
             api,
-            text="Clé non enregistrée ; peut aussi venir de UMA_MOE_API_KEY.",
+            text="La clé mémorisée est chiffrée par Windows pour ce compte utilisateur.",
             style="Hint.TLabel",
-        ).grid(row=1, column=3, sticky="w", pady=(2, 0))
-        ttk.Label(api, text="Réponse JSON", width=20).grid(row=2, column=0, sticky="w", pady=(7, 0))
-        ttk.Entry(api, textvariable=self.uma_moe_response_var).grid(row=2, column=1, sticky="ew", padx=(0, 6), pady=(7, 0))
-        ttk.Button(api, text="Parcourir…", command=self._browse_uma_moe_response).grid(row=2, column=2, sticky="w", pady=(7, 0))
+        ).grid(row=2, column=3, sticky="w", pady=(2, 0))
+        ttk.Label(api, text="Réponse JSON", width=20).grid(row=3, column=0, sticky="w", pady=(7, 0))
+        ttk.Entry(api, textvariable=self.uma_moe_response_var).grid(row=3, column=1, sticky="ew", padx=(0, 6), pady=(7, 0))
+        ttk.Button(api, text="Parcourir…", command=self._browse_uma_moe_response).grid(row=3, column=2, sticky="w", pady=(7, 0))
         ttk.Label(
             api,
             text="Fallback : classe une réponse exportée depuis la doc interactive.",
             style="Hint.TLabel",
-        ).grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(7, 0))
+        ).grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(7, 0))
 
         online_actions = ttk.Frame(tab)
         online_actions.grid(row=4, column=0, sticky="ew", pady=(10, 0))
@@ -1846,6 +1877,49 @@ class Application:
         except (OSError, ScoringConfigError) as exc:
             self._show_error(exc)
 
+    def _export_parent_pair_to_lineage_planner(
+        self,
+        ace: dict[str, object],
+        parent_1: dict[str, object],
+        parent_2: dict[str, object],
+        *,
+        parent: tk.Misc | None = None,
+    ) -> None:
+        ace_id = int(ace.get("card_id") or 0)
+        parent_1_id = int(parent_1.get("card_id") or 0)
+        parent_2_id = int(parent_2.get("card_id") or 0)
+        initialfile = (
+            f"uma_moe_lineage_{ace_id}_{parent_1_id}_{parent_2_id}.json"
+        )
+        filename = filedialog.asksaveasfilename(
+            parent=parent,
+            title=str(self._tr("Exporter la paire vers uma.moe Lineage Planner")),
+            defaultextension=".json",
+            initialfile=initialfile,
+            filetypes=(("JSON", "*.json"),),
+        )
+        if not filename:
+            return
+        try:
+            path = write_lineage_planner_export(
+                filename,
+                ace,
+                parent_1,
+                parent_2,
+                master_path=self.master_var.get().strip(),
+                veterans_json_path=self.json_var.get().strip(),
+            )
+        except (OSError, ValueError, LineagePlannerError) as exc:
+            self._show_error(exc, parent=parent)
+            return
+
+        self._set_status("Paire exportée pour uma.moe Lineage Planner.")
+        self._append_log(f"Export Lineage Planner : {path}")
+        self._show_info(
+            "Export créé. Dans uma.moe Lineage Planner, ouvre Save / Load puis importe ce fichier JSON.",
+            parent=parent,
+        )
+
     def _reset_scoring_overrides(self) -> None:
         path = user_scoring_overrides_path()
         if not path.is_file() and not self.use_custom_scoring_var.get():
@@ -2476,6 +2550,18 @@ class Application:
         self.queue.put(("log", message))
 
     def _save_current_config(self) -> None:
+        if os.name == "nt":
+            try:
+                save_api_key(
+                    api_key_path(),
+                    self.uma_moe_token_var.get().strip()
+                    if self.uma_moe_remember_token_var.get()
+                    else "",
+                )
+            except (OSError, SecretStoreError):
+                # Saving the rest of the preferences must never be blocked by
+                # an unavailable Windows credential store.
+                pass
         save_config(
             {
                 "master_path": self.master_var.get().strip(),
@@ -2500,6 +2586,7 @@ class Application:
                 "uma_moe_base_url": self.uma_moe_base_var.get().strip(),
                 "uma_moe_query": self.uma_moe_query_var.get(),
                 "uma_moe_response_path": self.uma_moe_response_var.get().strip(),
+                "uma_moe_remember_api_key": "1" if self.uma_moe_remember_token_var.get() else "0",
                 "uma_moe_limit": str(self.uma_moe_limit_var.get()),
                 "uma_moe_parent_g1_budget": str(self.uma_moe_parent_g1_budget_var.get()),
                 "uma_moe_required_parent_card_id": str(self._ace_display_to_id.get(self.parent_required_card_var.get(), self._saved_required_parent_card_id or 0)),
@@ -2599,7 +2686,7 @@ class Application:
         self._course_display_to_key = {generic_profile: None}
         self._course_definitions = {}
 
-        bundled = app_base_dir() / "default_course_overrides.json"
+        bundled = resource_base_dir() / "default_course_overrides.json"
         resolved_path = resolve_course_overrides_path(self.course_overrides_var.get().strip(), bundled)
         if resolved_path is not None and self.course_overrides_var.get().strip() != str(resolved_path):
             # Heal stale absolute paths saved by earlier versions.
@@ -3102,7 +3189,7 @@ class Application:
             self.queue.put(("progress", (25, "Actualisation du catalogue depuis le MDB…")))
             catalog = generate_skill_catalogs(master, output, self._enqueue_log)
             self.queue.put(("progress", (60, "Normalisation des résultats Umalator…")))
-            adjustments = app_base_dir() / "default_manual_adjustments.json"
+            adjustments = resource_base_dir() / "default_manual_adjustments.json"
             result = generate_simulator_weights(
                 batch,
                 catalog.skills_path,
@@ -4367,6 +4454,23 @@ class Application:
             tree.focus(first)
             update_detail()
 
+        def export_selected_pair() -> None:
+            selection = tree.selection()
+            if not selection:
+                self._show_warning(
+                    "Sélectionne d'abord une paire à exporter.", parent=window
+                )
+                return
+            row = row_map.get(selection[0])
+            if row is None:
+                return
+            self._export_parent_pair_to_lineage_planner(
+                result.ace,
+                row.get("fixed_parent") or {},
+                row.get("candidate") or {},
+                parent=window,
+            )
+
         footer = ttk.Frame(window, padding=(10, 0, 10, 10))
         footer.pack(fill=tk.X)
         ttk.Button(
@@ -4374,6 +4478,12 @@ class Application:
             text="Ouvrir le dossier de sortie",
             command=lambda: open_path(result.rankings_json_path.parent),
         ).pack(side=tk.LEFT)
+        ttk.Button(
+            footer,
+            text="Exporter la paire sélectionnée vers uma.moe…",
+            command=export_selected_pair,
+            state=(tk.NORMAL if row_map else tk.DISABLED),
+        ).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(footer, text="Fermer", command=window.destroy).pack(side=tk.RIGHT)
         self._apply_translations(window)
 
@@ -4795,7 +4905,16 @@ class Application:
         notebook = ttk.Notebook(window)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        def add_tree(title: str, columns: tuple[str, ...], headings: dict[str, str], row_payloads: list[dict[str, object]], row_values: list[tuple[object, ...]], detail_renderer) -> None:
+        def add_tree(
+            title: str,
+            columns: tuple[str, ...],
+            headings: dict[str, str],
+            row_payloads: list[dict[str, object]],
+            row_values: list[tuple[object, ...]],
+            detail_renderer,
+            *,
+            lineage_pair_export: bool = False,
+        ) -> None:
             frame = ttk.Frame(notebook)
             notebook.add(frame, text=title)
             frame.rowconfigure(0, weight=1)
@@ -4848,7 +4967,36 @@ class Application:
             if row_map:
                 first = next(iter(row_map))
                 tree.selection_set(first)
+                tree.focus(first)
                 update_detail()
+
+            if lineage_pair_export:
+                actions = ttk.Frame(frame)
+                actions.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+
+                def export_selected_pair() -> None:
+                    selection = tree.selection()
+                    if not selection:
+                        self._show_warning(
+                            "Sélectionne d'abord une paire à exporter.", parent=window
+                        )
+                        return
+                    pair = row_map.get(selection[0])
+                    if pair is None:
+                        return
+                    self._export_parent_pair_to_lineage_planner(
+                        result.ace,
+                        pair.get("parent_1") or {},
+                        pair.get("parent_2") or {},
+                        parent=window,
+                    )
+
+                ttk.Button(
+                    actions,
+                    text="Exporter la paire sélectionnée vers uma.moe…",
+                    command=export_selected_pair,
+                    state=(tk.NORMAL if row_map else tk.DISABLED),
+                ).pack(side=tk.LEFT)
 
         pair_payloads = list(result.top_parent_pairs)
         pair_values = [(
@@ -4866,6 +5014,7 @@ class Application:
             ("rank", "score", "parent_1", "parent_2", "aff_base", "g1_bonus", "affinity", "distance_status", "distance_factors", "distance_initial", "distance_a", "distance_s_probability", "white", "blue"),
             {"rank": "#", "score": "Score", "parent_1": "Parent 1", "parent_2": "Parent 2", "aff_base": "Aff. base", "g1_bonus": "+G1", "affinity": "Aff. diagnostic", "distance_status": "Distance", "distance_factors": "Étoiles/porteurs", "distance_initial": "Départ", "distance_a": "P(A+)", "distance_s_probability": "P(S)", "white": "Whites", "blue": "Bleues"},
             pair_payloads, pair_values, render_pair_detail,
+            lineage_pair_export=True,
         )
 
         branch_payloads = list(result.top_parent_candidates)
@@ -5063,7 +5212,7 @@ def run_cli(args: argparse.Namespace) -> int:
                 args.output,
                 logger=lambda message: print(message, flush=True),
             )
-            default_course_overrides = app_base_dir() / "default_course_overrides.json"
+            default_course_overrides = resource_base_dir() / "default_course_overrides.json"
             course_overrides = args.course_overrides or (
                 str(default_course_overrides) if default_course_overrides.is_file() else None
             )
@@ -5127,7 +5276,7 @@ def run_cli(args: argparse.Namespace) -> int:
                 args.output,
                 logger=lambda message: print(message, flush=True),
             )
-            default_course_overrides = app_base_dir() / "default_course_overrides.json"
+            default_course_overrides = resource_base_dir() / "default_course_overrides.json"
             course_overrides = args.course_overrides or (
                 str(default_course_overrides) if default_course_overrides.is_file() else None
             )
@@ -5203,8 +5352,8 @@ def run_cli(args: argparse.Namespace) -> int:
             print(f"Template de poids : {catalog.weights_template_path}")
             print(f"Race factors : {catalog.race_factor_skills_path}")
             if args.umalator_batch:
-                adjustments = app_base_dir() / "default_manual_adjustments.json"
-                default_course_overrides = app_base_dir() / "default_course_overrides.json"
+                adjustments = resource_base_dir() / "default_manual_adjustments.json"
+                default_course_overrides = resource_base_dir() / "default_course_overrides.json"
                 course_overrides = args.course_overrides or (
                     str(default_course_overrides)
                     if default_course_overrides.is_file()

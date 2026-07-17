@@ -5,14 +5,21 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$Python = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
+$Python = (Get-Command python -ErrorAction Stop).Source
 
-if (-not $SkipInstall) {
-    & $Python -m pip install --upgrade -r requirements-build.txt
+function Invoke-Python {
+    & $Python @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python command failed with exit code $LASTEXITCODE."
+    }
 }
 
-& $Python -m unittest discover -v
-& $Python -m PyInstaller --noconfirm --clean UmaLegacyLinker.spec
+if (-not $SkipInstall) {
+    Invoke-Python -m pip install --upgrade -r requirements-build.txt
+}
+
+Invoke-Python -m unittest discover -v
+Invoke-Python -m PyInstaller --noconfirm --clean UmaLegacyLinker.spec
 
 $Executable = Join-Path $PSScriptRoot "dist\UmaLegacyLinker.exe"
 $Checksum = (Get-FileHash $Executable -Algorithm SHA256).Hash.ToLowerInvariant()

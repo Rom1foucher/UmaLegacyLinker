@@ -1,6 +1,6 @@
 {
-  "schema_version": 15,
-  "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Future-GP mode keeps the simpler direct-factor heuristic. Distance-S probability and distinct white-skill inheritance use configurable diminishing-return utility curves; Blue Sparks remain affinity-independent.",
+  "schema_version": 16,
+  "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Future-GP mode keeps the simpler direct-factor heuristic and is now the single source of truth for local, Transfer Helper and uma.moe GP-pair weights. Distance-S probability and distinct white-skill inheritance use configurable diminishing-return utility curves; Blue Sparks remain affinity-independent.",
   "mode_weights": {
     "parent_branch": {
       "distance_s": 0.22,
@@ -228,15 +228,7 @@
     "description": "Production-only score. Every lineage member carrying the same white skill Spark adds the same +2.5 percentage-point generation bonus. Base chance and learned basic/gold form are intentionally ignored. Race/scenario Sparks are excluded."
   },
   "uma_moe_pair": {
-    "description": "Rank local + remote grandparent pairs. Direct useful white Sparks on GP1/GP2 are valued with their projected final grandparent affinities in the Ace run. Their current parents contribute only to white-generation support for the future parent; production-run compatibility remains a separate low-weight component.",
-    "weights": {
-      "final_parent_affinity": 0.22,
-      "production_run_affinity": 0.04,
-      "pink": 0.24,
-      "white_skill": 0.26,
-      "white_generation": 0.18,
-      "blue": 0.06
-    },
+    "description": "Rank local + remote grandparent pairs with the canonical future-grandparent profile. Direct useful factors on GP1/GP2 remain in the final Ace lineage; their current parents contribute only to white-generation support. Production-run compatibility is diagnostic only.",
     "final_branch_thresholds": [
       [
         0,
@@ -263,36 +255,6 @@
         100
       ]
     ],
-    "production_affinity_thresholds": [
-      [
-        0,
-        0
-      ],
-      [
-        50,
-        20
-      ],
-      [
-        100,
-        50
-      ],
-      [
-        150,
-        75
-      ],
-      [
-        200,
-        90
-      ],
-      [
-        250,
-        100
-      ],
-      [
-        350,
-        100
-      ]
-    ],
     "candidate_g1_thresholds": [
       [
         0,
@@ -316,37 +278,6 @@
       ],
       [
         30,
-        100
-      ]
-    ],
-    "planned_g1_budget_default": 24,
-    "final_parent_potential_thresholds": [
-      [
-        0,
-        0
-      ],
-      [
-        49,
-        18
-      ],
-      [
-        75,
-        38
-      ],
-      [
-        100,
-        62
-      ],
-      [
-        125,
-        82
-      ],
-      [
-        151,
-        100
-      ],
-      [
-        220,
         100
       ]
     ],
@@ -384,15 +315,7 @@
       "final_parent": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2) + planned G1(parent↔GP1/GP2). The unknown other final parent is excluded.",
       "planned_g1": "Within the race budget, G1s shared by both grandparents count at full double-link value. One-sided G1s remain useful but are discounted by the configurable realization factor (default 60%).",
       "production_run": "The deeper GP ancestors only affect the run that creates the future parent; they do not remain in the final Ace lineage.",
-      "weighting_priority": "Direct white Sparks on GP1/GP2 are final-lineage GP factors and use projected GP proc odds. The deeper lineage is production support only and cannot be counted as direct Ace inheritance."
-    },
-    "preselection_weights": {
-      "candidate_affinity": 0.18,
-      "pink": 0.3,
-      "white_skill": 0.24,
-      "white_generation": 0.18,
-      "blue": 0.06,
-      "g1_potential": 0.04
+      "weighting_priority": "The weighted score uses mode_weights.future_grandparent for both preselection and final pair ranking. Production-run compatibility is only a balanced diagnostic/tie-breaker."
     },
     "gp_triple_preselection_thresholds": [
       [
@@ -412,7 +335,7 @@
         100
       ]
     ],
-    "single_g1_weight_default": 0.6
+    "weight_source": "Both individual preselection and final uma.moe GP-pair ranking derive from mode_weights.future_grandparent; this section only contains online-pair thresholds and planning parameters."
   },
   "transfer_helper": {
     "description": "Distribution-aware local-veteran cleanup analysis. Utility combines absolute score, proximity to the context leader, and a small percentile component. Keep requires elite utility or repeated competitive utility across multiple contexts and course profiles.",

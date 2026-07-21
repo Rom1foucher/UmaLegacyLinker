@@ -1,4 +1,4 @@
-# Modèle de score — état courant (V35)
+# Modèle de score — état courant
 
 La source de vérité est `default_parent_scoring.json` pour les pondérations et les courbes,
 et `default_skill_priorities.json` pour la valeur des white skills par profil. Ce document
@@ -44,11 +44,11 @@ diagnostic, mais n'est plus une composante additive du score parent.
 
 | Composante | Poids |
 |---|---:|
-| White skills | 42 % |
-| Aptitude de distance | 32 % |
+| White skills | 35 % |
+| Aptitude de distance | 29 % |
 | Autres aptitudes roses (terrain/style) | 7 % |
-| Unique verte | 7 % |
-| Blues | 8 % |
+| Blues | 20 % |
+| Unique verte | 5 % |
 | Race/scénario | 4 % |
 
 Le tri est lexicographique : le statut de distance est évalué avant le score pondéré. Une
@@ -81,17 +81,18 @@ des étoiles et pertinence distance/terrain/style, sans calcul de rang initial, 
 
 ### Paires GP1 + GP2 via uma.moe
 
-| Composante | Poids |
-|---|---:|
-| White Sparks propres aux deux GP | 26 % |
-| Pinks | 24 % |
-| Potentiel d'affinité du futur parent avec l'Ace | 22 % |
-| Soutien de génération white dans les deux lignées | 18 % |
-| Blues | 6 % |
-| Affinité du run de fabrication | 4 % |
+La recherche en ligne utilise exactement `mode_weights.future_grandparent`, comme la recherche
+locale et le Transfer Helper. Il n'existe plus de seconde table de poids propre à uma.moe.
 
-Cette recherche vise la fabrication d'un futur parent et reste distincte du calcul exact
-d'une paire finale pour l'Ace.
+Pour une paire de GP, les mêmes composantes sont adaptées au contexte :
+
+- `affinity` mesure la base exacte `pair(Ace,parent) + triple(...,GP1) + triple(...,GP2)` ;
+- `g1_potential` mesure le bonus G1 réalisable relativement au budget de courses prévu ;
+- pinks, blues, whites et uniques portent uniquement sur GP1/GP2 ;
+- `white_generation` porte sur leurs lignées actuelles, qui servent à fabriquer le parent.
+
+La compatibilité complète du run de fabrication reste calculée, mais uniquement comme diagnostic
+et départage secondaire. Elle n'est pas une composante cachée du score.
 
 ## Blues
 
@@ -444,10 +445,11 @@ obtenir ; hippodrome modéré (0,26) ; météo/terrain petits bonus (0,12–0,14
 
 ## Race et scenario Sparks
 
-Valeur de base volontairement faible (0,025 par palier d'étoiles ; scénario 0,06). Une race
-Spark donnant une green skill utile est décotée à 20 % de la valeur du skill
-(`granted_skill_multiplier`) : sa chance de transmission reste inférieure à celle du white
-spark direct.
+Valeur statistique de base volontairement faible (0,025 par palier d'étoiles ; scénario 0,06).
+Lorsqu'une Race Spark donne une skill utile, cette skill rejoint le moteur probabiliste des whites :
+taux de base `1/2/3 %` selon les étoiles, contre `3/6/9 %` pour une White Skill Spark directe.
+Les deux sources sont fusionnées si elles donnent la même skill. Il n'existe plus de multiplicateur
+arbitraire `granted_skill_multiplier`.
 
 ## Recherche uma.moe
 
@@ -469,8 +471,9 @@ potentiel final de la branche = base + bonus G1 prévu
 ```
 
 L'autre parent final de l'Ace n'étant pas connu, son lien avec `P` n'est pas inclus. La
-compatibilité complète du run de fabrication reste calculée comme diagnostic, à 4 % du
-classement GP.
+compatibilité complète du run de fabrication reste calculée comme diagnostic non pondéré. Sa valeur
+de départage équilibre les deux modificateurs individuels de GP au lieu de réutiliser un total global
+qui saturait presque toujours.
 
 Le mode de recherche d'un parent distant final utilise, lui, exactement le moteur à six
 membres décrit plus haut : aptitude initiale, six coefficients individuels et probabilités

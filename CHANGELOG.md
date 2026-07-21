@@ -4,6 +4,10 @@ This project uses feature-level semantic versioning. Small internal iterations a
 
 ## 1.5.0 — uma.moe Lineage Planner export
 
+- Unified future-grandparent weights across local ranking, Transfer Helper and uma.moe pair searches.
+- Removed the obsolete independent uma.moe GP-pair weight tables and migrated legacy overrides.
+- Added effective-weight diagnostics, unique-Spark scoring and separate affinity/G1 components to online GP pairs.
+- Kept production-run affinity as a balanced non-weighted diagnostic instead of a hidden saturated component.
 - Added a standalone, one-file Windows executable build with embedded default profiles and version metadata.
 - Added tag-driven GitHub releases containing the Windows executable and its SHA-256 checksum.
 - Added optional uma.moe API-key persistence protected by Windows DPAPI for the current user account.

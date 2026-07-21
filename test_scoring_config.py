@@ -16,7 +16,13 @@ from scoring_config import (
     validate_skill_priorities_config,
     write_json_object,
 )
-from uma_moe import MAX_FETCH_CANDIDATES, UmaMoeApiClient
+from uma_moe import (
+    MAX_FETCH_CANDIDATES,
+    UmaMoeApiClient,
+    _future_gp_pair_g1_score,
+    _future_gp_preselection_weights,
+    _future_gp_scoring_weights,
+)
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -189,6 +195,86 @@ class ScoringConfigTests(unittest.TestCase):
             "future_grandparent",
             migrated["aptitude_inheritance"]["partial_scoring"],
         )
+
+    def test_future_gp_weights_are_the_online_single_source_of_truth(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["mode_weights"]["future_grandparent"] = {
+            "affinity": 0.12,
+            "g1_potential": 0.09,
+            "blue": 0.25,
+            "pink": 0.20,
+            "white_skill": 0.18,
+            "white_generation": 0.15,
+            "unique": 0.01,
+        }
+        self.assertEqual(
+            _future_gp_scoring_weights(config),
+            config["mode_weights"]["future_grandparent"],
+        )
+        self.assertEqual(
+            _future_gp_preselection_weights(config),
+            {
+                "candidate_affinity": 0.12,
+                "g1_potential": 0.09,
+                "blue": 0.25,
+                "pink": 0.20,
+                "white_skill": 0.18,
+                "white_generation": 0.15,
+                "unique": 0.01,
+            },
+        )
+
+    def test_legacy_online_gp_weights_are_migrated_and_removed(self) -> None:
+        default = read_json_object(DEFAULT_SCORING)
+        migrated = migrate_scoring_overrides(
+            default,
+            {
+                "uma_moe_pair": {
+                    "weights": {
+                        "final_parent_affinity": 0.22,
+                        "production_run_affinity": 0.04,
+                        "pink": 0.24,
+                        "white_skill": 0.26,
+                        "white_generation": 0.18,
+                        "blue": 0.06,
+                    },
+                    "preselection_weights": {"blue": 0.50},
+                }
+            },
+        )
+        self.assertNotIn("weights", migrated["uma_moe_pair"])
+        self.assertNotIn("preselection_weights", migrated["uma_moe_pair"])
+        future = migrated["mode_weights"]["future_grandparent"]
+        self.assertEqual(future["affinity"], 0.22)
+        self.assertEqual(future["g1_potential"], 0.04)
+        self.assertEqual(future["blue"], 0.06)
+
+    def test_online_gp_g1_score_is_normalized_against_the_planned_budget(self) -> None:
+        self.assertEqual(
+            _future_gp_pair_g1_score(
+                {
+                    "planned_g1_budget": 15,
+                    "g1_bonus_per_link": 3,
+                    "planned_g1_bonus": 90,
+                }
+            ),
+            100.0,
+        )
+        self.assertEqual(
+            _future_gp_pair_g1_score(
+                {
+                    "planned_g1_budget": 15,
+                    "g1_bonus_per_link": 3,
+                    "planned_g1_bonus": 45,
+                }
+            ),
+            50.0,
+        )
+
+    def test_default_online_pair_section_has_no_independent_weights(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        self.assertNotIn("weights", config["uma_moe_pair"])
+        self.assertNotIn("preselection_weights", config["uma_moe_pair"])
 
     def test_default_white_skill_priorities_are_valid(self) -> None:
         validate_skill_priorities_config(read_json_object(DEFAULT_SKILL_PRIORITIES))

@@ -82,6 +82,45 @@ def migrate_scoring_overrides(
             future_mode.pop("distance_s", None)
             future_mode.pop("pink_other", None)
 
+    online_pair_overrides = migrated.get("uma_moe_pair")
+    if isinstance(online_pair_overrides, dict):
+        # V36–V39 exposed a second independent set of weights for uma.moe GP
+        # pairs. Consolidate it into the canonical future-grandparent mode so
+        # local ranking, online ranking and Transfer Helper cannot diverge.
+        legacy_online_weights = online_pair_overrides.get("weights")
+        if isinstance(legacy_online_weights, dict):
+            if not isinstance(override_modes, dict):
+                override_modes = {}
+                migrated["mode_weights"] = override_modes
+            future_mode = override_modes.get("future_grandparent")
+            if not isinstance(future_mode, dict):
+                future_mode = {}
+                override_modes["future_grandparent"] = future_mode
+            if not future_mode:
+                legacy_mapping = {
+                    "final_parent_affinity": "affinity",
+                    "production_run_affinity": "g1_potential",
+                    "blue": "blue",
+                    "pink": "pink",
+                    "white_skill": "white_skill",
+                    "white_generation": "white_generation",
+                    "unique": "unique",
+                }
+                for old_key, new_key in legacy_mapping.items():
+                    if old_key in legacy_online_weights:
+                        future_mode[new_key] = copy.deepcopy(
+                            legacy_online_weights[old_key]
+                        )
+        online_pair_overrides.pop("weights", None)
+        online_pair_overrides.pop("preselection_weights", None)
+        for obsolete_key in (
+            "production_affinity_thresholds",
+            "planned_g1_budget_default",
+            "final_parent_potential_thresholds",
+            "single_g1_weight_default",
+        ):
+            online_pair_overrides.pop(obsolete_key, None)
+
     race_factor_overrides = migrated.get("race_factor")
     if isinstance(race_factor_overrides, dict):
         # Granted Race-Spark skills now use their actual 1/2/3% inheritance
@@ -263,11 +302,38 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("race_saturation",),
         ("race_factor",),
         ("course_conditions", "floors"),
-        ("uma_moe_pair", "weights"),
-        ("uma_moe_pair", "preselection_weights"),
     )
     for path in required_numeric_mappings:
         _require_numeric_mapping(config, path)
+
+    required_mode_keys = {
+        "parent_branch": {
+            "distance_s", "pink_other", "white_skill", "race_scenario", "blue", "unique"
+        },
+        "parent_pair": {
+            "distance_s", "pink_other", "white_skill", "race_scenario", "blue", "unique"
+        },
+        "future_grandparent": {
+            "affinity", "g1_potential", "blue", "pink", "white_skill", "white_generation", "unique"
+        },
+    }
+    mode_weights = _require_dict(config, ("mode_weights",))
+    for mode, expected_keys in required_mode_keys.items():
+        weights = _require_dict(config, ("mode_weights", mode))
+        missing = sorted(expected_keys - set(weights))
+        unknown = sorted(set(weights) - expected_keys)
+        if missing:
+            raise ScoringConfigError(
+                f"mode_weights.{mode} doit définir : {', '.join(missing)}."
+            )
+        if unknown:
+            raise ScoringConfigError(
+                f"mode_weights.{mode} contient des composantes inconnues : {', '.join(unknown)}."
+            )
+        if sum(float(value) for value in weights.values()) <= 0:
+            raise ScoringConfigError(
+                f"mode_weights.{mode} doit contenir au moins un poids strictement positif."
+            )
 
     blue_by_distance = _require_dict(config, ("blue_stat_weights_by_distance",))
     blue_influence = _require_dict(config, ("blue_score_influence_by_distance",))
@@ -296,9 +362,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("affinity", "future_branch_base_thresholds"),
         ("affinity", "future_g1_thresholds"),
         ("uma_moe_pair", "final_branch_thresholds"),
-        ("uma_moe_pair", "production_affinity_thresholds"),
         ("uma_moe_pair", "candidate_g1_thresholds"),
-        ("uma_moe_pair", "final_parent_potential_thresholds"),
         ("uma_moe_pair", "production_run_affinity_thresholds"),
         ("uma_moe_pair", "gp_triple_preselection_thresholds"),
         ("aptitude_inheritance", "distance", "s_probability_curve"),

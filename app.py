@@ -1555,7 +1555,7 @@ class Application:
             "affinity": "Conversion de l'affinité brute et des G1 communes en score utile, avec plateaux.",
             "course_conditions": "Valeur des green skills lorsque la course sélectionnée les active.",
             "white_generation": "Valeur du support de lignée pour générer une white Spark sur le futur parent.",
-            "uma_moe_pair": "Répartition du score utilisé pour classer les paires GP1 local + GP2 uma.moe.",
+            "uma_moe_pair": "Paramètres de projection et paliers propres aux paires GP1 local + GP2 uma.moe. Les poids proviennent uniquement de mode_weights.future_grandparent.",
             "transfer_helper": "Seuils utilisés pour classer les vétérans à conserver, examiner ou transférer.",
         }
 
@@ -4021,18 +4021,20 @@ class Application:
                 "- seulement GP local : " + (", ".join(local_only) if local_only else "aucune"),
                 "- seulement GP distant : " + (", ".join(remote_only) if remote_only else "aucune"),
                 "",
-                "Compatibilité du run de fabrication — faible pondération :",
-                f"- Total : {production.get('total', 0)} = base {production.get('base', 0)} + bonus G1 {production.get('g1_bonus', 0)}",
+                "Compatibilité du run de fabrication — diagnostic non pondéré :",
+                f"- Total brut : {production.get('total', 0)} = base {production.get('base', 0)} + bonus G1 {production.get('g1_bonus', 0)}",
+                f"- Valeur équilibrée des deux GP : {float(production.get('scored_value') or 0):.1f}",
                 "",
                 "Décomposition du score :",
             ]
             label_map = {
-                "final_parent_affinity": "Affinité potentielle du parent final",
-                "production_run_affinity": "Compatibilité du run de fabrication",
+                "affinity": "Affinité de base du futur parent",
+                "g1_potential": "Potentiel G1 du futur parent",
                 "pink": "Pinks des deux GP",
                 "white_skill": "Whites propres des deux GP",
                 "white_generation": "Soutien de génération des whites",
                 "blue": "Blues des deux GP",
+                "unique": "Vertes / uniques des deux GP",
             }
             aptitude_dimensions = (details.get("pink") or {}).get("dimensions") or row.get("aptitude_summaries") or {}
             for dimension_key, dimension_label in (("surface", "TERRAIN"), ("style", "STYLE")):

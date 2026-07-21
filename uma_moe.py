@@ -40,6 +40,7 @@ from parent_optimizer import (
     _score_breakdown,
     _selected_weight_lookup,
     _static_condition_state,
+    _unique_score,
     _valid_grandparent_for_target_parent,
     _white_generation_support_score,
     _white_score,
@@ -51,6 +52,62 @@ from parent_optimizer import (
 DEFAULT_API_BASE = "https://uma.moe/api"
 DEFAULT_DOCS_URL = "https://uma.moe/api/docs"
 MAX_FETCH_CANDIDATES = 2000
+
+
+_FUTURE_GP_COMPONENT_KEYS = (
+    "affinity",
+    "g1_potential",
+    "blue",
+    "pink",
+    "white_skill",
+    "white_generation",
+    "unique",
+)
+
+
+def _future_gp_scoring_weights(config: dict[str, Any]) -> dict[str, float]:
+    """Return the single source of truth for future-GP scoring weights.
+
+    Local future-grandparent ranking, Transfer Helper and uma.moe pair ranking
+    must all use ``mode_weights.future_grandparent``. Older releases exposed a
+    second, independent ``uma_moe_pair.weights`` mapping; keeping two editable
+    weight sets made online results silently ignore the active profile.
+    """
+    configured = _mode_weights(config, "future_grandparent")
+    return {
+        key: max(0.0, float(configured.get(key, 0.0)))
+        for key in _FUTURE_GP_COMPONENT_KEYS
+    }
+
+
+def _future_gp_preselection_weights(config: dict[str, Any]) -> dict[str, float]:
+    """Map the final future-GP profile to individual-candidate preselection."""
+    weights = _future_gp_scoring_weights(config)
+    return {
+        "candidate_affinity": weights["affinity"],
+        "g1_potential": weights["g1_potential"],
+        "blue": weights["blue"],
+        "pink": weights["pink"],
+        "white_skill": weights["white_skill"],
+        "white_generation": weights["white_generation"],
+        "unique": weights["unique"],
+    }
+
+
+def _future_gp_pair_g1_score(final_parent_affinity: dict[str, Any]) -> float:
+    """Score the usable G1 plan independently from base character affinity.
+
+    A shared GP race can create two final-parent links, while a one-sided race
+    creates one discounted link. The score is normalized against the maximum
+    double-link bonus achievable with the configured race budget.
+    """
+    budget = max(0, int(final_parent_affinity.get("planned_g1_budget") or 0))
+    bonus_per_link = max(0.0, float(final_parent_affinity.get("g1_bonus_per_link") or 0.0))
+    maximum_bonus = budget * 2.0 * bonus_per_link
+    if maximum_bonus <= 0:
+        return 0.0
+    planned_bonus = max(0.0, float(final_parent_affinity.get("planned_g1_bonus") or 0.0))
+    return min(100.0, 100.0 * planned_bonus / maximum_bonus)
 
 
 class UmaMoeError(RuntimeError):
@@ -1596,8 +1653,11 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "friend_code", "trainer_name", "candidate", "rank_score",
         "final_parent_base", "planned_g1_budget", "planned_g1_bonus",
         "planned_g1_bonus_exact", "single_g1_weight", "final_parent_potential",
-        "production_run_affinity", "common_gp_g1", "local_only_g1", "remote_only_g1",
-        "blue", "pink", "white", "white_generation", "candidate_g1",
+        "affinity_component", "g1_potential_component", "production_run_affinity",
+        "production_run_scored_value", "common_gp_g1_count", "local_only_g1_count",
+        "remote_only_g1_count", "common_gp_g1_races", "local_only_g1_races",
+        "remote_only_g1_races", "blue", "pink", "white", "white_generation",
+        "unique", "candidate_g1",
         "updated_at", "follow_status",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
@@ -1738,25 +1798,19 @@ def rank_online_grandparent_pairs(
         )
 
         online_cfg = config.get("uma_moe_pair") or {}
-        mode_weights = online_cfg.get("weights") or {
-            "final_parent_affinity": 0.22,
-            "production_run_affinity": 0.04,
-            "pink": 0.24,
-            "white_skill": 0.26,
-            "white_generation": 0.18,
-            "blue": 0.06,
-        }
-        preselection_weights = online_cfg.get("preselection_weights") or {
-            "candidate_affinity": 0.18,
-            "pink": 0.30,
-            "white_skill": 0.24,
-            "white_generation": 0.18,
-            "blue": 0.06,
-            "g1_potential": 0.04,
-        }
+        mode_weights = _future_gp_scoring_weights(config)
+        preselection_weights = _future_gp_preselection_weights(config)
+        log(
+            "Pondération future GP effective (locale / Transfer Helper / uma.moe) : "
+            + ", ".join(f"{key}={value:.1%}" for key, value in mode_weights.items())
+        )
         affinity_cfg = config.get("affinity") or {}
         g1_bonus_value = int(affinity_cfg.get("g1_common_bonus", 3))
-        final_thresholds = online_cfg.get("final_parent_potential_thresholds") or affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
+        final_thresholds = (
+            online_cfg.get("final_branch_thresholds")
+            or affinity_cfg.get("future_branch_base_thresholds")
+            or [[0, 0], [48, 100]]
+        )
         production_thresholds = online_cfg.get("production_run_affinity_thresholds") or affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
         triple_thresholds = online_cfg.get("gp_triple_preselection_thresholds") or [[0, 0], [8, 35], [16, 70], [24, 100]]
         g1_thresholds = online_cfg.get("candidate_g1_thresholds") or [[0, 0], [6, 30], [12, 65], [16, 85], [20, 100]]
@@ -1792,6 +1846,7 @@ def rank_online_grandparent_pairs(
                 members, weight_lookup, config, race_skills
             )
             white_generation, _ = _white_generation_support_score(_lineage_members(member), weight_lookup, config)
+            unique, _ = _unique_score(members, config, "future_grandparent")
             g1_count = len(_member_g1(member))
             components = {
                 "candidate_affinity": _affinity_score(triple_raw, triple_thresholds),
@@ -1800,6 +1855,7 @@ def rank_online_grandparent_pairs(
                 "white_generation": white_generation,
                 "blue": blue,
                 "g1_potential": _affinity_score(g1_count, g1_thresholds),
+                "unique": unique,
             }
             breakdown = _score_breakdown(components, preselection_weights)
             return {
@@ -1856,7 +1912,7 @@ def rank_online_grandparent_pairs(
                 planned_g1_budget,
                 single_g1_weight,
             )
-            final_parent_affinity["full_score_at"] = final_full_score_at
+            final_parent_affinity["base_full_score_at"] = final_full_score_at
             production_affinity = _full_production_affinity(
                 resolver,
                 target_parent_chara,
@@ -1865,10 +1921,21 @@ def rank_online_grandparent_pairs(
                 g1_bonus_value,
             )
             production_affinity["full_score_at"] = production_full_score_at
-            # Both sides vary in exhaustive mode, therefore the complete farming-run
-            # compatibility is the relevant low-weight diagnostic.
-            production_affinity["scored_value"] = production_affinity["total"]
-            production_affinity["scored_mode"] = "complete_farming_run"
+            gp1_modifier = float(
+                (production_affinity.get("gp1_inheritance_modifier") or {}).get("total") or 0.0
+            )
+            gp2_modifier = float(
+                (production_affinity.get("gp2_inheritance_modifier") or {}).get("total") or 0.0
+            )
+            production_affinity["scored_value"] = (
+                0.60 * min(gp1_modifier, gp2_modifier)
+                + 0.40 * ((gp1_modifier + gp2_modifier) / 2.0)
+            )
+            production_affinity["scored_mode"] = "balanced_individual_gp_modifiers"
+            production_affinity["score"] = _affinity_score(
+                production_affinity["scored_value"], production_thresholds
+            )
+            production_affinity["included_in_weighted_score"] = False
 
             direct_members = [
                 (gp1, "grandparent", "local_gp1"),
@@ -1883,13 +1950,19 @@ def rank_online_grandparent_pairs(
                 direct_members, weight_lookup, config, race_skills
             )
             white_generation, white_generation_detail = _white_generation_support_score(six_members, weight_lookup, config)
+            unique, unique_detail = _unique_score(
+                direct_members, config, "future_grandparent"
+            )
+            g1_potential = _future_gp_pair_g1_score(final_parent_affinity)
+            final_parent_affinity["g1_potential_score"] = g1_potential
             components = {
-                "final_parent_affinity": _affinity_score(final_parent_affinity["potential_total"], final_thresholds),
-                "production_run_affinity": _affinity_score(production_affinity["scored_value"], production_thresholds),
+                "affinity": _affinity_score(final_parent_affinity["base"], final_thresholds),
+                "g1_potential": g1_potential,
                 "pink": pink,
                 "white_skill": white,
                 "white_generation": white_generation,
                 "blue": blue,
+                "unique": unique,
             }
             breakdown = _score_breakdown(components, mode_weights)
             row: dict[str, Any] = {
@@ -1914,6 +1987,22 @@ def rank_online_grandparent_pairs(
                     "fixed_grandparent": _identity(gp1),
                     "final_branch_affinity": {**final_parent_affinity, "total": final_parent_affinity["potential_total"]},
                     "component_details": {
+                        "affinity": {
+                            "raw_base": final_parent_affinity["base"],
+                            "thresholds": final_thresholds,
+                            "score": components["affinity"],
+                            "formula": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2)",
+                        },
+                        "g1_potential": {
+                            "planned_bonus": final_parent_affinity["planned_g1_bonus"],
+                            "maximum_bonus_for_budget": (
+                                final_parent_affinity["planned_g1_budget"]
+                                * 2
+                                * final_parent_affinity["g1_bonus_per_link"]
+                            ),
+                            "score": components["g1_potential"],
+                            "formula": "100 × planned G1 bonus / maximum double-link bonus for the configured race budget",
+                        },
                         "blue": blue_detail,
                         "pink": {
                             **pink_detail,
@@ -1927,6 +2016,7 @@ def rank_online_grandparent_pairs(
                             **white_generation_detail,
                             "evaluation_context": "intermediate_run_that_creates_target_parent",
                         },
+                        "unique": unique_detail,
                     },
                 })
             return row
@@ -1945,7 +2035,14 @@ def rank_online_grandparent_pairs(
             if exhaustive_pairs and (processed % max(1, len(selected_remotes) * 10) == 0 or processed == total_possible):
                 log(f"Paires évaluées : {processed}/{total_possible} — {len(summaries)} valides.")
 
-        summaries.sort(key=lambda row: (row["score"], row["final_parent_affinity"]["potential_total"]), reverse=True)
+        summaries.sort(
+            key=lambda row: (
+                row["score"],
+                row["final_parent_affinity"]["potential_total"],
+                row["production_affinity"]["scored_value"],
+            ),
+            reverse=True,
+        )
         detail_count = max(1, min(int(top_n), 500))
         top: list[dict[str, Any]] = []
         for summary in summaries[:detail_count]:
@@ -1959,7 +2056,7 @@ def rank_online_grandparent_pairs(
     rankings_json_path = output_dir / "uma_moe_grandparent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 5,
+            "schema_version": 6,
             "generated_at_utc": generated,
             "source": "uma.moe public API or imported API response",
             "api_operation": api_operation,
@@ -1980,7 +2077,7 @@ def rank_online_grandparent_pairs(
             "normalization": normalization_diag,
             "condition_diagnostics": condition_diag,
             "future_grandparent_factor_model": {
-                "meaning": "Direct pink/white/blue factors on selected GP1/GP2 use the simple future-grandparent quality model. No Inspiration proc probability, initial aptitude or P(S) is calculated. Their current parents contribute only to separate white-generation support for the intermediate parent-production run.",
+                "meaning": "Direct pink/white/blue/unique factors on selected GP1/GP2 use the simple future-grandparent quality model. No Inspiration proc probability, initial aptitude or P(S) is calculated. Their current parents contribute only to separate white-generation support for the intermediate parent-production run.",
                 "parameters": config.get("future_grandparent_heuristics") or {},
                 "saturation": config.get("white_saturation") or {},
             },
@@ -1992,7 +2089,12 @@ def rank_online_grandparent_pairs(
         "scoring": {
             "weights": mode_weights,
             "preselection_weights": preselection_weights,
-            "logic": "Preselect strong local/remote grandparents, then exhaustively score every cross-pair for final-parent affinity, factors, white stacking and low-weight farming compatibility.",
+            "weight_source": "mode_weights.future_grandparent",
+            "logic": (
+                "The same future-grandparent profile drives individual preselection and final uma.moe pair ranking. "
+                "Base character affinity and planned G1 support are separate components; production-run compatibility "
+                "is retained as a diagnostic/tie-breaker and is not a hidden weighted component."
+            ),
         },
         "results": top,
     }
@@ -2023,7 +2125,10 @@ def rank_online_grandparent_pairs(
             "planned_g1_bonus_exact": final_aff["planned_g1_bonus_exact_if_all_won"],
             "single_g1_weight": final_aff["single_g1_weight"],
             "final_parent_potential": round(float(final_aff["potential_total"]), 3),
+            "affinity_component": round(row["components"]["affinity"], 2),
+            "g1_potential_component": round(row["components"]["g1_potential"], 2),
             "production_run_affinity": row["production_affinity"]["total"],
+            "production_run_scored_value": round(float(row["production_affinity"]["scored_value"]), 3),
             "common_gp_g1_count": final_aff["common_g1_count"],
             "local_only_g1_count": final_aff["fixed_only_g1_count"],
             "remote_only_g1_count": final_aff["candidate_only_g1_count"],
@@ -2034,6 +2139,7 @@ def rank_online_grandparent_pairs(
             "pink": round(row["components"]["pink"], 2),
             "white": round(row["components"]["white_skill"], 2),
             "white_generation": round(row["components"]["white_generation"], 2),
+            "unique": round(row["components"]["unique"], 2),
             "candidate_g1": row["candidate_g1_count"],
             "updated_at": online.get("updated_at"),
             "follow_status": online.get("follow_status"),
@@ -2054,6 +2160,12 @@ def rank_online_grandparent_pairs(
             "evaluated_pair_count": len(summaries),
             "top_count": len(top),
             "pair_mode": pair_mode,
+            "scoring": {
+                "weight_source": "mode_weights.future_grandparent",
+                "weights": mode_weights,
+                "preselection_weights": preselection_weights,
+                "production_run_affinity_included_in_weighted_score": False,
+            },
         }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )

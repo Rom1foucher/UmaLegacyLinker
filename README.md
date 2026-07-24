@@ -61,9 +61,40 @@ Two online search modes are available:
 - remote grandparent paired with a local GP;
 - remote final parent paired with a local parent.
 
+Future-grandparent search can optionally receive a complete **opposing parent branch**, either
+from the local veteran collection or imported from an application parent-pair/raw uma.moe JSON.
+When present, every GP1+GP2 candidate is inserted under the not-yet-trained target parent and
+ranked against that fixed branch with the same six-member engine as a final parent pair. The
+future parent's own unknown Sparks remain empty; the selected GPs, the opposing branch and a
+projected G1 plan are evaluated exactly. Leaving the field empty preserves the generic future-GP model.
+
 The active Ace, target parent, profile and course conditions come from the **Lineage Optimisation** tab and are displayed in the uma.moe tab before the search starts.
 
 Friend IDs can be copied directly from result tables. Online retrieval is capped at **2,000 candidates per search**.
+For final-parent searches, this budget is divided between a Distance cohort, a target-surface
+cohort when the Ace needs it, and a broad White-preferred cohort. The cohorts are merged and
+deduplicated before exact local × remote pair scoring; they guide sampling rather than acting
+as final hard constraints.
+
+The target-surface cohort can be disabled per search in the uma.moe panel, or by setting
+`uma_moe_parent_search.retrieval.surface_cohort_enabled` to `false` in the active scoring
+profile. This only changes API sampling; target-surface scoring remains active. In manual
+pair mode, the locked local parent/GP is resolved before retrieval. If the already-known
+surface Sparks start the Ace at A, no automatic Turf/Dirt cohort is emitted and a persisted
+remote-Main Surface constraint is suppressed as redundant.
+
+Contextual future-GP searches use the same global cap but subtract the opposing branch's known
+aptitude coverage and, in manual mode, the locked local GP's own Sparks first. The locked GP's
+ancestors are not counted because they sit outside the final six-member lineage. For example,
+7 known target-surface stars toward a 10-star minimum leave only a 3-star surface deficit, so
+most of the released surface budget moves to Distance and broad White discovery. Whites already
+carried by the fixed branch are softly down-ranked for retrieval, not excluded; the final scorer
+still combines duplicate copies through cumulative probability.
+
+The search panel only exposes filters supported by `/api/v3/search`: soft White preferences,
+optional target-surface/distance/style constraints on the remote Main, and optional minimum
+Blue/White quality for the full remote lineage. The generated UQL text is kept only as an audit
+and manual-copy representation because the public endpoint has no free-text UQL parameter.
 
 Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format. In the planner, use **Save / Load** to import the generated file. Local branches retain their full `data.json` veteran and succession records; remote branches export every Spark and lineage member available from the API result.
 
@@ -86,7 +117,9 @@ The model is configurable and intentionally differs by workflow.
 - G1 overlap;
 - current-lineage support for generating useful White Sparks.
 
-This avoids pretending that the full final lineage is already known during a future-GP search.
+This avoids pretending that the full final lineage is already known during a generic future-GP
+search. When the opposing branch is explicitly supplied, the application instead uses the exact
+final-pair model for every candidate GP pair.
 
 See [`docs/SCORING.md`](docs/SCORING.md) for formulas and implementation details.
 
@@ -145,7 +178,8 @@ Practical examples:
 - increase the Long Stamina preference to favour Stamina lineages in Long races;
 - reduce Blue Spark influence for Sprint to make weak Blue Sparks less punitive there;
 - change the Distance-S utility curve to adjust the value of 40%, 50% or 60% `P(S)`;
-- raise Distance-B compensation thresholds to accept B-start pairs only with exceptional support.
+- raise Distance-B compensation thresholds to accept B-start pairs only with exceptional support;
+- tune the target-surface component or its minimum/preferred ranks (B/A by default) for low-natural-aptitude Aces.
 
 The effective profiles used by a run are exported as:
 

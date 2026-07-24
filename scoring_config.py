@@ -63,11 +63,37 @@ def migrate_scoring_overrides(
     with the simple future-grandparent model.
     """
     migrated = copy.deepcopy(overrides)
+    try:
+        source_schema = int(migrated.get("schema_version") or 0)
+    except (TypeError, ValueError):
+        source_schema = 0
+    if migrated and "schema_version" in default:
+        migrated["schema_version"] = copy.deepcopy(default["schema_version"])
     for obsolete_key in ("pink_star_quality", "pink_dimension_weights", "pink_need_multiplier", "distance_s", "white_star_quality"):
         if obsolete_key not in default:
             migrated.pop(obsolete_key, None)
     override_modes = migrated.get("mode_weights")
     if isinstance(override_modes, dict):
+        if source_schema < 17:
+            # Before V17, target surface and running style shared pink_other.
+            # Split an explicit legacy override according to the new defaults so
+            # upgrading cannot silently add surface weight or change the user's
+            # total pink allocation.
+            default_modes = default.get("mode_weights") or {}
+            for mode in ("parent_branch", "parent_pair"):
+                mode_overrides = override_modes.get(mode)
+                if not isinstance(mode_overrides, dict):
+                    continue
+                if "surface_aptitude" in mode_overrides or "pink_other" not in mode_overrides:
+                    continue
+                legacy_other = float(mode_overrides.get("pink_other") or 0.0)
+                default_mode = default_modes.get(mode) or {}
+                surface_default = max(0.0, float(default_mode.get("surface_aptitude") or 0.0))
+                other_default = max(0.0, float(default_mode.get("pink_other") or 0.0))
+                split_total = surface_default + other_default
+                if split_total > 0:
+                    mode_overrides["surface_aptitude"] = legacy_other * surface_default / split_total
+                    mode_overrides["pink_other"] = legacy_other * other_default / split_total
         future_mode = override_modes.get("future_grandparent")
         if isinstance(future_mode, dict):
             # V31–V35 temporarily split future-GP pinks into the parent-specific
@@ -157,10 +183,12 @@ def migrate_scoring_overrides(
         if "pink" in legacy:
             pink_total = float(legacy["pink"])
             distance_default = float(baseline.get("distance_s", 0.0))
+            surface_default = float(baseline.get("surface_aptitude", 0.0))
             other_default = float(baseline.get("pink_other", 0.0))
-            default_total = distance_default + other_default
+            default_total = distance_default + surface_default + other_default
             if default_total > 0:
                 mapped["distance_s"] = pink_total * distance_default / default_total
+                mapped["surface_aptitude"] = pink_total * surface_default / default_total
                 mapped["pink_other"] = pink_total * other_default / default_total
         override_modes[target_mode] = mapped
     override_modes.pop("parent_final", None)
@@ -186,7 +214,11 @@ def diff_from_default(default: Any, current: Any) -> Any:
 
 def build_overrides(default: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     diff = diff_from_default(default, current)
-    return {} if diff is _MISSING else diff
+    if diff is _MISSING:
+        return {}
+    if "schema_version" in default:
+        diff["schema_version"] = copy.deepcopy(default["schema_version"])
+    return diff
 
 
 def iter_leaf_paths(value: Any, prefix: tuple[str, ...] = ()) -> Iterable[tuple[tuple[str, ...], Any]]:
@@ -290,6 +322,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("aptitude_inheritance", "distance", "b_compensation"),
         ("aptitude_inheritance", "surface", "below_b"),
         ("aptitude_inheritance", "style", "below_b"),
+        ("uma_moe_parent_search", "preselection"),
         ("future_grandparent_heuristics", "pink_dimension_weights"),
         ("future_grandparent_heuristics", "pink_star_quality"),
         ("future_grandparent_heuristics", "pink_need_multiplier"),
@@ -308,10 +341,10 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
 
     required_mode_keys = {
         "parent_branch": {
-            "distance_s", "pink_other", "white_skill", "race_scenario", "blue", "unique"
+            "distance_s", "surface_aptitude", "pink_other", "white_skill", "race_scenario", "blue", "unique"
         },
         "parent_pair": {
-            "distance_s", "pink_other", "white_skill", "race_scenario", "blue", "unique"
+            "distance_s", "surface_aptitude", "pink_other", "white_skill", "race_scenario", "blue", "unique"
         },
         "future_grandparent": {
             "affinity", "g1_potential", "blue", "pink", "white_skill", "white_generation", "unique"
@@ -429,11 +462,84 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
                 raise ScoringConfigError(
                     f"aptitude_inheritance.{dimension}.s_probability_curve[{index}][1] ne peut pas dépasser 100."
                 )
+    surface_section = _require_dict(config, ("aptitude_inheritance", "surface"))
+    surface_rank_policy: dict[str, int] = {}
+    for key in ("minimum_initial_rank", "preferred_initial_rank"):
+        value = surface_section.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 7:
+            raise ScoringConfigError(
+                f"aptitude_inheritance.surface.{key} doit être un rang entier compris entre 1 (G) et 7 (A)."
+            )
+        surface_rank_policy[key] = value
+    if surface_rank_policy["minimum_initial_rank"] > surface_rank_policy["preferred_initial_rank"]:
+        raise ScoringConfigError(
+            "aptitude_inheritance.surface.minimum_initial_rank ne peut pas dépasser preferred_initial_rank."
+        )
     for key in ("minimum_probability_a", "minimum_probability_s"):
         value = get_path_value(config, ("aptitude_inheritance", "distance", "b_compensation", key))
         if float(value) > 1:
             raise ScoringConfigError(
                 f"aptitude_inheritance.distance.b_compensation.{key} ne peut pas dépasser 1."
+            )
+
+    _require_dict(config, ("uma_moe_parent_search",))
+    retrieval = _require_dict(config, ("uma_moe_parent_search", "retrieval"))
+    for key in ("enabled", "surface_cohort_enabled"):
+        if not isinstance(retrieval.get(key), bool):
+            raise ScoringConfigError(
+                f"uma_moe_parent_search.retrieval.{key} doit valoir true ou false."
+            )
+    for key, value in retrieval.items():
+        if key in {"enabled", "surface_cohort_enabled"}:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ScoringConfigError(
+                f"uma_moe_parent_search.retrieval.{key} doit être numérique."
+            )
+    for section_name in ("retrieval", "preselection"):
+        section = _require_dict(config, ("uma_moe_parent_search", section_name))
+        for key, value in section.items():
+            if key in {
+                "enabled",
+                "surface_cohort_enabled",
+                "balanced_branch_divisor",
+                "contextual_distance_star_target",
+            }:
+                continue
+            if float(value) > 1:
+                raise ScoringConfigError(
+                    f"uma_moe_parent_search.{section_name}.{key} ne peut pas dépasser 1."
+                )
+    divisor = retrieval.get("balanced_branch_divisor")
+    if (
+        isinstance(divisor, bool)
+        or not isinstance(divisor, (int, float))
+        or float(divisor) <= 0
+    ):
+        raise ScoringConfigError(
+            "uma_moe_parent_search.retrieval.balanced_branch_divisor doit être strictement positif."
+        )
+    contextual_distance_target = retrieval.get("contextual_distance_star_target", 6)
+    if (
+        isinstance(contextual_distance_target, bool)
+        or not isinstance(contextual_distance_target, int)
+        or not 1 <= contextual_distance_target <= 18
+    ):
+        raise ScoringConfigError(
+            "uma_moe_parent_search.retrieval.contextual_distance_star_target "
+            "doit être un entier compris entre 1 et 18."
+        )
+    contextual_opponent = _require_dict(
+        config, ("uma_moe_pair", "contextual_opponent")
+    )
+    for key, value in contextual_opponent.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ScoringConfigError(
+                f"uma_moe_pair.contextual_opponent.{key} doit être numérique."
+            )
+        if float(value) > 1:
+            raise ScoringConfigError(
+                f"uma_moe_pair.contextual_opponent.{key} ne peut pas dépasser 1."
             )
 
     modes = _require_dict(config, ("course_conditions", "modes"))

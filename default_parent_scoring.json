@@ -1,10 +1,11 @@
 {
-  "schema_version": 16,
-  "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Future-GP mode keeps the simpler direct-factor heuristic and is now the single source of truth for local, Transfer Helper and uma.moe GP-pair weights. Distance-S probability and distinct white-skill inheritance use configurable diminishing-return utility curves; Blue Sparks remain affinity-independent.",
+  "schema_version": 19,
+  "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Distinct white-skill inheritance uses a configurable diminishing-return utility curve; Blue Sparks remain affinity-independent.",
   "mode_weights": {
     "parent_branch": {
       "distance_s": 0.22,
-      "pink_other": 0.1,
+      "surface_aptitude": 0.07,
+      "pink_other": 0.03,
       "white_skill": 0.47,
       "race_scenario": 0.04,
       "blue": 0.08,
@@ -12,7 +13,8 @@
     },
     "parent_pair": {
       "distance_s": 0.29,
-      "pink_other": 0.07,
+      "surface_aptitude": 0.05,
+      "pink_other": 0.02,
       "white_skill": 0.35,
       "race_scenario": 0.04,
       "blue": 0.2,
@@ -311,6 +313,13 @@
         100
       ]
     ],
+    "contextual_opponent": {
+      "white_retrieval_coverage_decay": 0.75,
+      "white_preselection_coverage_decay": 0.75,
+      "preselection_affinity_weight": 0.01,
+      "preselection_g1_weight": 0.01,
+      "preselection_white_generation_weight": 0.02
+    },
     "formula_notes": {
       "final_parent": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2) + planned G1(parent↔GP1/GP2). The unknown other final parent is excluded.",
       "planned_g1": "Within the race budget, G1s shared by both grandparents count at full double-link value. One-sided G1s remain useful but are discounted by the configurable realization factor (default 60%).",
@@ -336,6 +345,28 @@
       ]
     ],
     "weight_source": "Both individual preselection and final uma.moe GP-pair ranking derive from mode_weights.future_grandparent; this section only contains online-pair thresholds and planning parameters."
+  },
+  "uma_moe_parent_search": {
+    "description": "Candidate-retrieval and branch-preselection policy for remote Ace parents. It prevents a single white-sorted 2,000-record sample or a single weighted top-N from discarding the aptitude branches required by the final six-member pair.",
+    "retrieval": {
+      "enabled": true,
+      "surface_cohort_enabled": true,
+      "distance_share": 0.45,
+      "surface_share_below_minimum": 0.4,
+      "surface_share_at_minimum": 0.2,
+      "surface_share_at_preferred": 0.0,
+      "broad_minimum_share": 0.15,
+      "balanced_branch_divisor": 2.0,
+      "contextual_distance_star_target": 6,
+      "contextual_distance_need_floor": 0.25,
+      "contextual_surface_reallocation_to_distance": 0.7
+    },
+    "preselection": {
+      "distance_share": 0.35,
+      "surface_share_below_minimum": 0.4,
+      "surface_share_at_minimum": 0.2,
+      "surface_share_at_preferred": 0.0
+    }
   },
   "transfer_helper": {
     "description": "Distribution-aware local-veteran cleanup analysis. Utility combines absolute score, proximity to the context leader, and a small percentile component. Keep requires elite utility or repeated competitive utility across multiple contexts and course profiles.",
@@ -392,6 +423,8 @@
       "start_b_s_probability_weight": 35,
       "below_b": {
         "base_score": 0,
+        "initial_minimum_readiness_weight": 0,
+        "minimum_probability_weight": 0,
         "a_probability_weight": 0,
         "s_probability_weight": 0
       },
@@ -429,6 +462,8 @@
       ]
     },
     "surface": {
+      "minimum_initial_rank": 6,
+      "preferred_initial_rank": 7,
       "start_a_base_score": 80,
       "start_a_s_probability_weight": 20,
       "start_b_base_score": 55,
@@ -436,8 +471,10 @@
       "start_b_s_probability_weight": 15,
       "below_b": {
         "base_score": 10,
-        "a_probability_weight": 25,
-        "s_probability_weight": 10
+        "initial_minimum_readiness_weight": 45,
+        "minimum_probability_weight": 25,
+        "a_probability_weight": 15,
+        "s_probability_weight": 5
       },
       "s_probability_curve": [
         [
@@ -458,6 +495,8 @@
       "start_b_s_probability_weight": 5,
       "below_b": {
         "base_score": 10,
+        "initial_minimum_readiness_weight": 0,
+        "minimum_probability_weight": 0,
         "a_probability_weight": 30,
         "s_probability_weight": 5
       },

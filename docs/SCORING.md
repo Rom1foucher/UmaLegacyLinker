@@ -31,7 +31,8 @@ Les profils effectifs sont copiés dans le dossier de sortie sous les noms
 |---|---:|
 | White skills | 47 % |
 | Aptitude de distance | 22 % |
-| Autres aptitudes roses (terrain/style) | 10 % |
+| Aptitude du terrain cible | 7 % |
+| Aptitude de style | 3 % |
 | Unique verte | 9 % |
 | Blues | 8 % |
 | Race/scénario | 4 % |
@@ -46,7 +47,8 @@ diagnostic, mais n'est plus une composante additive du score parent.
 |---|---:|
 | White skills | 35 % |
 | Aptitude de distance | 29 % |
-| Autres aptitudes roses (terrain/style) | 7 % |
+| Aptitude du terrain cible | 5 % |
+| Aptitude de style | 2 % |
 | Blues | 20 % |
 | Unique verte | 5 % |
 | Race/scénario | 4 % |
@@ -55,9 +57,37 @@ Le tri est lexicographique : le statut de distance est évalué avant le score p
 paire qui commence la run à Distance A est donc toujours prioritaire sur une paire Distance B
 non compensée, même si cette dernière possède davantage de whites.
 
-À statut identique, le **score pondéré global** est désormais prioritaire sur la probabilité
-brute de S. `P(S)` est déjà intégrée au score via une courbe saturante ; elle ne doit donc pas
-écraser de bien meilleures whites ou blues pour un écart marginal proche du plafond pratique.
+À statut distance identique, le terrain vérifie ensuite son minimum configuré, B par défaut.
+Les départs B et A restent dans le même palier : le **score pondéré global** les départage et
+une très bonne lignée peut donc compenser B face à A. Un départ sous B est classé derrière les
+paires qui atteignent ce minimum, mais même un excellent terrain ne peut jamais rattraper un
+statut de distance inférieur. La préférence A est aussi intégrée au score via la composante
+terrain ; elle n'est pas un gate supplémentaire.
+
+Le score pondéré reste prioritaire sur la probabilité brute de S. `P(S)` est déjà intégrée au
+score via une courbe saturante ; elle ne doit donc pas écraser de bien meilleures whites ou
+blues pour un écart marginal proche du plafond pratique.
+
+La recherche uma.moe ne dépend plus d'un unique échantillon principalement ordonné par les
+préférences White. Le même plafond de 2 000 records est partagé entre trois cohortes
+configurables : distance, terrain cible et recherche large/Whites. Pour une aptitude terrain F
+visant B, le besoin final est 10★ ; la cohorte terrain demande par défaut au moins 5★ sur la
+branche distante afin de rechercher des moitiés de paire plausibles sans imposer ce seuil au
+classement final. Les résultats sont fusionnés et dédupliqués.
+
+La cohorte Surface peut être désactivée pour une recherche depuis l'onglet uma.moe, ou par le
+réglage `uma_moe_parent_search.retrieval.surface_cohort_enabled` du profil actif. Cela ne coupe
+jamais la composante de score Surface : seule la réservation d'appels API Dirt/Turf disparaît.
+En mode paire manuelle, le plan soustrait aussi les Sparks du parent local verrouillé avant de
+créer les cohortes. Si cette branche suffit déjà à démarrer en A, aucune cohorte Surface n'est
+émise et une éventuelle ancienne contrainte stricte Surface sur le Main distant est ignorée.
+
+Avant le produit cartésien local × distant, des places sont également réservées aux branches
+riches en distance et en terrain. Cette présélection diversifiée évite qu'une branche nécessaire
+à la combinaison finale disparaisse simplement parce que son score White individuel est moins
+élevé. Sous le minimum terrain, le score mesure maintenant la progression en étoiles vers B et
+la probabilité d'atteindre B par Inspiration ; 0★ et 7★ ne partagent donc plus artificiellement
+le même plancher.
 
 L'affinité globale ◎/〇/△ n'est pas pondérée. Les liens utiles sont déjà intégrés directement
 dans les probabilités de proc des aptitudes roses.
@@ -93,6 +123,34 @@ Pour une paire de GP, les mêmes composantes sont adaptées au contexte :
 
 La compatibilité complète du run de fabrication reste calculée, mais uniquement comme diagnostic
 et départage secondaire. Elle n'est pas une composante cachée du score.
+
+### Parent opposé fixé — score marginal exact
+
+La recherche GP accepte optionnellement une branche de parent opposée complète, locale ou importée.
+Dans ce mode, le modèle heuristique précédent ne classe plus les paires finales : l'application
+construit le parent à produire avec GP1 + GP2, laisse ses propres Sparks encore inconnues vides,
+puis appelle `evaluate_parent_pair(Ace, parent projeté, parent opposé)`.
+
+Le score recalcule donc sur les six membres visibles :
+
+- les rangs initiaux et `P(A)` / `P(S)` des aptitudes ;
+- les probabilités cumulées des whites, avec rendement décroissant des doublons ;
+- les blues, uniques et Race/Scenario Sparks ;
+- les six coefficients individuels d'affinité ;
+- les cinq liens G1 de la paire finale.
+
+Le parent à produire n'existant pas encore, son historique G1 est projeté dans la limite du budget
+configuré : les courses communes à deux ou trois membres visibles sont choisies d'abord, puis une
+part configurable des courses à lien unique. Cette hypothèse est exposée dans les diagnostics.
+Les parents actuels de GP1/GP2 restent exclus de la lignée finale et ne servent qu'au diagnostic
+`white_generation` de la run intermédiaire.
+
+Avant le scoring final, l'échantillonnage API soustrait les étoiles déjà apportées par le parent
+opposé. Avec un GP local verrouillé, ses propres Sparks sont également soustraites, mais jamais
+celles de ses parents, qui sont hors de la lignée finale. Le budget d'une dimension déjà couverte
+est réalloué principalement à la Distance, puis à la recherche large. Les whites déjà présentes
+sont seulement dépriorisées dans l'UQL/API ; elles ne sont jamais blacklistées et conservent leur
+valeur probabiliste exacte au classement final.
 
 ## Blues
 
@@ -286,10 +344,12 @@ Les paires sont triées selon :
 
 ```text
 1. statut de viabilité distance
-2. score pondéré global
-3. score white
-4. score blue
-5. probabilité brute d'atteindre S, comme départage
+2. minimum de terrain atteint ou non
+3. score pondéré global
+4. score white
+5. score blue
+6. probabilité brute d'atteindre le rang terrain préféré, comme départage
+7. probabilité brute d'atteindre S, comme dernier départage
 ```
 
 Statuts de paire finale :
@@ -307,9 +367,18 @@ avec une exigence moindre.
 
 ### Terrain
 
+- politique fournie : B minimum (`minimum_initial_rank = 6`), A préféré
+  (`preferred_initial_rank = 7`) ;
 - départ A : `80 + 20 × P(S)` ;
 - départ B : `55 + 30 × P(A+) + 15 × P(S)` ;
-- sous B : faible score résiduel, sans gate de viabilité.
+- sous B : faible score résiduel et statut `surface_below_minimum` ;
+- départ B : statut toléré `surface_minimum_met` ;
+- départ A : statut idéal `surface_preferred_met`.
+
+Le minimum est un gate secondaire appliqué après la distance. La préférence A reste souple :
+un terrain B peut passer devant un terrain A si ses autres Sparks sont assez meilleures. Les
+rangs minimum/préféré, les bases, les poids de probabilité et le poids global de la composante
+sont tous modifiables dans le profil.
 
 ### Style
 
@@ -317,9 +386,11 @@ avec une exigence moindre.
 - départ B : `70 + 25 × P(A+) + 5 × P(S)` ;
 - sous B : faible score résiduel, sans gate de viabilité.
 
-Dans le score rose d'une paire finale, la répartition est : distance 72 %, terrain 18 %,
-style 10 %. Surface/style ne peuvent jamais compenser un statut de distance inférieur, car le
-tri de viabilité intervient avant le score additif.
+Le score brut rose conserve sa répartition diagnostique distance/terrain/style. Pour le
+classement parent, les trois axes sont toutefois exposés séparément sous `distance_s`,
+`surface_aptitude` et `pink_other` (style seulement). Terrain/style ne peuvent jamais compenser
+un statut de distance inférieur, car le tri de viabilité distance intervient avant le minimum
+terrain et le score additif.
 
 ## Branches incomplètes et futurs GP
 
@@ -479,8 +550,15 @@ Le mode de recherche d'un parent distant final utilise, lui, exactement le moteu
 membres décrit plus haut : aptitude initiale, six coefficients individuels et probabilités
 A/S incluses.
 
-Les contraintes UQL cochées (Dirt, surface, distance, style, minimum pink) sont strictes :
-envoyées à l'API puis revérifiées localement sur les factors résolus avec le `master.mdb`.
+Les contraintes pink cochées (terrain cible, distance, style et minimum d'étoiles) sont
+strictes : elles s'appliquent au Main distant, sont envoyées via
+`main_parent_pink_sparks`, puis revérifiées localement sur les factors résolus avec le
+`master.mdb`. L'ancienne option Dirt a été fusionnée avec le terrain cible.
+
+Les minima optionnels de qualité utilisent directement `min_blue_stars_sum`,
+`min_white_count` et `min_white_stars_sum` sur la lignée distante complète. Les
+préférences white restent souples. Le texte UQL généré n'est qu'une représentation pour
+l'audit ou la copie manuelle : `/api/v3/search` n'accepte pas de requête texte libre.
 
 ## Transfer Helper
 

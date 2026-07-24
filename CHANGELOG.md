@@ -2,7 +2,22 @@
 
 This project uses feature-level semantic versioning. Small internal iterations are consolidated into the nearest meaningful release instead of receiving their own public version.
 
-## 1.5.0 — uma.moe Lineage Planner export
+## 1.6.0 - Contextual grandparent search and full English coverage
+
+- Added an optional opposing-parent branch to future-grandparent searches (local, imported or from uma.moe). With one set, GP1/GP2 are ranked through the canonical six-member final-pair engine instead of the generic heuristic, with a projected G1 plan spanning both candidate GPs and the opposing parent, and matching contextual diagnostics/CSV fields.
+- Added a "Paires de GP locales" action on the Lineage Optimisation tab: ranks every local times local grandparent pair with the exact uma.moe GP engine (same settings, including the contextual opposing-parent mode above), fully offline. Symmetric duplicates are evaluated once.
+- Split target-surface aptitude from running-style pinks throughout parent branches and final pairs, with a configurable policy (B as the minimum gate, A as a soft preference, Distance S as the primary constraint) and below-minimum readiness/probability scoring, and surfaced surface status, stars and probabilities across diagnostics and CSV exports.
+- Reworked automatic uma.moe parent and grandparent retrieval into distance, target-surface and broad/White cohorts, with the surface cohort now independently optional per search and skipped automatically once a locked local branch already covers the target. Contextual API cohorts consume only the remaining aptitude deficit, and known White coverage is softly de-prioritized for retrieval.
+- Added per-factor lineage filters on both uma.moe searches, mirroring the site's sliders: Blue and Pink star-sum minimums over the remote Main plus its two parents, applied locally after download since the API only confirms a Main-only pink parameter.
+- Replaced the free-text UQL/Auto controls with the filters actually supported by `/api/v3/search`, and every search-filter group now carries a hint on what it does, what it applies to, and when to use it.
+- Reworked the search popup: shows every match with a scrollable list and result counter instead of a hard 12-item cutoff, full keyboard navigation, and a native dropdown kept in sync with the filter. Fixed it not staying closed after picking an option or clicking away, and scrolling on its own, both caused by focus alone reopening the list.
+- Fixed two related crashes in contextual grandparent search: the app's own retrieval-plan diagnostics could be mistaken for the real candidate list and silently drop every genuine candidate, and the detailed-row builder could read stale component keys once ranking swapped to the exact pair engine.
+- Audited the full FR/EN coverage of the interface, logs and result panels with a dedicated checker (kept in the repo as `check_i18n.py`); status labels, breakdown labels and decimal separators now render correctly in either language, including in composite and log messages built by string concatenation.
+- Simplified the interface: removed the legacy tools tab (its one diagnostic import moved under Pondérations) and the umadump discovery button, condensed the affinity columns and the Transfer Helper intro/verdict legend (added the missing "Probablement conserver" verdict with a direct link to its thresholds), and grouped the uma.moe G1 plan and API fetch limit under a collapsible "Options avancées" section.
+- Selecting an Ace matching the parent to produce now clears the field with an explicit notice instead of silently substituting another character.
+- Added cooperative task cancellation from the status bar, and linking completion now points to the next step in the status bar and log.
+- Migrated pre-V17 `pink_other` overrides without changing their total pink allocation.
+
 
 - Unified future-grandparent weights across local ranking, Transfer Helper and uma.moe pair searches.
 - Removed the obsolete independent uma.moe GP-pair weight tables and migrated legacy overrides.

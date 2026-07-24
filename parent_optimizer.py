@@ -769,12 +769,38 @@ def _initial_aptitude_rank(base_rank: int, total_stars: int) -> int:
     return min(7, max(1, int(base_rank)) + _initial_rank_gain(total_stars))
 
 
-def _stars_required_to_start_at_a(base_rank: int) -> int:
-    rank = max(1, int(base_rank))
-    if rank >= 7:
+def _stars_required_to_start_at_a(base_rank: int) -> int | None:
+    """Return the A-start threshold, or ``None`` when A is unreachable.
+
+    Initial inheritance is capped at four aptitude ranks. In particular, F can
+    reach B with 10 matching stars, but can never start at A. Returning the old
+    theoretical value (13) made diagnostics contradict the rank engine.
+    """
+    rank = max(1, min(7, int(base_rank)))
+    ranks_needed = max(0, 7 - rank)
+    if ranks_needed <= 0:
         return 0
-    # B→A needs 1★. Every lower rank needs three more stars.
-    return 1 + 3 * (6 - rank)
+    if ranks_needed > 4:
+        return None
+    # B→A needs 1★. Every additional rank needs three more stars.
+    return 1 + 3 * (ranks_needed - 1)
+
+
+def _stars_required_to_start_at_rank(base_rank: int, target_rank: int) -> int:
+    """Return the red-star threshold for the requested initial aptitude rank.
+
+    Initial inheritance can improve an aptitude by at most four ranks.  When
+    the requested rank is unreachable (for example F→A), the returned threshold
+    is the 10★ needed for the maximum four-rank improvement; Inspiration procs
+    must supply the remaining rank afterwards.
+    """
+    base = max(1, min(7, int(base_rank)))
+    target = max(1, min(7, int(target_rank)))
+    ranks_needed = max(0, target - base)
+    if ranks_needed <= 0:
+        return 0
+    capped_gain = min(4, ranks_needed)
+    return 1 + 3 * (capped_gain - 1)
 
 
 def _poisson_binomial_distribution(probabilities: Iterable[float]) -> list[float]:
@@ -813,6 +839,11 @@ def _aptitude_pair_score(
     probability_a: float,
     probability_s: float,
     config: dict[str, Any],
+    *,
+    probability_preferred: float | None = None,
+    base_rank: int | None = None,
+    total_stars: int = 0,
+    probability_minimum: float = 0.0,
 ) -> float:
     aptitude_cfg = config.get("aptitude_inheritance") or {}
     dimension_cfg = aptitude_cfg.get(dimension) or {}
@@ -821,22 +852,92 @@ def _aptitude_pair_score(
         0.0,
         min(1.0, _piecewise_score(probability_s, s_probability_curve) / 100.0),
     )
-    if initial_rank >= 7:
+    minimum_rank = int(dimension_cfg.get("minimum_initial_rank", 6))
+    preferred_rank = int(dimension_cfg.get("preferred_initial_rank", 7))
+    preferred_probability = (
+        probability_a if probability_preferred is None else probability_preferred
+    )
+    if initial_rank >= preferred_rank:
         if dimension == "distance" and probability_s <= 0.0:
             return 0.0
         base = float(dimension_cfg.get("start_a_base_score", {"distance": 70, "surface": 80, "style": 90}[dimension]))
         s_weight = float(dimension_cfg.get("start_a_s_probability_weight", {"distance": 30, "surface": 20, "style": 10}[dimension]))
         return max(0.0, min(100.0, base + s_weight * s_probability_quality))
-    if initial_rank == 6:
+    if initial_rank >= minimum_rank:
         base = float(dimension_cfg.get("start_b_base_score", {"distance": 20, "surface": 55, "style": 70}[dimension]))
         a_weight = float(dimension_cfg.get("start_b_a_probability_weight", {"distance": 45, "surface": 30, "style": 25}[dimension]))
         s_weight = float(dimension_cfg.get("start_b_s_probability_weight", {"distance": 35, "surface": 15, "style": 5}[dimension]))
-        return max(0.0, min(100.0, base + a_weight * probability_a + s_weight * s_probability_quality))
+        return max(0.0, min(100.0, base + a_weight * preferred_probability + s_weight * s_probability_quality))
     below_cfg = dimension_cfg.get("below_b") or {}
     base = float(below_cfg.get("base_score", 0 if dimension == "distance" else 10))
+    resolved_base_rank = initial_rank if base_rank is None else int(base_rank)
+    stars_required_for_minimum = _stars_required_to_start_at_rank(
+        resolved_base_rank, minimum_rank
+    )
+    if stars_required_for_minimum <= 0:
+        minimum_readiness = 1.0
+    else:
+        minimum_readiness = min(1.0, max(0.0, float(total_stars)) / stars_required_for_minimum)
+    readiness_weight = float(below_cfg.get("initial_minimum_readiness_weight", 0.0))
+    minimum_probability_weight = float(below_cfg.get("minimum_probability_weight", 0.0))
     a_weight = float(below_cfg.get("a_probability_weight", 0 if dimension == "distance" else (25 if dimension == "surface" else 30)))
     s_weight = float(below_cfg.get("s_probability_weight", 0 if dimension == "distance" else (10 if dimension == "surface" else 5)))
-    return max(0.0, min(100.0, base + a_weight * probability_a + s_weight * s_probability_quality))
+    return max(
+        0.0,
+        min(
+            100.0,
+            base
+            + readiness_weight * minimum_readiness
+            + minimum_probability_weight * probability_minimum
+            + a_weight * preferred_probability
+            + s_weight * s_probability_quality,
+        ),
+    )
+
+
+def _surface_viability(
+    *,
+    mode: str,
+    surface_detail: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe the B-minimum/A-preferred surface policy.
+
+    Distance remains the first lexicographic criterion. Surface then only gates
+    the configured minimum rank (B by default); reaching the preferred rank (A)
+    stays part of ordinary weighted quality, so an excellent B-start lineage can
+    still outrank an A-start lineage.
+    """
+    surface_cfg = ((config.get("aptitude_inheritance") or {}).get("surface") or {})
+    minimum_rank = int(surface_cfg.get("minimum_initial_rank", 6))
+    preferred_rank = int(surface_cfg.get("preferred_initial_rank", 7))
+    initial_rank = int(surface_detail.get("initial_rank") or 0)
+
+    if initial_rank >= preferred_rank:
+        key, tier = "surface_preferred_met", 2
+    elif initial_rank >= minimum_rank:
+        key, tier = "surface_minimum_met", 1
+    else:
+        key, tier = "surface_below_minimum", 0
+
+    return {
+        "key": key,
+        "tier": tier,
+        "is_viable": initial_rank >= minimum_rank,
+        "sort_priority": 1 if initial_rank >= minimum_rank else 0,
+        "minimum_is_gate": True,
+        "preferred_is_gate": False,
+        "scope": "final_parent_pair_surface_policy" if mode == "parent_pair" else "parent_branch_surface_policy",
+        "minimum_initial_rank": minimum_rank,
+        "minimum_initial_rank_label": APTITUDE_LABELS.get(minimum_rank, str(minimum_rank)),
+        "preferred_initial_rank": preferred_rank,
+        "preferred_initial_rank_label": APTITUDE_LABELS.get(preferred_rank, str(preferred_rank)),
+        "initial_rank": initial_rank,
+        "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
+        "probability_reach_minimum": round(float(surface_detail.get("probability_reach_minimum") or 0.0), 8),
+        "probability_reach_preferred": round(float(surface_detail.get("probability_reach_preferred") or 0.0), 8),
+        "note": "Distance stays primary; the B minimum is a secondary gate, while A is a soft weighted preference that surrounding quality can compensate.",
+    }
 
 
 def _partial_aptitude_score(
@@ -855,6 +956,9 @@ def _partial_aptitude_score(
     star_weight = float(partial_cfg.get("star_weight", 0.60 if mode == "parent_branch" else 0.65))
     proc_weight = float(partial_cfg.get("proc_weight", 1.0 - star_weight))
     required = _stars_required_to_start_at_a(base_rank)
+    if required is None:
+        # Still credit progress toward the best legal initial rank (+4 / 10★).
+        required = _stars_required_to_start_at_rank(base_rank, base_rank + 4)
     if required > 0:
         star_readiness = min(1.0, total_stars / required)
     else:
@@ -1255,6 +1359,14 @@ def _pink_score(
         probability_s = _probability_at_least(distribution, required_s)
         probability_any = _probability_at_least(distribution, 1)
         dimension_cfg = aptitude_cfg.get(dimension) or {}
+        minimum_rank = int(dimension_cfg.get("minimum_initial_rank", 6))
+        preferred_rank = int(dimension_cfg.get("preferred_initial_rank", 7))
+        probability_minimum = _probability_at_least(
+            distribution, max(0, minimum_rank - initial_rank)
+        )
+        probability_preferred = _probability_at_least(
+            distribution, max(0, preferred_rank - initial_rank)
+        )
         s_probability_curve = dimension_cfg.get("s_probability_curve") or [[0.0, 0.0], [1.0, 100.0]]
         s_probability_quality = max(
             0.0,
@@ -1262,7 +1374,15 @@ def _pink_score(
         )
         if mode == "parent_pair":
             score = _aptitude_pair_score(
-                dimension, initial_rank, probability_a, probability_s, config
+                dimension,
+                initial_rank,
+                probability_a,
+                probability_s,
+                config,
+                probability_preferred=probability_preferred,
+                base_rank=base_rank,
+                total_stars=total_stars,
+                probability_minimum=probability_minimum,
             )
         else:
             score = _partial_aptitude_score(
@@ -1272,6 +1392,8 @@ def _pink_score(
                 probability_any_proc=probability_any,
                 config=config,
             )
+        stars_required_for_a = _stars_required_to_start_at_a(base_rank)
+        maximum_initial_rank = min(7, base_rank + 4)
         dimensions[dimension] = {
             "target": targets[dimension],
             "score": round(score, 6),
@@ -1281,13 +1403,33 @@ def _pink_score(
             "initial_rank_gain": _initial_rank_gain(total_stars),
             "initial_rank": initial_rank,
             "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
-            "stars_required_to_start_at_a": _stars_required_to_start_at_a(base_rank),
+            "stars_required_to_start_at_minimum": _stars_required_to_start_at_rank(
+                base_rank, minimum_rank
+            ),
+            "initial_minimum_readiness": round(
+                1.0
+                if _stars_required_to_start_at_rank(base_rank, minimum_rank) <= 0
+                else min(
+                    1.0,
+                    total_stars
+                    / _stars_required_to_start_at_rank(base_rank, minimum_rank),
+                ),
+                6,
+            ),
+            "stars_required_to_start_at_a": stars_required_for_a,
+            "can_start_at_a": stars_required_for_a is not None,
+            "maximum_initial_rank": maximum_initial_rank,
+            "maximum_initial_rank_label": APTITUDE_LABELS.get(
+                maximum_initial_rank, str(maximum_initial_rank)
+            ),
             "starts_at_a": initial_rank >= 7,
             "procs_required_for_a": required_a,
             "procs_required_for_s": required_s,
             "probability_any_proc": round(probability_any, 8),
             "probability_reach_a": round(probability_a, 8),
             "probability_reach_s": round(probability_s, 8),
+            "probability_reach_minimum": round(probability_minimum, 8),
+            "probability_reach_preferred": round(probability_preferred, 8),
             "probability_reach_s_quality": round(s_probability_quality, 6),
             "s_probability_curve": s_probability_curve,
             "proc_count_distribution": [round(value, 10) for value in distribution],
@@ -1316,17 +1458,23 @@ def _pink_score(
         distance_detail=distance_detail,
         config=config,
     )
+    surface_detail = dimensions["surface"]
+    surface_detail["activation_score"] = round(
+        100.0 * float(surface_detail["probability_reach_preferred"]), 6
+    )
+    surface_detail["weighted_support"] = surface_detail["sum_proc_probability_per_event"]
+    surface_detail["viability"] = _surface_viability(
+        mode=mode,
+        surface_detail=surface_detail,
+        config=config,
+    )
 
     dimension_weight_total = sum(max(0.0, float(value)) for value in mode_dimension_weights.values()) or 1.0
     overall_score = sum(
         float(dimensions[key]["score"]) * max(0.0, float(mode_dimension_weights.get(key, 0.0)))
         for key in ("distance", "surface", "style")
     ) / dimension_weight_total
-    other_weight_total = sum(max(0.0, float(mode_dimension_weights.get(key, 0.0))) for key in ("surface", "style")) or 1.0
-    other_score = sum(
-        float(dimensions[key]["score"]) * max(0.0, float(mode_dimension_weights.get(key, 0.0)))
-        for key in ("surface", "style")
-    ) / other_weight_total
+    other_score = float(dimensions["style"]["score"])
 
     return overall_score, {
         "raw": overall_score,
@@ -1336,12 +1484,12 @@ def _pink_score(
         "dimensions": dimensions,
         "factors": factor_rows,
         "distance_s": distance_detail,
+        "surface_aptitude": surface_detail,
         "pink_other": {
             "score": round(other_score, 6),
-            "dimensions": ["surface", "style"],
-            "surface": dimensions["surface"],
+            "dimensions": ["style"],
             "style": dimensions["style"],
-            "formula": "weighted surface/style aptitude quality; distance is excluded and scored separately",
+            "formula": "running-style aptitude quality; distance and target surface are scored separately",
         },
     }
 
@@ -1796,6 +1944,7 @@ def evaluate_parent_branch(
         "blue": blue,
         "pink": pink,
         "distance_s": float(pink_detail["distance_s"]["score"]),
+        "surface_aptitude": float(pink_detail["surface_aptitude"]["score"]),
         "pink_other": float(pink_detail["pink_other"]["score"]),
         "white_skill": white,
         "race_scenario": race,
@@ -1837,6 +1986,9 @@ def evaluate_parent_branch(
         "score_breakdown": _score_breakdown(components, weights),
         "distance_viability": branch_viability,
         "distance_s_summary": pink_detail["distance_s"],
+        "surface_viability": pink_detail["surface_aptitude"]["viability"],
+        "surface_aptitude_summary": pink_detail["surface_aptitude"],
+        "aptitude_summaries": pink_detail["dimensions"],
     }
 
 
@@ -1930,6 +2082,7 @@ def evaluate_parent_pair(
         "blue": blue,
         "pink": pink,
         "distance_s": float(pink_detail["distance_s"]["score"]),
+        "surface_aptitude": float(pink_detail["surface_aptitude"]["score"]),
         "pink_other": float(pink_detail["pink_other"]["score"]),
         "white_skill": white,
         "race_scenario": race,
@@ -1981,26 +2134,34 @@ def evaluate_parent_pair(
         "score_breakdown": _score_breakdown(components, weights),
         "distance_viability": pair_viability,
         "distance_s_summary": pink_detail["distance_s"],
+        "surface_viability": pink_detail["surface_aptitude"]["viability"],
+        "surface_aptitude_summary": pink_detail["surface_aptitude"],
         "aptitude_summaries": pink_detail["dimensions"],
     }
 
 
-def parent_pair_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
-    """Prioritize viability, then the configurable weighted quality score.
+def parent_pair_sort_key(row: dict[str, Any]) -> tuple[float, float, float, float, float, float, float]:
+    """Prioritize distance, enforce the surface minimum, then weighted quality.
 
     Distance-S probability is already converted through a saturating utility
     curve inside the distance component. Keeping raw P(S) ahead of the global
     score would make small differences near the practical ceiling dominate
-    much better white/blue lineages.
+    much better white/blue lineages. Surface A is deliberately not a separate
+    tier: only the configurable minimum (B by default) gates the pair, allowing
+    strong surrounding Sparks to compensate a B start.
     """
     viability = row.get("distance_viability") or {}
     pink_detail = ((row.get("component_details") or {}).get("pink") or {})
     distance_detail = row.get("distance_s_summary") or pink_detail.get("distance_s") or {}
+    surface_detail = row.get("surface_aptitude_summary") or pink_detail.get("surface_aptitude") or {}
+    surface_viability = row.get("surface_viability") or surface_detail.get("viability") or {}
     return (
         float(viability.get("sort_priority") or 0),
+        float(surface_viability.get("sort_priority") or 0),
         float(row.get("score") or 0),
         float((row.get("components") or {}).get("white_skill") or 0),
         float((row.get("components") or {}).get("blue") or 0),
+        float(surface_detail.get("probability_reach_preferred") or 0),
         float(distance_detail.get("probability_reach_s") or 0),
     )
 
@@ -2317,7 +2478,7 @@ def optimize_parents(
         generated_at = datetime.now(timezone.utc).isoformat()
         payload = {
             "metadata": {
-                "schema_version": 6,
+                "schema_version": 7,
                 "generated_at_utc": generated_at,
                 "purpose": "Rank final parent pairs, parent branches and future grandparents for a target Ace profile.",
                 "source_master": {"filename": master.name, "sha256": _sha256(master)},
@@ -2405,8 +2566,12 @@ def optimize_parents(
                 "distance_initial_rank": row["distance_s_summary"]["initial_rank_label"],
                 "distance_probability_a": round(100.0 * row["distance_s_summary"]["probability_reach_a"], 3),
                 "distance_probability_s": round(100.0 * row["distance_s_summary"]["probability_reach_s"], 3),
+                "surface_status": row["surface_viability"]["key"],
+                "surface_initial_rank": row["surface_aptitude_summary"]["initial_rank_label"],
+                "surface_probability_a": round(100.0 * row["surface_aptitude_summary"]["probability_reach_a"], 3),
                 "blue": round(row["components"]["blue"], 3),
                 "distance_s": round(row["components"]["distance_s"], 3),
+                "surface_aptitude": round(row["components"]["surface_aptitude"], 3),
                 "pink_other": round(row["components"]["pink_other"], 3),
                 "pink": round(row["components"]["pink"], 3),
                 "white_skill": round(row["components"]["white_skill"], 3),
@@ -2418,7 +2583,7 @@ def optimize_parents(
         _write_csv(
             parent_candidates_csv,
             candidate_csv_rows,
-            ["rank", "score", "trained_chara_id", "rank_score", "parent", "grandparent_1", "grandparent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_support", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "blue", "distance_s", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "trained_chara_id", "rank_score", "parent", "grandparent_1", "grandparent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_support", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_initial_rank", "surface_probability_a", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         pair_csv_rows = [
@@ -2447,6 +2612,10 @@ def optimize_parents(
                 "distance_initial_rank": row["distance_s_summary"]["initial_rank_label"],
                 "distance_probability_a": round(100.0 * row["distance_s_summary"]["probability_reach_a"], 3),
                 "distance_probability_s": round(100.0 * row["distance_s_summary"]["probability_reach_s"], 3),
+                "surface_status": row["surface_viability"]["key"],
+                "surface_tier": row["surface_viability"]["tier"],
+                "surface_stars": row["surface_aptitude_summary"]["total_stars"],
+                "surface_carriers": row["surface_aptitude_summary"]["carrier_count"],
                 "surface_initial_rank": row["aptitude_summaries"]["surface"]["initial_rank_label"],
                 "surface_probability_a": round(100.0 * row["aptitude_summaries"]["surface"]["probability_reach_a"], 3),
                 "surface_probability_s": round(100.0 * row["aptitude_summaries"]["surface"]["probability_reach_s"], 3),
@@ -2455,6 +2624,7 @@ def optimize_parents(
                 "style_probability_s": round(100.0 * row["aptitude_summaries"]["style"]["probability_reach_s"], 3),
                 "blue": round(row["components"]["blue"], 3),
                 "distance_s": round(row["components"]["distance_s"], 3),
+                "surface_aptitude": round(row["components"]["surface_aptitude"], 3),
                 "pink_other": round(row["components"]["pink_other"], 3),
                 "pink": round(row["components"]["pink"], 3),
                 "white_skill": round(row["components"]["white_skill"], 3),
@@ -2466,7 +2636,7 @@ def optimize_parents(
         _write_csv(
             parent_pairs_csv,
             pair_csv_rows,
-            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         future_csv_rows = [

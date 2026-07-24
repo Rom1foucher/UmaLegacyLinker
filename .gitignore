@@ -15,8 +15,10 @@ venv/
 # Packaging
 build/
 dist/
+artifacts/
 *.spec
 !UmaLegacyLinker.spec
+!UmaLegacyLinkerQt.spec
 
 # Generated application data
 output/

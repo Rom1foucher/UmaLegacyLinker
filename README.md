@@ -13,6 +13,7 @@ Uma Legacy Linker links an exported veteran collection to the current `master.md
 - Evaluates future grandparents for producing stronger parents.
 - Searches public parents through [uma.moe](https://uma.moe/) and combines them with local candidates.
 - Audits duplicate local veterans with the conservative **Transfer Helper**.
+- Opens every parent, pair and grandparent result as a context-aware top-down lineage with costume artwork, resolved skill icons, rich Spark details and optional ancestry history in the Qt interface.
 - Exports detailed JSON, compact CSV and readable diagnostics.
 - Provides an English and French desktop interface.
 
@@ -95,7 +96,8 @@ See [`docs/SCORING.md`](docs/SCORING.md) for formulas and implementation details
 - Windows is the primary supported platform.
 - The Windows release executable requires no Python installation.
 - Running from source requires Python **3.10+**.
-- Tkinter, included with the standard Windows Python installer.
+- Tkinter, included with the standard Windows Python installer, for the stable UI.
+- PySide6 for the optional redesigned Qt preview.
 - A current Umamusume `master.mdb`.
 - A veteran export in `data.json` format.
 - `PyYAML` for live uma.moe searches when running from source.
@@ -104,6 +106,13 @@ Install the source dependency with:
 
 ```powershell
 py -m pip install -r requirements.txt
+```
+
+For the redesigned UI preview instead:
+
+```powershell
+py -m pip install -r requirements-qt.txt
+py qt_app.py
 ```
 
 ## Veteran data extraction
@@ -134,9 +143,17 @@ Then select:
 
 Run **Link an existing data.json** before using the lineage optimiser, Transfer Helper or local × online pair calculation.
 
+### Redesigned Qt interface
+
+`qt_app.py` contains the complete first pass of the desktop redesign: dashboard, extraction and linking, lineage optimisation, uma.moe search, Transfer Helper, scoring-profile editing, diagnostic tools, sortable embedded results, a visual lineage inspector and Lineage Planner export. The stable Tkinter interface remains available from the sidebar while this branch receives wider testing.
+
+Both interfaces read the same `%APPDATA%\UmaLegacyLinker\config.json` preferences and generate the same output formats. The Windows preview workflow also renders every page at three viewport sizes in French and English and rejects detected text overflow. See [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) for the migration scope and build instructions.
+
+The Qt lineage inspector loads costume-aware trainee artwork and resolved White Skill icons on demand from GameTora. Images are never bundled with the source or executable: they are kept in a bounded per-user cache, remain available offline once cached, and can be disabled or cleared directly in the inspector. Missing or unavailable artwork falls back to a generated initial card. White Sparks show the inheritance probability already calculated by the scoring engine across the run's configured Inspiration Events, and the three strongest White contributions receive a gold outline. Result diagnostics also show game-inspired aptitude rows, score/P(S) cards and a compact direct-Spark recap. The view does not introduce a second probability formula.
+
 ## Weights
 
-The **Weights** tab exposes the structural scoring profile and per-skill White Spark priorities.
+The **Weights** tab uses a two-pane settings editor: search, gameplay categories and 50 ordered subcategories on the left, then a complete explanation and the appropriate control on the right. Every visible setting has bilingual purpose, impact and scope guidance, plus a quick hover summary. Probabilities and bounded thresholds use percentages, independent coefficients use an explicit `×1` reference, and the nine genuinely normalised scoring groups use a live 100% distribution with a donut chart. Adjusting one share redistributes its siblings proportionally. Booleans, integers and curves receive controls suited to their type. Draft/default states are explicit and internal JSON paths remain out of the interface.
 
 Values are stored as minimal overrides on top of the bundled defaults, so new settings can be introduced without replacing the user's whole profile.
 
@@ -157,6 +174,8 @@ The effective profiles used by a run are exported as:
 | File | Purpose |
 | --- | --- |
 | `app.py` | Tkinter GUI, CLI entry point and workflow orchestration |
+| `qt_app.py` | PySide6 redesign preview entry point |
+| `ui_qt/` | Qt shell, pages, visual lineage/artwork system, table model and shared workflow orchestration |
 | `legacy_linker.py` | Links veteran exports to `master.mdb` |
 | `parent_optimizer.py` | Local branch, pair and future-GP scoring |
 | `transfer_helper.py` | Collection cleanup analysis and dominance checks |
@@ -204,6 +223,14 @@ The script runs the complete test suite and generates:
 
 No Python installation and no adjacent `default_*.json` files are required on the destination PC.
 
+The Qt preview has a separate, non-release build so it cannot replace the stable executable accidentally:
+
+```powershell
+.\build_windows_qt.ps1
+```
+
+It produces `dist\UmaLegacyLinkerQt-preview-win64.zip`. Extract the whole directory before launching `UmaLegacyLinkerQt.exe`.
+
 The uma.moe API key can be remembered from the application. On Windows it is encrypted with DPAPI for the current Windows account and stored under `%APPDATA%\UmaLegacyLinker`; it is never written in clear text to `config.json`.
 
 ### Publishing a GitHub release
@@ -222,6 +249,7 @@ The workflow can also be started manually to obtain a downloadable build artifac
 - [`docs/SCORING.md`](docs/SCORING.md) — scoring model and formulas;
 - [`docs/WEIGHTS_FORMAT.md`](docs/WEIGHTS_FORMAT.md) — White Spark priority format;
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — proposed process-based multicore design;
+- [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) — scope and packaging of the PySide6 redesign;
 - [`docs/RELEASING.md`](docs/RELEASING.md) — Windows build and GitHub release procedure;
 - [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md) — external tools and services;
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.

@@ -129,6 +129,10 @@ class LineageTree(QWidget):
         self._role_labels: dict[str, str] = {}
         self._generation_labels: dict[str, str] = {}
         self._height_update_pending = False
+        self._scheduled_minimum_height: int | None = None
+        self._height_timer = QTimer(self)
+        self._height_timer.setSingleShot(True)
+        self._height_timer.timeout.connect(self._apply_scheduled_height)
         self.setMouseTracking(True)
         self.setMinimumSize(self.BASE_WIDTH, 1080)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -265,17 +269,20 @@ class LineageTree(QWidget):
 
     def _schedule_height(self, height: float) -> None:
         required = max(760, int(math.ceil(height)))
-        if abs(self.minimumHeight() - required) <= 1 or self._height_update_pending:
+        if abs(self.minimumHeight() - required) <= 1:
             return
-        self._height_update_pending = True
+        self._scheduled_minimum_height = required
+        if not self._height_update_pending:
+            self._height_update_pending = True
+            self._height_timer.start(0)
 
-        def apply_height() -> None:
-            self._height_update_pending = False
-            if abs(self.minimumHeight() - required) > 1:
-                self.setMinimumHeight(required)
-                self.updateGeometry()
-
-        QTimer.singleShot(0, apply_height)
+    def _apply_scheduled_height(self) -> None:
+        required = self._scheduled_minimum_height
+        self._scheduled_minimum_height = None
+        self._height_update_pending = False
+        if required is not None and abs(self.minimumHeight() - required) > 1:
+            self.setMinimumHeight(required)
+            self.updateGeometry()
 
     def _layout_rects(self) -> dict[str, QRectF]:
         width = max(float(self.width()), float(self.BASE_WIDTH))

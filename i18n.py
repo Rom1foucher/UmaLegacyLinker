@@ -1072,6 +1072,8 @@ EXACT_EN.update({
     "Éditeur avancé : conserve une liste JSON valide et ordonnée.": "Advanced editor: keep the JSON list valid and ordered.",
     "Modifiés uniquement": "Changed only",
     "Modifié": "Changed",
+    "{count} modifié(s)": "{count} changed",
+    "Ce bloc contient {count} réglage(s) modifié(s).": "This block contains {count} changed setting(s).",
     "Défaut": "Default",
     "{shown} / {total} réglages": "{shown} / {total} settings",
     "Sélectionne un réglage": "Select a setting",

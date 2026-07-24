@@ -53,6 +53,112 @@ APTITUDE_COLUMNS = {
 APTITUDE_LABELS = {1: "G", 2: "F", 3: "E", 4: "D", 5: "C", 6: "B", 7: "A", 8: "S"}
 
 
+def lineage_preview_for_pair(
+    parent_1: dict[str, Any] | None,
+    parent_2: dict[str, Any] | None,
+    master_data: dict[str, Any] | None = None,
+    *,
+    veteran_by_trained_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build a compact, serialisable lineage snapshot for the Qt visual tree.
+
+    The snapshot intentionally strips nested ``when_used_as_parent`` payloads
+    from visible members, while optionally resolving one additional ancestry
+    level from the local veteran index.
+    """
+
+    skill_by_group: dict[int, int] = {}
+    for row in (master_data or {}).get("white_skill_spark_groups", []) or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            group_id = int(row.get("factor_group_id"))
+            skill_id = int(row.get("inherit_skill_id"))
+        except (TypeError, ValueError):
+            continue
+        skill_by_group[group_id] = skill_id
+
+    def compact(member: object) -> dict[str, Any] | None:
+        if not isinstance(member, dict) or not member:
+            return None
+        factors = member.get("sparks")
+        if not isinstance(factors, list):
+            factors = list(((member.get("factors") or {}).get("all") or []))
+        sparks: list[dict[str, Any]] = []
+        totals: dict[str, dict[str, int]] = {}
+        for raw in factors:
+            if not isinstance(raw, dict):
+                continue
+            factor = {
+                key: raw.get(key)
+                for key in ("factor_id", "factor_group_id", "name", "stars", "type", "skill_id")
+                if raw.get(key) is not None
+            }
+            try:
+                factor["stars"] = max(0, int(factor.get("stars") or 0))
+            except (TypeError, ValueError):
+                factor["stars"] = 0
+            factor_type = str(factor.get("type") or "other")
+            factor["type"] = factor_type
+            if factor.get("skill_id") is None:
+                try:
+                    mapped = skill_by_group.get(int(factor.get("factor_group_id")))
+                except (TypeError, ValueError):
+                    mapped = None
+                if mapped is not None:
+                    factor["skill_id"] = mapped
+            sparks.append(factor)
+            bucket = totals.setdefault(factor_type, {"count": 0, "stars": 0})
+            bucket["count"] += 1
+            bucket["stars"] += factor["stars"]
+
+        result = {
+            key: member.get(key)
+            for key in (
+                "trained_chara_id", "card_id", "chara_id", "uma_name",
+                "card_name", "rank", "rank_score"
+            )
+            if member.get(key) is not None
+        }
+        result["sparks"] = sparks
+        result["spark_totals"] = totals
+        g1_names = ((member.get("g1_wins") or {}).get("names") or [])
+        result["g1_count"] = int(member.get("g1_count") or len(g1_names))
+        return result
+
+    result: dict[str, dict[str, Any]] = {}
+    direct = (("p1", parent_1), ("p2", parent_2))
+    for position, parent in direct:
+        if not isinstance(parent, dict) or not parent:
+            continue
+        parent_view = compact(parent)
+        if parent_view is not None:
+            result[position] = parent_view
+        lineage = parent.get("when_used_as_parent") or {}
+        if not isinstance(lineage, dict):
+            lineage = {}
+        for index, key in ((1, "grandparent_1"), (2, "grandparent_2")):
+            gp = lineage.get(key) or parent.get(key)
+            gp_view = compact(gp)
+            if gp_view is None:
+                continue
+            gp_position = f"{position}-{index}"
+            result[gp_position] = gp_view
+
+            full_gp = gp if isinstance(gp, dict) else {}
+            trained_id = full_gp.get("trained_chara_id")
+            if veteran_by_trained_id and trained_id is not None:
+                full_gp = veteran_by_trained_id.get(str(trained_id), full_gp)
+            gp_lineage = full_gp.get("when_used_as_parent") or {}
+            if not isinstance(gp_lineage, dict):
+                continue
+            for ancestor_index, ancestor_key in ((1, "grandparent_1"), (2, "grandparent_2")):
+                ancestor_view = compact(gp_lineage.get(ancestor_key))
+                if ancestor_view is not None:
+                    result[f"{gp_position}-{ancestor_index}"] = ancestor_view
+    return result
+
+
 class OptimizerError(RuntimeError):
     pass
 

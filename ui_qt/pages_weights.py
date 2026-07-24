@@ -1,0 +1,1402 @@
+from __future__ import annotations
+
+import copy
+import json
+import math
+import shutil
+from pathlib import Path
+from typing import Any
+
+from PySide6.QtCore import QItemSelection, Qt
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QSpinBox,
+    QSplitter,
+    QStackedWidget,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
+
+from i18n import scoring_label
+from scoring_config import (
+    ScoringConfigError,
+    build_overrides,
+    count_override_leaves,
+    deep_merge,
+    get_path_value,
+    iter_leaf_paths,
+    load_effective_scoring_config,
+    read_json_object,
+    set_path_value,
+    validate_scoring_config,
+    write_json_object,
+)
+from ui_qt.components import (
+    CollapsibleSection,
+    PageHeader,
+    PathPicker,
+    muted_label,
+    section_label,
+)
+from ui_qt.context import AppContext
+from ui_qt.distribution_chart import DistributionDonut
+from ui_qt.core import (
+    default_scoring_path,
+    default_skill_priorities_path,
+    open_path,
+    user_scoring_overrides_path,
+    user_skill_priorities_path,
+)
+from ui_qt.models import Column, ResultTableModel, nested
+from ui_qt.weight_controls import (
+    CATEGORY_SOURCES,
+    is_percentage_setting,
+    is_probability_setting,
+    is_threshold_percentage,
+    percentage_display,
+    percentage_limit,
+    redistribute_relative_group,
+    relative_group_paths,
+    relative_group_shares,
+    weight_category,
+    weight_sort_key,
+    weight_subcategory,
+)
+from ui_qt.weight_help import WeightHelp, describe_weight
+
+
+HIDDEN_KEYS = {"schema_version", "description", "formula_notes", "notes"}
+
+
+def _editor_text(value: object) -> str:
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+class WeightsPage(QWidget):
+    def __init__(self, context: AppContext, parent=None):
+        super().__init__(parent)
+        self.context = context
+        self.default: dict[str, Any] = {}
+        self.current: dict[str, Any] = {}
+        self._all_rows: list[dict[str, Any]] = []
+        self._selected_path: tuple[str, ...] | None = None
+        self._editor_kind = "none"
+        self._editor_reference: object = None
+        self._editor_original: object = None
+        self._percentage_is_probability = False
+        self._slider_scale = 10.0
+        self._relative_paths: tuple[tuple[str, ...], ...] = ()
+        self._active_help: WeightHelp | None = None
+        self._editor_loading = False
+        self._editor_pending = False
+        self._selection_guard = False
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 20, 28, 20)
+        root.setSpacing(12)
+        self.header = PageHeader("", "")
+        root.addWidget(self.header)
+
+        active = QFrame()
+        active.setObjectName("panel")
+        active_layout = QHBoxLayout(active)
+        active_layout.setContentsMargins(16, 11, 16, 11)
+        active_copy = QVBoxLayout()
+        self.active_check = QCheckBox("")
+        self.active_check.setChecked(context.store.get("use_custom_scoring", "0") in {"1", "true", "True"})
+        self.status = muted_label("")
+        active_copy.addWidget(self.active_check)
+        active_copy.addWidget(self.status)
+        active_layout.addLayout(active_copy, 1)
+        self.import_button = QPushButton("")
+        self.export_button = QPushButton("")
+        self.save_button = QPushButton("")
+        self.save_button.setObjectName("primary")
+        active_layout.addWidget(self.import_button)
+        active_layout.addWidget(self.export_button)
+        active_layout.addWidget(self.save_button)
+        root.addWidget(active)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        navigation = QFrame()
+        navigation.setObjectName("panel")
+        navigation.setMinimumWidth(300)
+        navigation_layout = QVBoxLayout(navigation)
+        navigation_layout.setContentsMargins(13, 13, 13, 12)
+        navigation_layout.setSpacing(8)
+        navigation_head = QHBoxLayout()
+        self.settings_title = section_label("")
+        self.visible_count = muted_label("")
+        navigation_head.addWidget(self.settings_title)
+        navigation_head.addWidget(self.visible_count, 1, Qt.AlignmentFlag.AlignRight)
+        self.search = QLineEdit()
+        self.search.setClearButtonEnabled(True)
+        category_label_row = QHBoxLayout()
+        self.category_filter_label = muted_label("")
+        category_label_row.addWidget(self.category_filter_label)
+        category_label_row.addStretch(1)
+        filters = QHBoxLayout()
+        self.category_combo = QComboBox()
+        self.changed_only = QCheckBox("")
+        filters.addWidget(self.category_combo, 1)
+        filters.addWidget(self.changed_only)
+        self.subcategory_filter_label = muted_label("")
+        self.subcategory_combo = QComboBox()
+        navigation_layout.addLayout(navigation_head)
+        navigation_layout.addWidget(self.search)
+        navigation_layout.addLayout(category_label_row)
+        navigation_layout.addLayout(filters)
+        navigation_layout.addWidget(self.subcategory_filter_label)
+        navigation_layout.addWidget(self.subcategory_combo)
+
+        self.table = QTableView()
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(40)
+        self.table.setShowGrid(False)
+        self.table.setMouseTracking(True)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.table.setToolTipDuration(14_000)
+        self.model = ResultTableModel([], [])
+        self.table.setModel(self.model)
+        self.table.setSortingEnabled(True)
+        navigation_layout.addWidget(self.table, 1)
+        self.hover_hint = muted_label("")
+        self.reset_all_button = QPushButton("")
+        navigation_layout.addWidget(self.hover_hint)
+        navigation_actions = QHBoxLayout()
+        navigation_actions.addStretch(1)
+        navigation_actions.addWidget(self.reset_all_button)
+        navigation_layout.addLayout(navigation_actions)
+
+        editor_scroll = QScrollArea()
+        editor_scroll.setWidgetResizable(True)
+        editor_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        editor_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        editor = QFrame()
+        editor.setObjectName("panel")
+        editor.setMinimumWidth(350)
+        editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(19, 17, 19, 17)
+        editor_layout.setSpacing(9)
+        self.editor_breadcrumb = muted_label("")
+        self.editor_title = section_label("")
+        pills = QVBoxLayout()
+        pills.setSpacing(5)
+        scope_and_type = QHBoxLayout()
+        scope_and_type.setSpacing(6)
+        self.scope_badge = QLabel("")
+        self.scope_badge.setObjectName("pill")
+        self.type_badge = QLabel("")
+        self.type_badge.setObjectName("pill")
+        self.state_badge = QLabel("")
+        self.state_badge.setObjectName("pillAccent")
+        scope_and_type.addWidget(self.scope_badge)
+        scope_and_type.addWidget(self.type_badge)
+        scope_and_type.addStretch(1)
+        state_row = QHBoxLayout()
+        state_row.addWidget(self.state_badge)
+        state_row.addStretch(1)
+        pills.addLayout(scope_and_type)
+        pills.addLayout(state_row)
+        self.editor_summary = QLabel("")
+        self.editor_summary.setObjectName("settingSummary")
+        self.editor_summary.setWordWrap(True)
+
+        impact = QFrame()
+        impact.setObjectName("infoCallout")
+        impact_layout = QVBoxLayout(impact)
+        impact_layout.setContentsMargins(13, 11, 13, 11)
+        impact_layout.setSpacing(4)
+        self.impact_title = QLabel("")
+        self.impact_title.setObjectName("calloutTitle")
+        self.impact_text = QLabel("")
+        self.impact_text.setWordWrap(True)
+        impact_layout.addWidget(self.impact_title)
+        impact_layout.addWidget(self.impact_text)
+
+        control = QFrame()
+        control.setObjectName("subtlePanel")
+        control_layout = QVBoxLayout(control)
+        control_layout.setContentsMargins(14, 12, 14, 12)
+        control_layout.setSpacing(7)
+        self.current_label = QLabel("")
+        self.value_stack = QStackedWidget()
+
+        self.empty_page = QWidget()
+        empty_layout = QVBoxLayout(self.empty_page)
+        empty_layout.setContentsMargins(0, 8, 0, 8)
+        self.empty_label = muted_label("")
+        empty_layout.addWidget(self.empty_label)
+        empty_layout.addStretch(1)
+
+        self.bool_page = QWidget()
+        bool_layout = QVBoxLayout(self.bool_page)
+        bool_layout.setContentsMargins(0, 6, 0, 6)
+        self.bool_edit = QCheckBox("")
+        bool_layout.addWidget(self.bool_edit)
+        bool_layout.addStretch(1)
+
+        self.percent_page = QWidget()
+        percent_layout = QVBoxLayout(self.percent_page)
+        percent_layout.setContentsMargins(0, 5, 0, 5)
+        percent_row = QHBoxLayout()
+        self.percent_slider = QSlider(Qt.Orientation.Horizontal)
+        self.percent_spin = QDoubleSpinBox()
+        self.percent_spin.setDecimals(4)
+        self.percent_spin.setSingleStep(0.5)
+        self.percent_spin.setSuffix(" %")
+        self.percent_spin.setMinimumWidth(120)
+        percent_row.addWidget(self.percent_slider, 1)
+        percent_row.addWidget(self.percent_spin)
+        self.percent_range = muted_label("")
+        percent_layout.addLayout(percent_row)
+        percent_scale = QHBoxLayout()
+        self.percent_low = muted_label("")
+        self.percent_high = muted_label("")
+        percent_scale.addWidget(self.percent_low)
+        percent_scale.addStretch(1)
+        percent_scale.addWidget(self.percent_high, 0, Qt.AlignmentFlag.AlignRight)
+        percent_layout.addWidget(self.percent_range, 0, Qt.AlignmentFlag.AlignCenter)
+        percent_layout.addLayout(percent_scale)
+        percent_layout.addStretch(1)
+
+        self.integer_page = QWidget()
+        integer_layout = QVBoxLayout(self.integer_page)
+        integer_layout.setContentsMargins(0, 5, 0, 5)
+        self.integer_edit = QSpinBox()
+        self.integer_edit.setRange(0, 2_147_483_647)
+        integer_layout.addWidget(self.integer_edit)
+        integer_layout.addStretch(1)
+
+        self.decimal_page = QWidget()
+        decimal_layout = QVBoxLayout(self.decimal_page)
+        decimal_layout.setContentsMargins(0, 5, 0, 5)
+        self.decimal_edit = QDoubleSpinBox()
+        self.decimal_edit.setRange(0.0, 1_000_000_000.0)
+        self.decimal_edit.setDecimals(6)
+        self.decimal_edit.setSingleStep(0.01)
+        decimal_layout.addWidget(self.decimal_edit)
+        decimal_layout.addStretch(1)
+
+        self.enum_page = QWidget()
+        enum_layout = QVBoxLayout(self.enum_page)
+        enum_layout.setContentsMargins(0, 5, 0, 5)
+        self.enum_edit = QComboBox()
+        enum_layout.addWidget(self.enum_edit)
+        enum_layout.addStretch(1)
+
+        self.text_page = QWidget()
+        text_layout = QVBoxLayout(self.text_page)
+        text_layout.setContentsMargins(0, 5, 0, 5)
+        self.text_edit = QLineEdit()
+        text_layout.addWidget(self.text_edit)
+        text_layout.addStretch(1)
+
+        self.structured_page = QWidget()
+        structured_layout = QVBoxLayout(self.structured_page)
+        structured_layout.setContentsMargins(0, 5, 0, 5)
+        self.structured_edit = QPlainTextEdit()
+        self.structured_edit.setMaximumHeight(150)
+        structured_layout.addWidget(self.structured_edit)
+
+        for page in (
+            self.empty_page,
+            self.bool_page,
+            self.percent_page,
+            self.integer_page,
+            self.decimal_page,
+            self.enum_page,
+            self.text_page,
+            self.structured_page,
+        ):
+            self.value_stack.addWidget(page)
+
+        self.editor_hint = muted_label("")
+        control_layout.addWidget(self.current_label)
+        control_layout.addWidget(self.value_stack)
+        control_layout.addWidget(self.editor_hint)
+
+        self.distribution_panel = QFrame()
+        self.distribution_panel.setObjectName("subtlePanel")
+        distribution_layout = QVBoxLayout(self.distribution_panel)
+        distribution_layout.setContentsMargins(13, 11, 13, 11)
+        distribution_layout.setSpacing(5)
+        self.distribution_title = QLabel("")
+        self.distribution_title.setObjectName("calloutTitle")
+        self.distribution_explanation = muted_label("")
+        self.distribution_chart = DistributionDonut()
+        self.distribution_total = muted_label("")
+        distribution_layout.addWidget(self.distribution_title)
+        distribution_layout.addWidget(self.distribution_explanation)
+        distribution_layout.addWidget(self.distribution_chart)
+        distribution_layout.addWidget(self.distribution_total)
+        self.distribution_panel.setVisible(False)
+
+        comparison = QFrame()
+        comparison.setObjectName("subtlePanel")
+        comparison_layout = QHBoxLayout(comparison)
+        comparison_layout.setContentsMargins(13, 9, 13, 9)
+        comparison_copy = QVBoxLayout()
+        comparison_copy.setSpacing(2)
+        self.default_label = QLabel("")
+        self.default_value = muted_label("")
+        comparison_copy.addWidget(self.default_label)
+        comparison_copy.addWidget(self.default_value)
+        self.draft_state = QLabel("")
+        self.draft_state.setObjectName("pill")
+        comparison_layout.addLayout(comparison_copy, 1)
+        comparison_layout.addWidget(self.draft_state)
+
+        buttons = QHBoxLayout()
+        self.apply_button = QPushButton("")
+        self.apply_button.setObjectName("primary")
+        self.reset_button = QPushButton("")
+        buttons.addWidget(self.apply_button)
+        buttons.addWidget(self.reset_button)
+        buttons.addStretch(1)
+        self.save_hint = muted_label("")
+
+        editor_layout.addWidget(self.editor_breadcrumb)
+        editor_layout.addWidget(self.editor_title)
+        editor_layout.addLayout(pills)
+        editor_layout.addWidget(self.editor_summary)
+        editor_layout.addWidget(impact)
+        editor_layout.addWidget(control)
+        editor_layout.addWidget(self.distribution_panel)
+        editor_layout.addWidget(comparison)
+        editor_layout.addLayout(buttons)
+        editor_layout.addWidget(self.save_hint)
+        editor_layout.addStretch(1)
+        editor_scroll.setWidget(editor)
+        splitter.addWidget(navigation)
+        splitter.addWidget(editor_scroll)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([390, 620])
+        root.addWidget(splitter, 1)
+
+        self.priorities = CollapsibleSection("")
+        self.priority_status = muted_label("")
+        self.priorities.content_layout.addWidget(self.priority_status)
+        priority_row = QHBoxLayout()
+        self.priority_picker = PathPicker(
+            context.store.get("skill_priorities_path"),
+            title="Choisir un profil de priorités white",
+            file_filter="JSON (*.json);;Tous les fichiers (*)",
+        )
+        self.create_priority_button = QPushButton("")
+        self.open_priority_button = QPushButton("")
+        self.reset_priority_button = QPushButton("")
+        priority_row.addWidget(self.priority_picker, 1)
+        self.priorities.content_layout.addLayout(priority_row)
+        priority_actions = QHBoxLayout()
+        priority_actions.addStretch(1)
+        priority_actions.addWidget(self.create_priority_button)
+        priority_actions.addWidget(self.open_priority_button)
+        priority_actions.addWidget(self.reset_priority_button)
+        self.priorities.content_layout.addLayout(priority_actions)
+        root.addWidget(self.priorities)
+
+        self.search.textChanged.connect(self.apply_filter)
+        self.changed_only.toggled.connect(self.apply_filter)
+        self.category_combo.currentIndexChanged.connect(self._category_changed)
+        self.subcategory_combo.currentIndexChanged.connect(self.apply_filter)
+        self.table.selectionModel().selectionChanged.connect(self._selection_changed)
+        self.apply_button.clicked.connect(self.apply_value)
+        self.reset_button.clicked.connect(self.reset_selected)
+        self.reset_all_button.clicked.connect(self.reset_all)
+        self.save_button.clicked.connect(self.save_profile)
+        self.import_button.clicked.connect(self.import_profile)
+        self.export_button.clicked.connect(self.export_profile)
+        self.active_check.toggled.connect(self._active_changed)
+        self.priority_picker.path_changed.connect(self._priority_changed)
+        self.create_priority_button.clicked.connect(self.create_priority_copy)
+        self.open_priority_button.clicked.connect(self.open_priority)
+        self.reset_priority_button.clicked.connect(self.reset_priority)
+        self.percent_slider.valueChanged.connect(self._percentage_slider_changed)
+        self.percent_spin.valueChanged.connect(self._percentage_spin_changed)
+        self.bool_edit.toggled.connect(self._update_bool_text)
+        self.integer_edit.valueChanged.connect(self._editor_value_changed)
+        self.decimal_edit.valueChanged.connect(self._editor_value_changed)
+        self.enum_edit.currentIndexChanged.connect(self._editor_value_changed)
+        self.text_edit.textEdited.connect(self._editor_value_changed)
+        self.structured_edit.textChanged.connect(self._editor_value_changed)
+        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.reload()
+        self.retranslate()
+
+    def reload(self) -> None:
+        try:
+            self.default, _overrides, self.current = load_effective_scoring_config(
+                default_scoring_path(), user_scoring_overrides_path()
+            )
+        except (OSError, ScoringConfigError) as exc:
+            QMessageBox.warning(self, self.context.t("Profil de pondération invalide"), self.context.t(str(exc)))
+            self.default = read_json_object(default_scoring_path())
+            self.current = copy.deepcopy(self.default)
+        self._rebuild_rows()
+        self._refresh_status()
+
+    def _rebuild_rows(self) -> None:
+        rows: list[dict[str, Any]] = []
+        for path, value in iter_leaf_paths(self.current):
+            if any(key in HIDDEN_KEYS or key.endswith("description") for key in path):
+                continue
+            try:
+                default_value = get_path_value(self.default, path)
+            except KeyError:
+                default_value = None
+            labels = [scoring_label(key, self.context.language) for key in path]
+            help_info = describe_weight(path, value, self.context.language)
+            category_key = weight_category(path)
+            category_source = dict(CATEGORY_SOURCES).get(category_key, "Autres")
+            category_label = self.context.t(category_source)
+            subcategory_key, subcategory_source, subcategory_order = weight_subcategory(path)
+            subcategory_label = self.context.t(subcategory_source)
+            active_value = self._display_value(
+                path, value, default_value, source=self.current
+            )
+            default_display = self._display_value(
+                path, default_value, default_value, source=self.default
+            )
+            changed = self._path_changed(path, value, default_value)
+            rows.append(
+                {
+                    "label": " › ".join(labels),
+                    "list_label": " › ".join(labels[1:] or labels),
+                    "breadcrumb": f"{category_label} › {subcategory_label}",
+                    "path_tuple": path,
+                    "category": category_key,
+                    "category_label": category_label,
+                    "subcategory": subcategory_key,
+                    "subcategory_label": subcategory_label,
+                    "subcategory_order": subcategory_order,
+                    "active": active_value,
+                    "default": default_display,
+                    "changed": changed,
+                    "state": self.context.t("Modifié" if changed else "Défaut"),
+                    "help": help_info,
+                    "sort_key": weight_sort_key(path),
+                    "_tooltip": (
+                        f"{subcategory_label} › {labels[-1]}\n\n{help_info.summary}\n\n"
+                        f"{self.context.t('Effet')} : {help_info.impact}\n\n"
+                        f"{self.context.t('Actuel')} : {active_value}  ·  "
+                        f"{self.context.t('Défaut')} : {default_display}"
+                    ),
+                }
+            )
+        self._all_rows = sorted(rows, key=lambda row: row["sort_key"])
+        self._rebuild_categories()
+        self._rebuild_subcategories()
+        self.apply_filter()
+
+    def _path_changed(
+        self, path: tuple[str, ...], value: object, default_value: object
+    ) -> bool:
+        current_group = relative_group_shares(self.current, path)
+        default_group = relative_group_shares(self.default, path)
+        if current_group and default_group:
+            current_share = dict(current_group).get(path, 0.0)
+            default_share = dict(default_group).get(path, 0.0)
+            return abs(current_share - default_share) > 0.0000005
+        return value != default_value
+
+    def _display_value(
+        self,
+        path: tuple[str, ...],
+        value: object,
+        reference: object | None = None,
+        *,
+        source: dict[str, Any] | None = None,
+    ) -> str:
+        group = relative_group_shares(source or self.current, path)
+        if group:
+            share = dict(group).get(path, 0.0)
+            return self.context.t("{value} du groupe").replace(
+                "{value}", percentage_display(share)
+            )
+        if is_percentage_setting(path, value if reference is None else reference):
+            if is_probability_setting(path):
+                return percentage_display(value)
+            rendered = f"{float(value):.4f}".rstrip("0").rstrip(".")
+            return f"×{rendered}"
+        if isinstance(value, bool):
+            return self.context.t("Activé" if value else "Désactivé")
+        if isinstance(value, (list, dict)):
+            return self.context.t("{count} points de courbe").replace(
+                "{count}", str(len(value))
+            )
+        if value == "floor":
+            return self.context.t("Plancher")
+        if value == "override":
+            return self.context.t("Remplacement")
+        return str(value)
+
+    def _selected_category(self) -> str:
+        return str(self.category_combo.currentData() or "all")
+
+    def _selected_subcategory(self) -> str:
+        return str(self.subcategory_combo.currentData() or "all")
+
+    def _rebuild_categories(self) -> None:
+        selected = self._selected_category()
+        counts: dict[str, int] = {}
+        for row in self._all_rows:
+            key = str(row["category"])
+            counts[key] = counts.get(key, 0) + 1
+
+        self.category_combo.blockSignals(True)
+        self.category_combo.clear()
+        target_row = -1
+        for key, source in CATEGORY_SOURCES:
+            count = len(self._all_rows) if key == "all" else counts.get(key, 0)
+            if key != "all" and not count:
+                continue
+            text = f"{self.context.t(source)}  ·  {count}"
+            self.category_combo.addItem(text, key)
+            if key == selected:
+                target_row = self.category_combo.count() - 1
+        if self.category_combo.count():
+            self.category_combo.setCurrentIndex(target_row if target_row >= 0 else 0)
+        self.category_combo.blockSignals(False)
+
+    def _category_changed(self, *_args: object) -> None:
+        self._rebuild_subcategories()
+        self.apply_filter()
+
+    def _rebuild_subcategories(self) -> None:
+        selected = self._selected_subcategory()
+        category = self._selected_category()
+        rows = [
+            row
+            for row in self._all_rows
+            if category == "all" or row["category"] == category
+        ]
+        counts: dict[str, int] = {}
+        labels: dict[str, str] = {}
+        orders: dict[str, int] = {}
+        for row in rows:
+            key = str(row["subcategory"])
+            counts[key] = counts.get(key, 0) + 1
+            labels[key] = str(row["subcategory_label"])
+            orders[key] = int(row["subcategory_order"])
+
+        self.subcategory_combo.blockSignals(True)
+        self.subcategory_combo.clear()
+        if category == "all":
+            self.subcategory_combo.addItem(
+                self.context.t("Choisis d’abord une catégorie"), "all"
+            )
+        else:
+            self.subcategory_combo.addItem(
+                f"{self.context.t('Toutes les sous-catégories')}  ·  {len(rows)}",
+                "all",
+            )
+        target_index = 0
+        if category != "all":
+            for key in sorted(counts, key=lambda item: (orders[item], labels[item].casefold())):
+                self.subcategory_combo.addItem(f"{labels[key]}  ·  {counts[key]}", key)
+                if key == selected:
+                    target_index = self.subcategory_combo.count() - 1
+        self.subcategory_combo.setCurrentIndex(target_index)
+        self.subcategory_combo.setEnabled(category != "all" and bool(counts))
+        self.subcategory_combo.blockSignals(False)
+
+    def _columns(self) -> list[Column]:
+        t = self.context.t
+        return [
+            Column(t("Réglage"), nested("list_label")),
+            Column(t("Actuel"), nested("active")),
+            Column(t("État"), nested("state")),
+        ]
+
+    def apply_filter(self, *_args: object) -> None:
+        query = self.search.text().strip().casefold()
+        changed_only = self.changed_only.isChecked()
+        category = self._selected_category()
+        subcategory = self._selected_subcategory()
+        rows = [
+            row for row in self._all_rows
+            if (not changed_only or row["changed"])
+            and (category == "all" or row["category"] == category)
+            and (subcategory == "all" or row["subcategory"] == subcategory)
+            and (
+                not query
+                or query
+                in (
+                    f"{row['label']} {row['subcategory_label']} {row['active']} {row['state']} "
+                    f"{row['help'].summary} {row['help'].impact}"
+                ).casefold()
+            )
+        ]
+        previous = self._selected_path
+        selection_model = self.table.selectionModel()
+        selection_model.blockSignals(True)
+        self.model.set_columns(self._columns())
+        self.model.set_rows(rows)
+        selection_model.blockSignals(False)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for index in range(1, self.model.columnCount()):
+            header.setSectionResizeMode(index, QHeaderView.ResizeMode.ResizeToContents)
+        self.visible_count.setText(
+            self.context.t("{shown} / {total} réglages")
+            .replace("{shown}", str(len(rows)))
+            .replace("{total}", str(len(self._all_rows)))
+        )
+        target = -1
+        if previous:
+            for index, row in enumerate(rows):
+                if row["path_tuple"] == previous:
+                    target = index
+                    break
+        if target < 0 and rows:
+            target = 0
+        if target >= 0:
+            self.table.selectRow(target)
+        elif not self._editor_pending:
+            self._show_selection(None)
+
+    def selected_row(self) -> dict[str, Any] | None:
+        indexes = self.table.selectionModel().selectedRows()
+        return self.model.row(indexes[0].row()) if indexes else None
+
+    def _selection_changed(self, _selected: QItemSelection, _deselected: QItemSelection) -> None:
+        if self._selection_guard:
+            return
+        row = self.selected_row()
+        new_path = tuple(row["path_tuple"]) if row else None
+        old_path = self._selected_path
+        if self._editor_pending and old_path and new_path == old_path:
+            return
+        if self._editor_pending and old_path and new_path != old_path:
+            if not self._commit_editor_value(show_warning=True):
+                self._select_path(old_path)
+                return
+            self._selected_path = new_path
+            self._rebuild_rows()
+            return
+        self._show_selection(row)
+
+    def _select_path(self, path: tuple[str, ...]) -> None:
+        for index in range(self.model.rowCount()):
+            row = self.model.row(index)
+            if row and tuple(row["path_tuple"]) == path:
+                self._selection_guard = True
+                self.table.selectRow(index)
+                self._selection_guard = False
+                return
+
+    def _show_selection(self, row: dict[str, Any] | None) -> None:
+        if not row:
+            self._selected_path = None
+            self._editor_kind = "none"
+            self._relative_paths = ()
+            self._active_help = None
+            self.distribution_panel.setVisible(False)
+            self.editor_breadcrumb.setText("")
+            self.editor_title.setText(self.context.t("Sélectionne un réglage"))
+            self.scope_badge.setText(self.context.t("Aide contextuelle"))
+            self.type_badge.setText("")
+            self.state_badge.setText("")
+            self.type_badge.setVisible(False)
+            self.state_badge.setVisible(False)
+            self.editor_summary.setText(
+                self.context.t(
+                    "Chaque réglage affiche ici son rôle, son impact et la direction de sa valeur."
+                )
+            )
+            self.impact_title.setText(self.context.t("Comment utiliser cet écran"))
+            self.impact_text.setText(
+                self.context.t(
+                    "Recherche un terme ou choisis une catégorie, puis sélectionne une ligne. Survole une ligne pour obtenir un résumé rapide."
+                )
+            )
+            self.current_label.setText(self.context.t("Valeur active"))
+            self.value_stack.setCurrentWidget(self.empty_page)
+            self.default_value.setText("—")
+            self.draft_state.setText("—")
+            self.editor_hint.setText(
+                self.context.t("Choisis un réglage dans la liste pour afficher le contrôle adapté.")
+            )
+            self.apply_button.setEnabled(False)
+            self.reset_button.setEnabled(False)
+            self._editor_pending = False
+            return
+        path = tuple(row["path_tuple"])
+        self._selected_path = path
+        value = get_path_value(self.current, path)
+        default = get_path_value(self.default, path)
+        help_info = row.get("help") or describe_weight(path, value, self.context.language)
+        self._active_help = help_info
+        self.editor_breadcrumb.setText(str(row.get("breadcrumb") or ""))
+        self.editor_title.setText(scoring_label(path[-1], self.context.language))
+        self.scope_badge.setText(help_info.scope)
+        self.type_badge.setVisible(True)
+        self.state_badge.setVisible(True)
+        self.editor_summary.setText(help_info.summary)
+        self.impact_title.setText(self.context.t("Effet sur le classement"))
+        self.impact_text.setText(help_info.impact)
+        self._editor_loading = True
+        try:
+            self._configure_editor(path, value, default)
+        finally:
+            self._editor_loading = False
+        self._editor_pending = False
+        if self._editor_kind == "relative_share":
+            self.percent_low.setText(self.context.t("0 % du groupe"))
+            self.percent_high.setText(self.context.t("100 % du groupe"))
+        elif self._editor_kind == "multiplier":
+            self.percent_low.setText(self.context.t("×0 · ignoré"))
+            self.percent_high.setText(self.context.t("×1 · référence"))
+        else:
+            self.percent_low.setText(help_info.low_label)
+            self.percent_high.setText(help_info.high_label)
+        self.default_value.setText(
+            self._display_value(path, default, default, source=self.default)
+        )
+        changed = self._path_changed(path, value, default)
+        self.state_badge.setText(
+            self.context.t("Réglage avancé" if help_info.advanced else "Réglage standard")
+        )
+        self.state_badge.setObjectName("pillWarning" if help_info.advanced else "pill")
+        self.state_badge.style().unpolish(self.state_badge)
+        self.state_badge.style().polish(self.state_badge)
+        self._set_draft_state(changed=changed, pending=False)
+        self.apply_button.setEnabled(False)
+        self.reset_button.setEnabled(changed)
+
+    def _set_draft_state(self, *, changed: bool, pending: bool) -> None:
+        if pending:
+            text = self.context.t("Modification à appliquer")
+            object_name = "pillWarning"
+        elif changed:
+            text = self.context.t("Brouillon modifié")
+            object_name = "pillAccent"
+        else:
+            text = self.context.t("Valeur d’origine")
+            object_name = "pill"
+        self.draft_state.setText(text)
+        self.draft_state.setObjectName(object_name)
+        self.draft_state.style().unpolish(self.draft_state)
+        self.draft_state.style().polish(self.draft_state)
+
+    def _editor_value_changed(self, *_args: object) -> None:
+        if self._editor_loading or not self._selected_path:
+            return
+        try:
+            pending = self._read_editor_value() != self._editor_original
+        except ValueError:
+            pending = True
+        self._update_distribution_preview()
+        self._editor_pending = pending
+        current_value = get_path_value(self.current, self._selected_path)
+        default_value = get_path_value(self.default, self._selected_path)
+        current_changed = self._path_changed(
+            self._selected_path, current_value, default_value
+        )
+        self._set_draft_state(changed=current_changed, pending=pending)
+        self.apply_button.setEnabled(pending)
+        self.reset_button.setEnabled(pending or current_changed)
+
+    def _set_editor_type(self, source: str) -> None:
+        translated = self.context.t(source)
+        self.current_label.setText(
+            f"{self.context.t('Valeur active')} · {translated}"
+        )
+        self.type_badge.setText(translated)
+
+    def _configure_editor(
+        self, path: tuple[str, ...], value: object, default: object
+    ) -> None:
+        self._relative_paths = relative_group_paths(self.current, path)
+        self.distribution_panel.setVisible(bool(self._relative_paths))
+        self._editor_reference = default
+        self._editor_original = copy.deepcopy(value)
+        if self._relative_paths:
+            current_shares = dict(relative_group_shares(self.current, path))
+            default_shares = dict(relative_group_shares(self.default, path))
+            share = current_shares.get(path, 0.0)
+            default_share = default_shares.get(path, 0.0)
+            self._editor_kind = "relative_share"
+            self._editor_original = share
+            self._editor_reference = default_share
+            self._percentage_is_probability = False
+            self._slider_scale = 10.0
+            self.percent_spin.setPrefix("")
+            self.percent_spin.setSuffix(" %")
+            self.percent_spin.setSingleStep(0.5)
+            self.percent_slider.blockSignals(True)
+            self.percent_spin.blockSignals(True)
+            self.percent_slider.setRange(0, 1_000)
+            self.percent_spin.setRange(0.0, 100.0)
+            self.percent_slider.setValue(int(round(share * 1_000.0)))
+            self.percent_spin.setValue(share * 100.0)
+            self.percent_slider.blockSignals(False)
+            self.percent_spin.blockSignals(False)
+            self._set_percentage_range_label(100.0)
+            self.value_stack.setCurrentWidget(self.percent_page)
+            self._set_editor_type("Part du groupe")
+            self.editor_hint.setText(
+                self.context.t(
+                    "Cette valeur est une part réelle du groupe. Le reste est redistribué proportionnellement pour conserver un total de 100 %."
+                )
+            )
+            self._update_distribution_preview()
+            return
+        if isinstance(default, bool):
+            self._editor_kind = "bool"
+            self.bool_edit.blockSignals(True)
+            self.bool_edit.setChecked(bool(value))
+            self.bool_edit.blockSignals(False)
+            self._update_bool_text(bool(value))
+            self.value_stack.setCurrentWidget(self.bool_page)
+            self._set_editor_type("Interrupteur")
+            self.editor_hint.setText(
+                self.context.t("Active ou désactive ce comportement dans le calcul.")
+            )
+            return
+
+        if is_percentage_setting(path, default):
+            self._percentage_is_probability = is_probability_setting(path)
+            if not self._percentage_is_probability:
+                self._editor_kind = "multiplier"
+                self._slider_scale = 1_000.0
+                limit = max(2.0, math.ceil(max(float(value), float(default))))
+                self.percent_slider.blockSignals(True)
+                self.percent_spin.blockSignals(True)
+                self.percent_slider.setRange(0, int(round(limit * self._slider_scale)))
+                self.percent_spin.setRange(0.0, max(10.0, limit))
+                self.percent_spin.setPrefix("×")
+                self.percent_spin.setSuffix("")
+                self.percent_spin.setSingleStep(0.05)
+                self.percent_slider.setValue(int(round(float(value) * self._slider_scale)))
+                self.percent_spin.setValue(float(value))
+                self.percent_slider.blockSignals(False)
+                self.percent_spin.blockSignals(False)
+                self._set_percentage_range_label(limit)
+                self.value_stack.setCurrentWidget(self.percent_page)
+                self._set_editor_type("Coefficient ×")
+                self.editor_hint.setText(
+                    self.context.t(
+                        "Coefficient indépendant : ×1 est la valeur de référence. Il ne partage pas un budget de 100 % avec ses voisins."
+                    )
+                )
+                return
+
+            self._editor_kind = "percentage"
+            self._slider_scale = 10.0
+            self.percent_spin.setPrefix("")
+            self.percent_spin.setSuffix(" %")
+            self.percent_spin.setSingleStep(0.5)
+            limit = percentage_limit(path, value, default)
+            percent = float(value) * 100.0
+            self.percent_slider.blockSignals(True)
+            self.percent_spin.blockSignals(True)
+            self.percent_slider.setRange(0, int(round(limit * 10.0)))
+            self.percent_spin.setRange(
+                0.0, limit if self._percentage_is_probability else max(1_000.0, limit)
+            )
+            self.percent_slider.setValue(int(round(percent * 10.0)))
+            self.percent_spin.setValue(percent)
+            self.percent_slider.blockSignals(False)
+            self.percent_spin.blockSignals(False)
+            self._set_percentage_range_label(limit)
+            self.value_stack.setCurrentWidget(self.percent_page)
+            if is_threshold_percentage(path):
+                self._set_editor_type("Seuil en %")
+                hint = "Seuil absolu borné de 0 à 100 %. Il n’est pas renormalisé avec d’autres valeurs."
+            else:
+                self._set_editor_type("Probabilité")
+                hint = "Probabilité bornée à 100 %. Le champ numérique permet un réglage précis."
+            self.editor_hint.setText(self.context.t(hint))
+            return
+
+        if isinstance(default, int) and not isinstance(default, bool):
+            self._editor_kind = "integer"
+            self.integer_edit.setValue(int(value))
+            self.value_stack.setCurrentWidget(self.integer_page)
+            self._set_editor_type("Nombre entier")
+            self.editor_hint.setText(
+                self.context.t("Valeur entière positive ou nulle.")
+            )
+            return
+
+        if isinstance(default, float):
+            self._editor_kind = "decimal"
+            self.decimal_edit.setValue(float(value))
+            self.value_stack.setCurrentWidget(self.decimal_page)
+            self._set_editor_type("Nombre décimal")
+            self.editor_hint.setText(
+                self.context.t("Valeur décimale positive ou nulle.")
+            )
+            return
+
+        enum_options = self._enum_options(path)
+        if enum_options:
+            self._editor_kind = "enum"
+            self.enum_edit.clear()
+            for label, data in enum_options:
+                self.enum_edit.addItem(label, data)
+            index = self.enum_edit.findData(value)
+            self.enum_edit.setCurrentIndex(index if index >= 0 else 0)
+            self.value_stack.setCurrentWidget(self.enum_page)
+            self._set_editor_type("Choix")
+            self.editor_hint.setText(
+                self.context.t("Sélectionne le comportement appliqué par le moteur.")
+            )
+            return
+
+        if isinstance(default, str):
+            self._editor_kind = "text"
+            self.text_edit.setText(str(value))
+            self.value_stack.setCurrentWidget(self.text_page)
+            self._set_editor_type("Texte")
+            self.editor_hint.setText(
+                self.context.t("Valeur textuelle utilisée par le moteur.")
+            )
+            return
+
+        self._editor_kind = "structured"
+        self.structured_edit.setPlainText(_editor_text(value))
+        self.value_stack.setCurrentWidget(self.structured_page)
+        self._set_editor_type("Courbe ou liste")
+        self.editor_hint.setText(
+            self.context.t("Éditeur avancé : conserve une liste JSON valide et ordonnée.")
+        )
+
+    def _enum_options(self, path: tuple[str, ...]) -> list[tuple[str, str]]:
+        if path[:2] == ("course_conditions", "modes"):
+            return [
+                (self.context.t("Plancher"), "floor"),
+                (self.context.t("Remplacement"), "override"),
+            ]
+        return []
+
+    def _percentage_slider_changed(self, value: int) -> None:
+        self.percent_spin.blockSignals(True)
+        self.percent_spin.setValue(value / self._slider_scale)
+        self.percent_spin.blockSignals(False)
+        self._editor_value_changed()
+
+    def _percentage_spin_changed(self, value: float) -> None:
+        if value * self._slider_scale > self.percent_slider.maximum():
+            if self._editor_kind == "multiplier":
+                expanded = max(2.0, float(math.ceil(value)))
+            else:
+                expanded = max(100.0, float(int((value + 99.9999) // 100) * 100))
+            self.percent_slider.setMaximum(
+                int(round(expanded * self._slider_scale))
+            )
+            self._set_percentage_range_label(expanded)
+        self.percent_slider.blockSignals(True)
+        self.percent_slider.setValue(int(round(value * self._slider_scale)))
+        self.percent_slider.blockSignals(False)
+        self._editor_value_changed()
+
+    def _set_percentage_range_label(self, maximum: float) -> None:
+        if self._editor_kind == "relative_share":
+            self.percent_range.setText(self.context.t("Budget du groupe : 100 %"))
+            return
+        if self._editor_kind == "multiplier":
+            self.percent_range.setText(
+                self.context.t("Plage du slider : ×0 à ×{maximum} · référence ×1").replace(
+                    "{maximum}", f"{maximum:g}"
+                )
+            )
+            return
+        self.percent_range.setText(
+            self.context.t("Plage du slider : 0 % à {maximum} %").replace(
+                "{maximum}", f"{maximum:g}"
+            )
+        )
+
+    def _update_bool_text(self, checked: bool) -> None:
+        self.bool_edit.setText(self.context.t("Activé" if checked else "Désactivé"))
+        self._editor_value_changed()
+
+    def _read_editor_value(self) -> object:
+        if self._editor_kind == "bool":
+            return self.bool_edit.isChecked()
+        if self._editor_kind in {"percentage", "relative_share"}:
+            value = self.percent_spin.value()
+            if isinstance(self._editor_original, (int, float)) and abs(
+                value - float(self._editor_original) * 100.0
+            ) < 0.00005:
+                return self._editor_original
+            return value / 100.0
+        if self._editor_kind == "multiplier":
+            value = self.percent_spin.value()
+            if isinstance(self._editor_original, (int, float)) and abs(
+                value - float(self._editor_original)
+            ) < 0.0000005:
+                return self._editor_original
+            return value
+        if self._editor_kind == "integer":
+            return self.integer_edit.value()
+        if self._editor_kind == "decimal":
+            return self.decimal_edit.value()
+        if self._editor_kind == "enum":
+            return self.enum_edit.currentData()
+        if self._editor_kind == "text":
+            return self.text_edit.text()
+        if self._editor_kind == "structured":
+            try:
+                value = json.loads(self.structured_edit.toPlainText().strip())
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"JSON invalide, ligne {exc.lineno}, colonne {exc.colno}."
+                ) from exc
+            if isinstance(self._editor_reference, list) and not isinstance(value, list):
+                raise ValueError("Une liste JSON est attendue.")
+            if isinstance(self._editor_reference, dict) and not isinstance(value, dict):
+                raise ValueError("Un objet JSON est attendu.")
+            return value
+        raise ValueError("Sélectionne un réglage.")
+
+    def _update_distribution_preview(self) -> None:
+        if not self._relative_paths or not self._selected_path:
+            self.distribution_panel.setVisible(False)
+            return
+        selected_share = (
+            self.percent_spin.value() / 100.0
+            if self._editor_kind == "relative_share"
+            else dict(relative_group_shares(self.current, self._selected_path)).get(
+                self._selected_path, 0.0
+            )
+        )
+        distribution = redistribute_relative_group(
+            self.current, self._selected_path, selected_share
+        )
+        items = [
+            (scoring_label(path[-1], self.context.language), share)
+            for path, share in distribution
+        ]
+        selected_index = next(
+            (
+                index
+                for index, (path, _share) in enumerate(distribution)
+                if path == self._selected_path
+            ),
+            -1,
+        )
+        _key, subcategory_source, _order = weight_subcategory(self._selected_path)
+        self.distribution_title.setText(self.context.t(subcategory_source))
+        self.distribution_explanation.setText(
+            self.context.t(
+                "Ces réglages se partagent le même score. Modifier une part réduit ou augmente proportionnellement toutes les autres."
+            )
+        )
+        total_share = sum(share for _path, share in distribution)
+        self.distribution_total.setText(
+            self.context.t(
+                "Répartition effective · total toujours égal à 100 %"
+                if total_share > 0.999999
+                else "Groupe désactivé · toutes les parts sont à 0 %"
+            )
+        )
+        self.distribution_chart.setAccessibleName(
+            self.context.t("Répartition du groupe de pondération")
+        )
+        self.distribution_chart.set_distribution(
+            items, selected_index, self.context.t("du groupe")
+        )
+        self.distribution_panel.setVisible(True)
+
+    def _commit_editor_value(self, *, show_warning: bool) -> bool:
+        if not self._selected_path:
+            return True
+        try:
+            value = self._read_editor_value()
+            candidate = copy.deepcopy(self.current)
+            if self._editor_kind == "relative_share":
+                for path, share in redistribute_relative_group(
+                    candidate, self._selected_path, float(value)
+                ):
+                    set_path_value(candidate, path, share)
+            else:
+                set_path_value(candidate, self._selected_path, value)
+            validate_scoring_config(candidate)
+        except (ValueError, ScoringConfigError, KeyError) as exc:
+            if show_warning:
+                QMessageBox.warning(
+                    self,
+                    self.context.t("Valeur refusée"),
+                    self.context.t(str(exc)),
+                )
+            return False
+        self.current = candidate
+        self._editor_pending = False
+        if self._editor_kind == "relative_share":
+            self._editor_original = dict(
+                relative_group_shares(self.current, self._selected_path)
+            ).get(self._selected_path, 0.0)
+        else:
+            self._editor_original = copy.deepcopy(value)
+        current_value = get_path_value(self.current, self._selected_path)
+        default_value = get_path_value(self.default, self._selected_path)
+        changed = self._path_changed(
+            self._selected_path, current_value, default_value
+        )
+        self._update_distribution_preview()
+        self._set_draft_state(changed=changed, pending=False)
+        self.apply_button.setEnabled(False)
+        self.reset_button.setEnabled(changed)
+        return True
+
+    def apply_value(self) -> bool:
+        if not self._commit_editor_value(show_warning=True):
+            return False
+        self._rebuild_rows()
+        return True
+
+    def reset_selected(self) -> None:
+        if not self._selected_path:
+            return
+        if relative_group_paths(self.current, self._selected_path):
+            default_share = dict(
+                relative_group_shares(self.default, self._selected_path)
+            ).get(self._selected_path, 0.0)
+            candidate = copy.deepcopy(self.current)
+            for path, share in redistribute_relative_group(
+                candidate, self._selected_path, default_share
+            ):
+                set_path_value(candidate, path, share)
+            validate_scoring_config(candidate)
+            self.current = candidate
+        else:
+            set_path_value(
+                self.current,
+                self._selected_path,
+                get_path_value(self.default, self._selected_path),
+            )
+        self._rebuild_rows()
+
+    def reset_all(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            self.context.t("Réinitialiser les pondérations"),
+            self.context.t("Rétablir toutes les valeurs par défaut dans l’éditeur ?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.current = copy.deepcopy(self.default)
+            self._rebuild_rows()
+
+    def save_profile(self) -> None:
+        if self._editor_pending and not self._commit_editor_value(show_warning=True):
+            return
+        try:
+            validate_scoring_config(self.current)
+            overrides = build_overrides(self.default, self.current)
+            write_json_object(user_scoring_overrides_path(), overrides)
+        except (OSError, ScoringConfigError) as exc:
+            QMessageBox.warning(self, self.context.t("Profil de pondération invalide"), self.context.t(str(exc)))
+            return
+        self.active_check.blockSignals(True)
+        self.active_check.setChecked(True)
+        self.active_check.blockSignals(False)
+        self.context.store.update({"use_custom_scoring": "1"})
+        self.context.configuration_changed.emit()
+        self._rebuild_rows()
+        self._refresh_status()
+        QMessageBox.information(self, self.context.t("Pondérations"), self.context.t("Profil enregistré et activé."))
+
+    def _active_changed(self, active: bool) -> None:
+        committed_pending = False
+        if active and self._editor_pending:
+            if not self._commit_editor_value(show_warning=True):
+                self.active_check.blockSignals(True)
+                self.active_check.setChecked(False)
+                self.active_check.blockSignals(False)
+                return
+            committed_pending = True
+        if active:
+            try:
+                validate_scoring_config(self.current)
+            except ScoringConfigError as exc:
+                self.active_check.blockSignals(True)
+                self.active_check.setChecked(False)
+                self.active_check.blockSignals(False)
+                QMessageBox.warning(self, self.context.t("Profil de pondération invalide"), self.context.t(str(exc)))
+                return
+        self.context.store.update({"use_custom_scoring": "1" if active else "0"})
+        self.context.configuration_changed.emit()
+        if committed_pending:
+            self._rebuild_rows()
+        self._refresh_status()
+
+    def _refresh_status(self) -> None:
+        overrides = build_overrides(self.default, self.current) if self.default else {}
+        count = count_override_leaves(overrides)
+        if self.active_check.isChecked():
+            text = self.context.t("Profil personnalisé actif · {count} valeur(s) modifiée(s)").replace("{count}", str(count))
+        elif count:
+            text = self.context.t("Profil par défaut actif · {count} modification(s) enregistrée(s) mais désactivée(s)").replace("{count}", str(count))
+        else:
+            text = self.context.t("Profil par défaut actif")
+        self.status.setText(text)
+        self._refresh_priority_status()
+
+    def import_profile(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self, self.context.t("Importer un profil de pondération"), str(Path.home()), "JSON (*.json)"
+        )
+        if not filename:
+            return
+        try:
+            imported = read_json_object(filename)
+            candidate = deep_merge(self.default, imported)
+            try:
+                validate_scoring_config(imported)
+                candidate = imported
+            except ScoringConfigError:
+                validate_scoring_config(candidate)
+        except ScoringConfigError as exc:
+            QMessageBox.warning(self, self.context.t("Import impossible"), self.context.t(str(exc)))
+            return
+        self.current = copy.deepcopy(candidate)
+        self._rebuild_rows()
+
+    def export_profile(self) -> None:
+        committed_pending = False
+        if self._editor_pending:
+            if not self._commit_editor_value(show_warning=True):
+                return
+            committed_pending = True
+        if committed_pending:
+            self._rebuild_rows()
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            self.context.t("Exporter le profil effectif"),
+            str(Path(self.context.output_dir).expanduser() / "parent_scoring_profile.json"),
+            "JSON (*.json)",
+        )
+        if not filename:
+            return
+        try:
+            write_json_object(filename, self.current)
+        except (OSError, ScoringConfigError) as exc:
+            QMessageBox.warning(self, self.context.t("Export impossible"), self.context.t(str(exc)))
+            return
+
+    def _priority_changed(self, value: str) -> None:
+        self.context.store.update({"skill_priorities_path": value})
+        self.context.configuration_changed.emit()
+        self._refresh_priority_status()
+
+    def _refresh_priority_status(self) -> None:
+        text = self.priority_picker.text()
+        if text and Path(text).expanduser().is_file():
+            status = self.context.t("Profil personnalisé actif") + f" · {Path(text).name}"
+        elif text:
+            status = self.context.t("Fichier introuvable") + f" · {text}"
+        else:
+            status = self.context.t("Profil par défaut actif") + f" · {default_skill_priorities_path().name}"
+        self.priority_status.setText(status)
+
+    def create_priority_copy(self) -> None:
+        destination = user_skill_priorities_path()
+        if destination.exists():
+            answer = QMessageBox.question(
+                self,
+                self.context.t("Copie personnalisée"),
+                self.context.t("Écraser la copie personnalisée existante ?"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(default_skill_priorities_path(), destination)
+            self.priority_picker.set_text(str(destination))
+            self._priority_changed(str(destination))
+        except OSError as exc:
+            QMessageBox.critical(self, self.context.t("Erreur"), str(exc))
+
+    def open_priority(self) -> None:
+        path = Path(self.priority_picker.text()).expanduser() if self.priority_picker.text() else default_skill_priorities_path()
+        if not path.is_file():
+            QMessageBox.warning(self, self.context.t("Fichier introuvable"), str(path))
+            return
+        open_path(path)
+
+    def reset_priority(self) -> None:
+        self.priority_picker.set_text("")
+        self._priority_changed("")
+
+    def retranslate(self) -> None:
+        t = self.context.t
+        self.header.set_text(
+            t("Pondérations"),
+            t("Comprends l’effet de chaque réglage, ajuste-le avec un contrôle adapté, puis enregistre uniquement tes différences."),
+        )
+        self.active_check.setText(t("Utiliser mes pondérations personnalisées"))
+        self.import_button.setText(t("Importer…"))
+        self.export_button.setText(t("Exporter l’effectif…"))
+        self.save_button.setText(t("Enregistrer et activer"))
+        self.search.setPlaceholderText(t("Rechercher un réglage…"))
+        self.category_filter_label.setText(t("Catégorie"))
+        self.subcategory_filter_label.setText(t("Sous-catégorie"))
+        self.category_combo.setToolTip(
+            t("Choisis une grande famille du modèle de scoring.")
+        )
+        self.subcategory_combo.setToolTip(
+            t("Affiche uniquement les réglages qui participent au même calcul.")
+        )
+        self.changed_only.setText(t("Modifiés uniquement"))
+        self.reset_all_button.setText(t("Tout remettre par défaut"))
+        self.settings_title.setText(t("Réglages"))
+        self.hover_hint.setText(t("Survole une ligne pour un résumé."))
+        self.empty_label.setText(t("Aucun réglage sélectionné."))
+        self.current_label.setText(t("Valeur active"))
+        self.default_label.setText(t("Valeur par défaut"))
+        self.apply_button.setText(t("Appliquer au brouillon"))
+        self.reset_button.setText(t("Rétablir le défaut"))
+        self.save_hint.setText(
+            t("Le brouillon reste local jusqu’à « Enregistrer et activer ».")
+        )
+        self.priorities.set_title(t("Priorités individuelles des White Skills · avancé"))
+        self.priority_picker.dialog_title = t("Choisir un profil de priorités white")
+        self.priority_picker.file_filter = f"JSON (*.json);;{t('Tous les fichiers')} (*)"
+        self.priority_picker.set_button_text(t("Parcourir…"))
+        self.create_priority_button.setText(t("Créer une copie modifiable"))
+        self.open_priority_button.setText(t("Ouvrir"))
+        self.reset_priority_button.setText(t("Revenir au défaut"))
+        self._rebuild_rows()
+        self._refresh_status()
+
+    def set_busy(self, _busy: bool) -> None:
+        # This page only performs short local file operations on the UI thread.
+        return

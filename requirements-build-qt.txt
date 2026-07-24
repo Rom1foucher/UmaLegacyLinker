@@ -1,0 +1,3 @@
+-r requirements-qt.txt
+PyInstaller>=6.10,<7
+

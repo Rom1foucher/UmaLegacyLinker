@@ -6,14 +6,16 @@ from typing import Any
 
 
 CATEGORY_SOURCES: tuple[tuple[str, str], ...] = (
-    ("all", "Tous"),
-    ("global", "Score global"),
-    ("aptitudes", "Aptitudes et Pink Sparks"),
+    ("all", "Tous les réglages"),
+    ("global", "Composition des scores"),
+    ("aptitudes", "Héritage des aptitudes"),
+    ("future_gp", "Présélection des futurs GP"),
     ("blue", "Blue Sparks"),
-    ("white", "White Skills et transmission"),
-    ("affinity", "Affinité, Uniques et Races"),
-    ("course", "Courses et Green Skills"),
-    ("online", "uma.moe"),
+    ("white", "White Skills"),
+    ("unique", "Uniques héritées"),
+    ("affinity", "Affinité et Race Sparks"),
+    ("course", "Conditions de course et Greens"),
+    ("online", "Réglages uma.moe"),
     ("transfer", "Transfer Helper"),
     ("other", "Autres"),
 )
@@ -64,24 +66,32 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
         return ("blue.neutral", "Point neutre des Blues", 70)
 
     if root == "unique_star_quality":
-        return ("affinity.unique_quality", "Qualité des Uniques par étoiles", 10)
+        return ("unique.star_quality", "Qualité par étoiles", 10)
     if root in {"star_quality", "race_factor"}:
-        return ("affinity.race_quality", "Qualité des Race/Scenario Sparks", 20)
+        return (
+            "affinity.race_quality",
+            "Race/Scenario Sparks · qualité par étoiles",
+            10,
+        )
     if root == "race_saturation":
-        return ("affinity.race_saturation", "Saturation Race/Scenario", 30)
+        return (
+            "affinity.race_saturation",
+            "Race/Scenario Sparks · saturation",
+            20,
+        )
     if root == "affinity" and leaf in {"g1_common_bonus", "same_character_compatibility"}:
-        return ("affinity.bonuses", "Bonus et compatibilité d’affinité", 40)
+        return ("affinity.bonuses", "Affinité · bonus et compatibilité", 30)
     if root == "affinity" and leaf.endswith("thresholds"):
-        return ("affinity.curves", "Courbes d’affinité et G1", 50)
+        return ("affinity.curves", "Affinité et G1 · courbes de score", 40)
     if root == "affinity":
-        return ("affinity.system", "Mode d’affinité", 60)
+        return ("affinity.system", "Affinité · moteur de calcul", 50)
 
     if root == "position_transmission":
-        return ("white.position", "Transmission selon la génération", 10)
+        return ("white.position", "Position dans la lignée", 10)
     if root == "white_saturation":
-        return ("white.saturation", "Saturation des White Skills", 20)
+        return ("white.saturation", "Rendement décroissant", 20)
     if root == "white_generation":
-        return ("white.generation", "Génération des White Skills", 30)
+        return ("white.generation", "Répétition dans la lignée", 30)
     if (
         root == "white_inheritance"
         and "base_proc_rates" in path
@@ -91,14 +101,14 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
     if root == "white_inheritance" and "race_base_proc_rates" in path:
         return ("white.race_proc", "Procs des Race Sparks", 50)
     if root == "white_inheritance":
-        return ("white.model", "Modèle d’héritage White", 60)
+        return ("white.model", "Probabilité finale et diversité", 60)
 
     if root == "course_conditions" and leaf == "active_green_floor":
-        return ("course.general", "Valeur générale des Green Skills", 10)
+        return ("course.general", "Plancher générique des Green Skills", 10)
     if root == "course_conditions" and "floors" in path:
-        return ("course.floors", "Valeurs par condition de course", 20)
+        return ("course.floors", "Planchers par condition de course", 20)
     if root == "course_conditions":
-        return ("course.modes", "Application des valeurs de course", 30)
+        return ("course.modes", "Mode d’application par condition", 30)
 
     if root == "uma_moe_pair" and len(path) > 1 and path[1] == "weights":
         return ("online.final_mix", "Répartition de la paire de GP", 10)
@@ -192,18 +202,18 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
     if root == "future_grandparent_heuristics":
         if "pink_dimension_weights" in path:
             return (
-                "aptitudes.gp_dimensions",
-                "Futur GP · pertinence des aptitudes",
-                130,
+                "future_gp.dimensions",
+                "Aptitudes ciblées",
+                10,
             )
         if "pink_star_quality" in path:
-            return ("aptitudes.gp_pink_quality", "Futur GP · qualité des Pink Sparks", 140)
+            return ("future_gp.pink_quality", "Qualité des Pink Sparks", 20)
         if "pink_need_multiplier" in path:
-            return ("aptitudes.gp_need", "Futur GP · besoin en Pink Sparks", 150)
+            return ("future_gp.need", "Besoin selon le rang de base", 30)
         return (
-            "aptitudes.gp_white_quality",
-            "Futur GP · qualité des White Skills",
-            160,
+            "future_gp.white_quality",
+            "Qualité directe des White Skills",
+            40,
         )
 
     return ("other", "Autres réglages", 999)
@@ -297,29 +307,28 @@ def relative_group_shares(
     return tuple((item, value / total) for item, value in zip(paths, values))
 
 
-def redistribute_relative_group(
-    config: dict[str, Any], path: Sequence[str], selected_share: float
+def relative_group_shares_with_value(
+    config: dict[str, Any], path: Sequence[str], selected_value: float
 ) -> tuple[tuple[tuple[str, ...], float], ...]:
-    """Redistribute the remainder proportionally and return a canonical 100% group."""
+    """Preview normalised shares after changing one independent raw weight."""
 
-    shares = relative_group_shares(config, path)
+    paths = relative_group_paths(config, path)
     selected_path = tuple(path)
-    selected_share = max(0.0, min(1.0, float(selected_share)))
-    if not any(share > 0 for _item, share in shares) and selected_share <= 0:
-        return shares
-    others = [(item, share) for item, share in shares if item != selected_path]
-    other_total = sum(share for _item, share in others)
-    remainder = 1.0 - selected_share
-    if others and other_total <= 0:
-        other_values = {item: remainder / len(others) for item, _share in others}
-    else:
-        other_values = {
-            item: remainder * share / other_total for item, share in others
-        }
-    return tuple(
-        (item, selected_share if item == selected_path else other_values.get(item, 0.0))
-        for item, _share in shares
-    )
+    values = [
+        max(
+            0.0,
+            float(selected_value)
+            if item == selected_path
+            else float(value_at_path(config, item)),
+        )
+        for item in paths
+    ]
+    total = sum(values)
+    if not paths:
+        return ()
+    if total <= 0:
+        return tuple((item, 0.0) for item in paths)
+    return tuple((item, value / total) for item, value in zip(paths, values))
 
 
 def weight_category(path: Sequence[str]) -> str:
@@ -330,8 +339,10 @@ def weight_category(path: Sequence[str]) -> str:
     root = path[0]
     if root == "mode_weights":
         return "global"
-    if root in {"aptitude_inheritance", "future_grandparent_heuristics"}:
+    if root == "aptitude_inheritance":
         return "aptitudes"
+    if root == "future_grandparent_heuristics":
+        return "future_gp"
     if root in {
         "blue_stat_weights_by_distance",
         "blue_star_quality",
@@ -346,13 +357,9 @@ def weight_category(path: Sequence[str]) -> str:
         "position_transmission",
     }:
         return "white"
-    if root in {
-        "affinity",
-        "unique_star_quality",
-        "star_quality",
-        "race_saturation",
-        "race_factor",
-    }:
+    if root == "unique_star_quality":
+        return "unique"
+    if root in {"affinity", "star_quality", "race_saturation", "race_factor"}:
         return "affinity"
     if root == "course_conditions":
         return "course"
@@ -496,5 +503,5 @@ def percentage_limit(path: Sequence[str], *values: object) -> float:
 
 def percentage_display(value: object) -> str:
     number = float(value) * 100.0
-    rendered = f"{number:.4f}".rstrip("0").rstrip(".")
+    rendered = f"{number:.2f}".rstrip("0").rstrip(".")
     return f"{rendered} %"

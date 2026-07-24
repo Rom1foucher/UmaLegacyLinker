@@ -64,6 +64,13 @@ WHITE_DISPLAY_ORDER = {
     "other": 4,
 }
 
+# ``profile_weight`` already folds together course/style compatibility,
+# practical usefulness and the manual rarity premium.  The UI deliberately
+# uses a slightly more permissive floor than the automatic uma.moe selection so
+# useful secondary Sparks remain visible without changing retrieval or scoring.
+WHITE_USEFUL_PROFILE_WEIGHT_FLOOR = 0.20
+WHITE_MAJOR_CONTRIBUTION_RANK_LIMIT = 3
+
 
 def _integer(value: object) -> int | None:
     try:
@@ -339,7 +346,32 @@ def _attach_existing_visual_diagnostics(
                 for detail in matches
                 if str(detail.get("catalog_key") or "").casefold() in skill_ranks
             ]
+            matched_profile_weight = max(
+                (
+                    max(0.0, _float(detail.get("profile_weight")) or 0.0)
+                    for detail in matches
+                ),
+                default=0.0,
+            )
+            matched_contribution = max(
+                (
+                    max(0.0, _float(detail.get("contribution")) or 0.0)
+                    for detail in matches
+                ),
+                default=0.0,
+            )
             if not ranked_matches:
+                factor.update(
+                    {
+                        "score_contribution": matched_contribution,
+                        "profile_weight": matched_profile_weight,
+                        "is_score_priority": False,
+                        "is_score_useful": (
+                            matched_profile_weight >= WHITE_USEFUL_PROFILE_WEIGHT_FLOOR
+                            and matched_contribution > 0.0
+                        ),
+                    }
+                )
                 continue
             best = min(
                 ranked_matches,
@@ -347,13 +379,26 @@ def _attach_existing_visual_diagnostics(
             )
             contribution = max(0.0, _float(best.get("contribution")) or 0.0)
             priority_rank = int(best.get("score_priority_rank") or 999)
+            profile_weight = max(
+                matched_profile_weight,
+                max(0.0, _float(best.get("profile_weight")) or 0.0),
+            )
+            is_priority = (
+                priority_rank <= WHITE_MAJOR_CONTRIBUTION_RANK_LIMIT
+                and contribution > 0.0
+            )
             factor.update(
                 {
                     "score_priority_rank": priority_rank,
                     "score_contribution": contribution,
-                    "profile_weight": max(0.0, _float(best.get("profile_weight")) or 0.0),
+                    "profile_weight": profile_weight,
                     "priority_skill_name": str(best.get("name") or factor.get("name") or ""),
-                    "is_score_priority": priority_rank <= 3 and contribution > 0.0,
+                    "is_score_priority": is_priority,
+                    "is_score_useful": (
+                        not is_priority
+                        and profile_weight >= WHITE_USEFUL_PROFILE_WEIGHT_FLOOR
+                        and contribution > 0.0
+                    ),
                 }
             )
 

@@ -255,8 +255,8 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
         component = path[-1]
         summary = _pick(
             language,
-            f"Part de « {_label(component, language)} » dans le score {scope.lower()}. Les poids voisins sont renormalisés entre eux.",
-            f"Share of “{_label(component, language)}” in the {scope.lower()} score. Neighbouring weights are normalised together.",
+            f"Poids indépendant de « {_label(component, language)} » dans le score {scope.lower()}. Le moteur le normalise avec les poids voisins sans modifier leurs valeurs.",
+            f"Independent weight of “{_label(component, language)}” in the {scope.lower()} score. The engine normalises it with neighbouring weights without changing their values.",
         )
         return WeightHelp(summary, _component_impact(component, language), scope, low, high)
 

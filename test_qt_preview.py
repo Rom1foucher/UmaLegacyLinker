@@ -23,6 +23,7 @@ from ui_qt.core import (
     run_optimization,
     run_transfer_analysis,
 )
+from ui_qt.lineage_nodes import build_pair_lineage_nodes
 from ui_qt.presentation import (
     online_detail_html,
     result_detail_html,
@@ -40,9 +41,9 @@ from ui_qt.weight_controls import (
     is_threshold_percentage,
     percentage_display,
     percentage_limit,
-    redistribute_relative_group,
     relative_group_paths,
     relative_group_shares,
+    relative_group_shares_with_value,
     weight_category,
     weight_sort_key,
     weight_subcategory,
@@ -61,7 +62,9 @@ class QtPreviewCoreTests(unittest.TestCase):
             ("star_quality", "3"): "affinity",
             ("affinity", "g1_common_bonus"): "affinity",
             ("course_conditions", "floors", "weather"): "course",
-            ("uma_moe_pair", "weights", "pink"): "online",
+            ("future_grandparent_heuristics", "pink_star_quality", "3"): "future_gp",
+            ("unique_star_quality", "3"): "unique",
+            ("uma_moe_pair", "final_branch_thresholds"): "online",
             ("transfer_helper", "competitive_utility_floor"): "transfer",
         }
         for path, expected in cases.items():
@@ -84,7 +87,7 @@ class QtPreviewCoreTests(unittest.TestCase):
         self.assertEqual(percentage_limit(relative, 0.2), 100.0)
         self.assertEqual(percentage_limit(relative, 1.8), 200.0)
         self.assertFalse(is_percentage_setting(integer_points, 30))
-        self.assertEqual(percentage_display(0.3333333333), "33.3333 %")
+        self.assertEqual(percentage_display(0.3333333333), "33.33 %")
         self.assertTrue(
             is_threshold_percentage(
                 ("transfer_helper", "competitive_utility_floor")
@@ -92,7 +95,64 @@ class QtPreviewCoreTests(unittest.TestCase):
         )
         self.assertFalse(is_threshold_percentage(probability))
 
-    def test_normalised_weight_groups_are_real_100_percent_budgets(self) -> None:
+    def test_spark_highlights_distinguish_major_useful_and_scenario(self) -> None:
+        names = ["Priority One", "Priority Two", "Priority Three", "Useful Four"]
+        nodes = build_pair_lineage_nodes(
+            {"card_name": "Ace"},
+            {
+                "parent_1": {"card_name": "Parent"},
+                "parent_2": {"card_name": "Other"},
+                "lineage_preview": {
+                    "p1": {
+                        "card_name": "Parent",
+                        "sparks": [
+                            {"name": name, "stars": 2, "type": "white_skill"}
+                            for name in reversed(names)
+                        ]
+                        + [{"name": "Grand Concert", "stars": 2, "type": "scenario"}],
+                    }
+                },
+                "component_details": {
+                    "white_skill": {
+                        "top_skills": [
+                            {
+                                "name": name,
+                                "catalog_key": name.lower().replace(" ", "_"),
+                                "profile_weight": 0.5,
+                                "contribution": 1.0 / rank,
+                            }
+                            for rank, name in enumerate(names, 1)
+                        ],
+                        "factors": [
+                            {
+                                "role": "parent_1",
+                                "source_type": "white_skill",
+                                "source_factor_name": name,
+                                "catalog_key": name.lower().replace(" ", "_"),
+                                "stars": 2,
+                                "profile_weight": 0.5,
+                                "contribution": 1.0 / rank,
+                                "proc_probability_over_run": 0.12,
+                            }
+                            for rank, name in enumerate(names, 1)
+                        ],
+                    }
+                },
+            },
+        )
+        whites = [
+            factor for factor in nodes["p1"]["sparks"] if factor["type"] == "white_skill"
+        ]
+        self.assertEqual([factor["name"] for factor in whites], names)
+        self.assertEqual(
+            [bool(factor.get("is_score_priority")) for factor in whites],
+            [True, True, True, False],
+        )
+        self.assertTrue(whites[3]["is_score_useful"])
+        self.assertNotEqual(SPARK_COLORS["scenario"], SPARK_COLORS["white_priority"])
+        self.assertNotEqual(SPARK_COLORS["white_useful"], SPARK_COLORS["white_priority"])
+
+    def test_weight_groups_preview_normalised_shares_without_mutation(self) -> None:
         config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
         path = ("mode_weights", "parent_pair", "distance_s")
         paths = relative_group_paths(config, path)
@@ -101,45 +161,41 @@ class QtPreviewCoreTests(unittest.TestCase):
         self.assertAlmostEqual(sum(share for _path, share in shares), 1.0)
         self.assertAlmostEqual(dict(shares)[path], 0.29)
 
-        redistributed = redistribute_relative_group(config, path, 0.40)
-        self.assertAlmostEqual(sum(share for _path, share in redistributed), 1.0)
-        self.assertAlmostEqual(dict(redistributed)[path], 0.40)
-        old_others = {
-            item: share for item, share in shares if item != path
-        }
-        new_others = {
-            item: share for item, share in redistributed if item != path
-        }
-        ratios = {
-            item: new_others[item] / old_others[item] for item in old_others
-        }
-        self.assertLess(max(ratios.values()) - min(ratios.values()), 1e-9)
+        original_values = {item: config[item[0]][item[1]][item[2]] for item in paths}
+        preview = relative_group_shares_with_value(config, path, 0.40)
+        self.assertAlmostEqual(sum(share for _path, share in preview), 1.0)
+        expected_total = sum(original_values.values()) - original_values[path] + 0.40
+        self.assertAlmostEqual(dict(preview)[path], 0.40 / expected_total)
+        self.assertEqual(
+            {item: config[item[0]][item[1]][item[2]] for item in paths},
+            original_values,
+        )
         self.assertEqual(
             relative_group_paths(
                 config, ("blue_stat_weights_by_distance", "long", "Stamina")
             ),
             (),
         )
-        hidden = {"schema_version", "description", "formula_notes", "notes"}
+        hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         groups = {
             relative_group_paths(config, item)
             for item, _value in iter_leaf_paths(config)
             if not any(key in hidden or key.endswith("description") for key in item)
             and relative_group_paths(config, item)
         }
-        self.assertEqual(len(groups), 9)
-        self.assertEqual(sum(len(group) for group in groups), 42)
+        self.assertEqual(len(groups), 7)
+        self.assertEqual(sum(len(group) for group in groups), 30)
 
     def test_subcategories_cover_every_weight_in_curated_order(self) -> None:
         config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
-        hidden = {"schema_version", "description", "formula_notes", "notes"}
+        hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         paths = [
             path
             for path, _value in iter_leaf_paths(config)
             if not any(key in hidden or key.endswith("description") for key in path)
         ]
         sources = {weight_subcategory(path)[1] for path in paths}
-        self.assertEqual(len(sources), 50)
+        self.assertEqual(len(sources), 47)
         self.assertNotIn("Autres réglages", sources)
         for source in sources:
             with self.subTest(source=source):
@@ -150,7 +206,7 @@ class QtPreviewCoreTests(unittest.TestCase):
 
     def test_visible_weight_names_never_fall_back_to_json_keys(self) -> None:
         config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
-        hidden = {"schema_version", "description", "formula_notes", "notes"}
+        hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         missing: list[str] = []
         for path, _value in iter_leaf_paths(config):
             if any(key in hidden or key.endswith("description") for key in path):
@@ -163,7 +219,7 @@ class QtPreviewCoreTests(unittest.TestCase):
 
     def test_every_visible_weight_has_bilingual_contextual_help(self) -> None:
         config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
-        hidden = {"schema_version", "description", "formula_notes", "notes"}
+        hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         checked = 0
         for path, value in iter_leaf_paths(config):
             if any(key in hidden or key.endswith("description") for key in path):
@@ -184,7 +240,7 @@ class QtPreviewCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 188)
+        self.assertEqual(checked, 172)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

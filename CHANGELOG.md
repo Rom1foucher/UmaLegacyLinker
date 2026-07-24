@@ -17,6 +17,8 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Added compact Spark-based fallback export for remote lineage members returned by uma.moe.
 - Completed English translations for optimiser detail panels and related runtime diagnostics.
 - Prevented a target parent Uma from being selected as its own grandparent, including alternate costumes; the target Ace remains eligible.
+- Reorganised the Qt weight editor into explicit scoring domains and collapsible calculation blocks.
+- Made normalised group weights independently editable, with non-mutating distribution previews and separate value/block reset actions.
 
 ## 1.4.0 — Interface polish, diagnostics and terminology
 

@@ -267,39 +267,43 @@ class QtRuntimeSmokeTests(unittest.TestCase):
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore
         from ui_qt.pages_weights import WeightsPage
-        from ui_qt.weight_controls import relative_group_shares
+        from ui_qt.weight_controls import relative_group_paths, relative_group_shares
 
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SettingsStore(Path(temp_dir) / "config.json")
             page = WeightsPage(AppContext(store))
-            headers = [
-                page.model.headerData(index, Qt.Orientation.Horizontal)
-                for index in range(page.model.columnCount())
-            ]
+            headers = [page.tree.headerItem().text(index) for index in range(3)]
             self.assertNotIn("Chemin JSON", headers)
             self.assertNotIn("JSON path", headers)
-            self.assertEqual(page.model.columnCount(), 3)
+            self.assertEqual(page.tree.columnCount(), 3)
             self.assertGreater(page.category_combo.count(), 3)
             page.category_combo.setCurrentIndex(
                 page.category_combo.findData("global")
             )
             self.application.processEvents()
-            self.assertGreater(page.subcategory_combo.count(), 3)
+            self.assertEqual(page.tree.topLevelItemCount(), 3)
             percentage_row = next(
                 row
                 for row in page._all_rows
                 if row["path_tuple"][:2] == ("mode_weights", "parent_pair")
             )
             page._show_selection(percentage_row)
-            self.assertEqual(page._editor_kind, "relative_share")
+            self.assertEqual(page._editor_kind, "relative_weight")
             self.assertFalse(page.distribution_panel.isHidden())
             self.assertEqual(len(page._relative_paths), 6)
             self.assertTrue(page.editor_summary.text())
             self.assertTrue(page.impact_text.text())
             self.assertTrue(page.percent_low.text())
             self.assertTrue(page.percent_high.text())
-            tooltip = page.model.data(page.model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
+            tooltip = page._tree_items[percentage_row["path_tuple"]].toolTip(0)
             self.assertTrue(tooltip)
+            group_paths = relative_group_paths(
+                page.current, percentage_row["path_tuple"]
+            )
+            before = {
+                path: page.current[path[0]][path[1]][path[2]]
+                for path in group_paths
+            }
             page.percent_spin.setValue(37.5)
             self.assertEqual(page.percent_slider.value(), 375)
             self.assertAlmostEqual(float(page._read_editor_value()), 0.375)
@@ -310,11 +314,41 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             self.assertAlmostEqual(page.percent_spin.value(), 37.5)
             self.assertTrue(page.apply_button.isEnabled())
             self.assertTrue(page.apply_value())
+            after = {
+                path: page.current[path[0]][path[1]][path[2]]
+                for path in group_paths
+            }
+            selected_path = percentage_row["path_tuple"]
+            self.assertAlmostEqual(after[selected_path], 0.375)
+            self.assertEqual(
+                {path: value for path, value in after.items() if path != selected_path},
+                {path: value for path, value in before.items() if path != selected_path},
+            )
             shares = dict(
-                relative_group_shares(page.current, percentage_row["path_tuple"])
+                relative_group_shares(page.current, selected_path)
             )
             self.assertAlmostEqual(sum(shares.values()), 1.0)
-            self.assertAlmostEqual(shares[percentage_row["path_tuple"]], 0.375)
+            self.assertAlmostEqual(
+                shares[selected_path], after[selected_path] / sum(after.values())
+            )
+            other_path = next(path for path in group_paths if path != selected_path)
+            other_custom = after[other_path] * 1.25
+            page.current[other_path[0]][other_path[1]][other_path[2]] = other_custom
+            page._show_selection(percentage_row)
+            page.reset_selected()
+            self.assertEqual(
+                page.current[selected_path[0]][selected_path[1]][selected_path[2]],
+                page.default[selected_path[0]][selected_path[1]][selected_path[2]],
+            )
+            self.assertAlmostEqual(
+                page.current[other_path[0]][other_path[1]][other_path[2]],
+                other_custom,
+            )
+            page.reset_selected_group()
+            self.assertEqual(
+                page.current[other_path[0]][other_path[1]][other_path[2]],
+                page.default[other_path[0]][other_path[1]][other_path[2]],
+            )
             multiplier_row = next(
                 row
                 for row in page._all_rows

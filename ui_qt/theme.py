@@ -25,8 +25,16 @@ SPARK_COLORS = {
     "unique": ("#14351f", "#397848", "#8cdd9a"),
     "white_skill": ("#2b3037", "#59636f", "#e1e8f0"),
     "white_race": ("#292e35", "#58616c", "#d9e0e8"),
+    # Useful profile-compatible whites get a visible but deliberately quieter
+    # treatment than the very strongest contributors.  This lets the result
+    # view surface more than an arbitrary top three without turning the whole
+    # Spark list gold.
+    "white_useful": ("#132d3b", "#397896", "#bfe9ff"),
     "white_priority": ("#352b12", "#d5aa3f", "#ffe9a3"),
-    "scenario": ("#3c3115", "#806a2f", "#f3cf72"),
+    # Scenario Sparks are informative/stat-oriented, not automatically major
+    # white priorities.  A muted violet keeps them distinct from both ordinary
+    # race whites and the gold priority treatment.
+    "scenario": ("#26243a", "#5d5984", "#cbc7f4"),
     "other": ("#252b34", "#4b5869", "#cbd6e4"),
 }
 
@@ -319,6 +327,39 @@ def application_stylesheet() -> str:
         gridline-color: #223149;
         selection-background-color: #28584f;
         selection-color: {COLORS['text']};
+    }}
+    QTreeWidget#weightsTree {{
+        background: #101824;
+        alternate-background-color: #121c2a;
+        border: 1px solid #223149;
+        border-radius: 8px;
+        outline: none;
+        padding: 3px;
+    }}
+    QTreeWidget#weightsTree::item {{
+        min-height: 25px;
+        padding: 2px 5px;
+        border-bottom: 1px solid #1b2839;
+    }}
+    QTreeWidget#weightsTree::item:hover {{
+        background: #1a2a3d;
+    }}
+    QTreeWidget#weightsTree::item:selected {{
+        background: #28584f;
+        color: {COLORS['text']};
+    }}
+    QTreeWidget#weightsTree::branch {{
+        background: transparent;
+    }}
+    QFrame#weightsToolbar {{
+        background: #121c29;
+        border: 1px solid #223149;
+        border-radius: 9px;
+    }}
+    QFrame#weightsNavigationPanel, QFrame#weightsEditorPanel {{
+        background: {COLORS['surface']};
+        border: 1px solid {COLORS['border']};
+        border-radius: 10px;
     }}
     QHeaderView::section {{
         background: #182436;

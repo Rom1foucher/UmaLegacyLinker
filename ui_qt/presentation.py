@@ -485,6 +485,7 @@ def _spark_branch_entries(
                     "copy_count": 0,
                     "is_direct": False,
                     "is_score_priority": False,
+                    "is_score_useful": False,
                     "score_priority_rank": 999,
                     "failure_probability": 1.0,
                     "has_probability": False,
@@ -496,6 +497,9 @@ def _spark_branch_entries(
             entry["is_direct"] = bool(entry["is_direct"] or position == direct_position)
             entry["is_score_priority"] = bool(
                 entry["is_score_priority"] or factor.get("is_score_priority")
+            )
+            entry["is_score_useful"] = bool(
+                entry["is_score_useful"] or factor.get("is_score_useful")
             )
             try:
                 entry["score_priority_rank"] = min(
@@ -543,16 +547,26 @@ def _spark_probability_text(entry: dict[str, Any]) -> str:
 
 def _spark_card(entry: dict[str, Any]) -> str:
     factor_type = str(entry.get("type") or "other")
-    background, border, foreground = SPARK_COLORS.get(
-        "white_priority" if entry.get("is_score_priority") else factor_type,
-        SPARK_COLORS["other"],
+    style_key = (
+        "white_priority"
+        if entry.get("is_score_priority")
+        else "white_useful"
+        if entry.get("is_score_useful")
+        else factor_type
     )
+    background, border, foreground = SPARK_COLORS.get(style_key, SPARK_COLORS["other"])
     marker = (
         "<span class='parent-marker'>P</span>&nbsp;"
         if entry.get("is_direct")
         else ""
     )
-    priority = "◆&nbsp;" if entry.get("is_score_priority") else ""
+    priority = (
+        "◆&nbsp;"
+        if entry.get("is_score_priority")
+        else "◇&nbsp;"
+        if entry.get("is_score_useful")
+        else ""
+    )
     copies = int(entry.get("copy_count") or 0)
     copy_text = f" ×{copies}" if copies > 1 else ""
     probability_text = _spark_probability_text(entry)
@@ -672,6 +686,10 @@ def _spark_recap(row: dict[str, Any], mode: str, language: str) -> str:
             + escape(_t("présent sur le parent direct", language))
             + "&nbsp;·&nbsp;"
             + escape(_t("totaux Bleu/Rose/White sur la branche", language))
+            + "&nbsp;·&nbsp;◆ "
+            + escape(_t("priorité majeure", language))
+            + "&nbsp;·&nbsp;◇ "
+            + escape(_t("white utile au profil", language))
             + "</p>"
         )
     return (

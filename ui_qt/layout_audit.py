@@ -230,6 +230,7 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                             "skill_id": 10011 + index,
                             "proc_probability_over_run": 0.12 + index * 0.018,
                             "is_score_priority": index < 2,
+                            "is_score_useful": 2 <= index < 5,
                             "score_priority_rank": index + 1 if index < 2 else 999,
                         }
                         for index, white_name in enumerate(

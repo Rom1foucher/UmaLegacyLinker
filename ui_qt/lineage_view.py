@@ -79,7 +79,17 @@ def _human_size(size: int) -> str:
 def _factor_style(factor: dict[str, Any]) -> tuple[str, str, str]:
     if factor.get("is_score_priority"):
         return SPARK_COLORS["white_priority"]
+    if factor.get("is_score_useful"):
+        return SPARK_COLORS["white_useful"]
     return SPARK_COLORS.get(str(factor.get("type") or "other"), SPARK_COLORS["other"])
+
+
+def _factor_marker(factor: dict[str, Any]) -> str:
+    if factor.get("is_score_priority"):
+        return "◆ "
+    if factor.get("is_score_useful"):
+        return "◇ "
+    return ""
 
 
 def _run_probability(factor: dict[str, Any]) -> float | None:
@@ -212,7 +222,7 @@ class LineageTree(QWidget):
     def _spark_chip_width(self, factor: dict[str, Any], maximum: float) -> float:
         metrics = QFontMetrics(self._spark_font())
         stars = max(0, int(factor.get("stars") or 0))
-        marker = "◆ " if factor.get("is_score_priority") else ""
+        marker = _factor_marker(factor)
         text = f"{marker}{stars}★  {factor.get('name') or '—'}"
         probability = _probability_text(_run_probability(factor))
         if probability:
@@ -678,7 +688,14 @@ class LineageTree(QWidget):
     ) -> None:
         background, border, foreground = _factor_style(factor)
         painter.setBrush(QColor(background))
-        painter.setPen(QPen(QColor(border), 1.8 if factor.get("is_score_priority") else 1.0))
+        border_width = (
+            1.8
+            if factor.get("is_score_priority")
+            else 1.4
+            if factor.get("is_score_useful")
+            else 1.0
+        )
+        painter.setPen(QPen(QColor(border), border_width))
         painter.drawRoundedRect(rect, 5.0, 5.0)
         left = rect.left() + 7.0
         icon_url = self._skill_urls.get((position, index))
@@ -702,7 +719,7 @@ class LineageTree(QWidget):
             else 0.0
         )
         stars = max(0, int(factor.get("stars") or 0))
-        marker = "◆ " if factor.get("is_score_priority") else ""
+        marker = _factor_marker(factor)
         name = f"{marker}{stars}★  {factor.get('name') or '—'}"
         available = max(12, int(rect.right() - left - 7.0 - probability_width))
         visible = painter.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, available)
@@ -722,7 +739,13 @@ class LineageTree(QWidget):
             painter.setBrush(QColor("#111821"))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(probability_rect, 4.0, 4.0)
-            painter.setPen(QColor("#ffe9a3" if factor.get("is_score_priority") else "#f0f5fb"))
+            if factor.get("is_score_priority"):
+                probability_color = "#ffe9a3"
+            elif factor.get("is_score_useful"):
+                probability_color = "#bfe9ff"
+            else:
+                probability_color = "#f0f5fb"
+            painter.setPen(QColor(probability_color))
             painter.drawText(probability_rect, Qt.AlignmentFlag.AlignCenter, probability_text)
 
     def _card_tooltip(self, position: str) -> str:
@@ -769,6 +792,16 @@ class LineageTree(QWidget):
                 lines.append(
                     self.context.t("Skill valorisée : {skill}").replace("{skill}", skill_name)
                 )
+        elif factor.get("is_score_useful"):
+            profile_weight = _optional_number(factor.get("profile_weight"))
+            useful_text = self.context.t(
+                "White compatible et utile pour ce profil, mise en avant même hors du top 3."
+            )
+            if profile_weight is not None:
+                useful_text += " " + self.context.t("Poids effectif : {weight}.").replace(
+                    "{weight}", f"{profile_weight:.2f}"
+                )
+            lines.append(useful_text)
         if factor.get("skill_id"):
             lines.append(f"Skill ID: {factor['skill_id']}")
         return "\n".join(lines)
@@ -1043,7 +1076,7 @@ class LineageDialog(QDialog):
         self.spark_legend.setText(
             t(
                 "Whites : le % indique la chance d’au moins un proc sur les {count} Inspiration Events "
-                "de la run lorsqu’elle est disponible · contour doré = forte contribution au score de cette lignée."
+                "de la run lorsqu’elle est disponible · ◆ doré = priorité majeure · ◇ bleu = white compatible, utile ou rare pour le profil."
             ).replace("{count}", str(event_count))
         )
         self.attribution.setText(

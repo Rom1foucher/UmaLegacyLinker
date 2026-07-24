@@ -301,7 +301,7 @@ class VisualAssetTests(unittest.TestCase):
             "proc_probability_over_run", nodes["p1"]["sparks"][0]
         )
 
-    def test_only_the_three_strongest_white_contributions_are_highlighted(self) -> None:
+    def test_three_strongest_whites_are_major_and_other_useful_whites_stay_visible(self) -> None:
         names = ["Priority One", "Priority Two", "Priority Three", "Priority Four"]
         nodes = build_pair_lineage_nodes(
             {"card_name": "Ace"},
@@ -349,6 +349,10 @@ class VisualAssetTests(unittest.TestCase):
         self.assertEqual(
             [bool(factor.get("is_score_priority")) for factor in whites],
             [True, True, True, False],
+        )
+        self.assertEqual(
+            [bool(factor.get("is_score_useful")) for factor in whites],
+            [False, False, False, True],
         )
 
     def test_available_local_history_adds_optional_great_grandparents(self) -> None:

@@ -407,6 +407,7 @@ class OnlinePage(QWidget):
         root.addWidget(self.context_strip)
 
         vertical = QSplitter(Qt.Orientation.Vertical)
+        vertical.setChildrenCollapsible(False)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -618,7 +619,10 @@ class OnlinePage(QWidget):
         vertical.addWidget(result_widget)
         vertical.setStretchFactor(0, 0)
         vertical.setStretchFactor(1, 1)
-        vertical.setSizes([410, 490])
+        self._config_scroll = scroll
+        self._vertical_splitter = vertical
+        self.advanced.toggle.toggled.connect(self._sync_config_pane_height)
+        QTimer.singleShot(0, self._sync_config_pane_height)
         root.addWidget(vertical, 1)
 
         self.refresh_button.clicked.connect(lambda: self.refresh_options(show_errors=True))
@@ -719,6 +723,28 @@ class OnlinePage(QWidget):
         self._refresh_filter_summaries()
         self._mode_changed()
         self._refresh_context()
+        QTimer.singleShot(0, self._sync_config_pane_height)
+
+    def _sync_config_pane_height(self, *_args: object) -> None:
+        """Keep the top splitter pane sized to its real content.
+
+        Same fix as ``OptimizerPage`` (see ``ui_qt/pages_optimizer.py``): a
+        fixed pixel split drifts out of sync with the actual layout, and
+        ``setMaximumHeight`` — not just an initial ``setSizes`` call — is
+        needed so the pane stays capped even while the user drags the
+        splitter handle by hand.
+        """
+        splitter = getattr(self, "_vertical_splitter", None)
+        scroll = getattr(self, "_config_scroll", None)
+        if splitter is None or scroll is None:
+            return
+        total = sum(splitter.sizes()) or splitter.height()
+        if total <= 0:
+            return
+        content_height = scroll.widget().sizeHint().height() + 4
+        scroll.setMaximumHeight(max(140, content_height))
+        top = max(120, min(content_height, total - 120))
+        splitter.setSizes([top, max(120, total - top)])
 
     def sync_context(self) -> None:
         self._populate_profiles()

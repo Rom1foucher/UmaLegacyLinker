@@ -305,6 +305,7 @@ class OptimizerPage(QWidget):
         root.addWidget(self.context_strip)
 
         vertical = QSplitter(Qt.Orientation.Vertical)
+        vertical.setChildrenCollapsible(False)
         config_scroll = QScrollArea()
         config_scroll.setWidgetResizable(True)
         config_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -424,8 +425,17 @@ class OptimizerPage(QWidget):
         actions.addStretch(1)
         config_layout.addLayout(actions)
         config_scroll.setWidget(config_widget)
+        # Le splitter ignore sizeHint() une fois l'utilisateur en train de
+        # glisser la poignée : sans plancher explicite, il autorise des
+        # tailles où le fond arrondi des panneaux ("panel") et leur contenu
+        # se déforment visiblement (coins écrasés, champs qui se chevauchent).
+        # Pas de plancher artificiel ici : setChildrenCollapsible(False)
+        # empêche déjà d'atteindre zéro pixel, et le minimum naturel de la
+        # QScrollArea suffit à laisser l'utilisateur réduire le formulaire
+        # jusqu'à ne plus voir que la barre de contexte au-dessus.
 
         results_widget = QWidget()
+        results_widget.setMinimumHeight(280)
         results_layout = QVBoxLayout(results_widget)
         results_layout.setContentsMargins(0, 0, 0, 0)
         results_head = QHBoxLayout()
@@ -450,7 +460,10 @@ class OptimizerPage(QWidget):
         vertical.addWidget(results_widget)
         vertical.setStretchFactor(0, 0)
         vertical.setStretchFactor(1, 1)
-        vertical.setSizes([330, 560])
+        self._config_scroll = config_scroll
+        self._vertical_splitter = vertical
+        self.advanced.toggle.toggled.connect(self._sync_config_pane_height)
+        QTimer.singleShot(0, self._sync_config_pane_height)
         root.addWidget(vertical, 1)
 
         self.refresh_options_button.clicked.connect(self.refresh_options)
@@ -589,6 +602,7 @@ class OptimizerPage(QWidget):
             + f" · {profile_summary(self._current_profile(), self.context.language)}"
         )
         self.course_picker.set_text(self.context.course_overrides_path)
+        QTimer.singleShot(0, self._sync_config_pane_height)
 
     def _current_profile(self) -> dict[str, Any]:
         return {
@@ -618,6 +632,36 @@ class OptimizerPage(QWidget):
     def _course_path_changed(self, value: str) -> None:
         self.context.update_paths(course_overrides_path=value)
         self._refresh_course_options()
+
+    def _sync_config_pane_height(self, *_args: object) -> None:
+        """Keep the top splitter pane sized to its real content.
+
+        A fixed pixel split (``setSizes([330, 560])``) drifts out of sync
+        with the actual layout as soon as content differs from whatever
+        state it was measured under (language, DPI, populated fields,
+        collapsed/expanded advanced options): the scroll area was still
+        stretched to the stale fixed height, leaving a blank void below the
+        real content. Recomputing from ``sizeHint()`` on every relevant
+        change keeps the two in lockstep instead of guessing a constant.
+
+        The maximum height is enforced directly on the scroll area, not just
+        picked once as an initial split: Qt honours ``setMaximumHeight`` the
+        same way it honours ``setMinimumHeight`` while the user is actively
+        dragging the splitter handle, so the form pane becomes physically
+        unable to grow past what its content needs, whatever the drag speed
+        or window size.
+        """
+        splitter = getattr(self, "_vertical_splitter", None)
+        scroll = getattr(self, "_config_scroll", None)
+        if splitter is None or scroll is None:
+            return
+        total = sum(splitter.sizes()) or splitter.height()
+        if total <= 0:
+            return
+        content_height = scroll.widget().sizeHint().height() + 4
+        scroll.setMaximumHeight(max(140, content_height))
+        top = max(120, min(content_height, total - 120))
+        splitter.setSizes([top, max(120, total - top)])
 
     def refresh_options(self, _checked: bool = False, *, show_errors: bool = True) -> None:
         master = Path(self.context.master_path).expanduser()

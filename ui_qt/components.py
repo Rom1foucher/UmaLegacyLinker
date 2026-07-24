@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
+    QAbstractSpinBox,
+    QApplication,
     QComboBox,
     QCompleter,
     QFileDialog,
@@ -16,6 +19,55 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class NoWheelFilter(QObject):
+    """Blocks accidental value changes from mouse-wheel scrolling.
+
+    ``QComboBox`` and every spin box respond to wheel events even without
+    focus, so scrolling a long page silently changes whatever dropdown or
+    number field the cursor happens to pass over. Install one instance on
+    ``QApplication`` (see :func:`install_no_wheel_filter`) instead of
+    touching every combo/spin box across the project: this intercepts wheel
+    events for both widget families unconditionally, and forwards the
+    scroll to the nearest scrollable ancestor so the page keeps scrolling
+    normally instead of the value changing.
+
+    Focus alone cannot gate this: Qt keeps keyboard focus on a combo or spin
+    box after it is clicked, even once the cursor has moved elsewhere, so a
+    focus-based check still lets the wheel change that same widget's value
+    the next time the cursor happens to pass back over it while scrolling.
+    Blocking unconditionally removes that gap. This does not affect an open
+    combo-box dropdown: the popup is a separate widget, not the QComboBox
+    itself, so scrolling a long open list is unaffected.
+    """
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Wheel and isinstance(
+            watched, (QComboBox, QAbstractSpinBox)
+        ):
+            parent = watched.parentWidget()
+            while parent is not None:
+                if isinstance(parent, QAbstractScrollArea):
+                    QApplication.sendEvent(parent.viewport(), event)
+                    break
+                parent = parent.parentWidget()
+            return True
+        return super().eventFilter(watched, event)
+
+
+def install_no_wheel_filter(application: QApplication) -> NoWheelFilter:
+    """Install the wheel-scroll guard once for the whole application.
+
+    Keeps a reference alive on ``application`` itself: a filter installed via
+    ``installEventFilter`` is only kept alive by Qt's C++ side as long as
+    something on the Python side also holds a reference, otherwise it can be
+    garbage-collected and silently stop filtering.
+    """
+    guard = NoWheelFilter(application)
+    application.installEventFilter(guard)
+    application._no_wheel_filter = guard  # keep a strong Python reference
+    return guard
 
 
 class SearchableComboBox(QComboBox):

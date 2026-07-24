@@ -25,6 +25,7 @@ def main() -> int:
         )
         return 2
 
+    from ui_qt.components import install_no_wheel_filter
     from ui_qt.main_window import MainWindow
     from ui_qt.theme import application_stylesheet
 
@@ -33,6 +34,7 @@ def main() -> int:
     application.setOrganizationName("UmaLegacyLinker")
     application.setStyle("Fusion")
     application.setStyleSheet(application_stylesheet())
+    install_no_wheel_filter(application)
     window = MainWindow()
     window.show()
     return application.exec()

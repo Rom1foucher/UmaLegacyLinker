@@ -1980,6 +1980,22 @@ EXACT_EN.update({
     "Supprimer les illustrations téléchargées ? Elles pourront être rechargées à la prochaine ouverture.": "Delete downloaded artwork? It can be loaded again next time the view is opened.",
 })
 
+# Reconciliation of the Qt preview with the contextual GP search shipped on
+# main: subcategory labels of the new weight groups plus Qt strings surfaced
+# by the extended check_i18n coverage.
+EXACT_EN.update({
+    "Recherche avec parent opposé fixé": "Search with a fixed opposing parent",
+    "Cohortes de récupération des parents API": "API parent-retrieval cohorts",
+    "Présélection des paires locales × distantes": "Local × remote pair preselection",
+    "Sélectionne un réglage.": "Select a setting.",
+    "Le résultat doit être un objet JSON.": "The result must be a JSON object.",
+})
+
+FRAGMENTS_EN.update({
+    "Classement introuvable : ": "Ranking file not found: ",
+    "Classement JSON invalide : ": "Invalid ranking JSON: ",
+})
+
 _FRAGMENTS_EN_PATTERN = re.compile(
     "|".join(re.escape(source) for source in sorted(FRAGMENTS_EN, key=len, reverse=True))
 )

@@ -34,6 +34,7 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Prevented a target parent Uma from being selected as its own grandparent, including alternate costumes; the target Ace remains eligible.
 - Reorganised the Qt weight editor into explicit scoring domains and collapsible calculation blocks.
 - Made normalised group weights independently editable, with non-mutating distribution previews and separate value/block reset actions.
+- Covered the 1.6.0 contextual GP search in the Qt weight editor: dedicated subcategories and bilingual contextual help for the API retrieval cohorts, the local × remote pair preselection, the fixed-opposing-parent settings, and the target-surface aptitude policy, with the i18n coverage checker extended to the full Qt layer.
 
 ## 1.4.0 — Interface polish, diagnostics and terminology
 

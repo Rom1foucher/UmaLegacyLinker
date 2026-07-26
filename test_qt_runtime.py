@@ -290,7 +290,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             page._show_selection(percentage_row)
             self.assertEqual(page._editor_kind, "relative_weight")
             self.assertFalse(page.distribution_panel.isHidden())
-            self.assertEqual(len(page._relative_paths), 6)
+            self.assertEqual(len(page._relative_paths), 7)
             self.assertTrue(page.editor_summary.text())
             self.assertTrue(page.impact_text.text())
             self.assertTrue(page.percent_low.text())

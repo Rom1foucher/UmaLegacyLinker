@@ -32,7 +32,7 @@ def _scope(path: Sequence[str], language: str) -> str:
         return _pick(language, "Branche parent", "Parent branch")
     if "future_grandparent" in path:
         return _pick(language, "Futur grand-parent", "Future grandparent")
-    if path and path[0] == "uma_moe_pair":
+    if path and path[0] in {"uma_moe_pair", "uma_moe_parent_search"}:
         return "uma.moe"
     if path and path[0] == "transfer_helper":
         return "Transfer Helper"
@@ -102,9 +102,13 @@ def _component_impact(component: str, language: str) -> str:
             "Augmenter favorise les lignées qui sécurisent le rang S en distance, même si leurs autres Sparks sont moins forts.",
             "Increasing it favours lineages that secure an S distance rank, even when their other Sparks are weaker.",
         ),
+        "surface_aptitude": (
+            "Augmenter privilégie les lignées qui sécurisent le rang initial visé sur la surface de la course, avant les autres aptitudes roses.",
+            "Increasing it favours lineages that secure the targeted initial surface rank ahead of the other pink aptitudes.",
+        ),
         "pink_other": (
-            "Augmenter donne davantage de valeur aux aptitudes de surface et de style, en plus de la contrainte Distance S.",
-            "Increasing it gives more value to surface and running-style aptitudes beyond the Distance S constraint.",
+            "Augmenter donne davantage de valeur aux aptitudes de style, en plus des contraintes Distance S et Surface.",
+            "Increasing it gives more value to running-style aptitudes beyond the Distance S and Surface constraints.",
         ),
         "white_skill": (
             "Augmenter privilégie les lignées qui transmettent des White Skills utiles avec une bonne probabilité.",
@@ -147,6 +151,134 @@ def _component_impact(component: str, language: str) -> str:
         ),
     )
     return _pick(language, french, english)
+
+
+_PARENT_SEARCH_HELP: dict[tuple[str, str], tuple[str, str, str, str]] = {
+    ("retrieval", "enabled"): (
+        "Active la répartition du budget API en cohortes Distance, Surface et Large au lieu d’une seule requête triée par whites.",
+        "Enables splitting the API budget into Distance, Surface, and Broad cohorts instead of a single white-sorted query.",
+        "Désactiver revient à l’échantillon unique : les branches riches en roses nécessaires peuvent disparaître du pool avant tout scoring.",
+        "Disabling it returns to the single sample, where branches rich in the required pinks can vanish from the pool before any scoring.",
+    ),
+    ("retrieval", "surface_cohort_enabled"): (
+        "Autorise la cohorte dédiée aux étoiles de la surface cible pendant la récupération API.",
+        "Allows the dedicated target-surface star cohort during API retrieval.",
+        "Désactiver libère sa part pour Distance et Large, utile quand l’Ace démarre déjà A sur la surface.",
+        "Disabling it frees its share for Distance and Broad, useful when the Ace already starts at A on the surface.",
+    ),
+    ("retrieval", "distance_share"): (
+        "Part de base du budget API réservée à la cohorte triée par étoiles de distance.",
+        "Base share of the API budget reserved for the distance-star-sorted cohort.",
+        "L’augmenter sécurise davantage de porteurs de distance dans le pool, au détriment des cohortes Surface et Large.",
+        "Increasing it secures more distance carriers in the pool at the expense of the Surface and Broad cohorts.",
+    ),
+    ("retrieval", "surface_share_below_minimum"): (
+        "Part Surface utilisée tant que le rang initial de l’Ace reste sous le rang minimum configuré.",
+        "Surface share used while the Ace’s initial rank stays below the configured minimum rank.",
+        "L’augmenter va chercher plus de branches distantes porteuses de la surface quand le besoin est maximal.",
+        "Increasing it fetches more remote branches carrying the surface when the need is greatest.",
+    ),
+    ("retrieval", "surface_share_at_minimum"): (
+        "Part Surface utilisée quand l’Ace atteint le rang minimum sans atteindre le rang préféré.",
+        "Surface share used once the Ace reaches the minimum rank but not the preferred rank.",
+        "L’augmenter continue d’alimenter la surface après le seuil B, au lieu de basculer vers Distance et Large.",
+        "Increasing it keeps feeding the surface cohort past the B threshold instead of shifting towards Distance and Broad.",
+    ),
+    ("retrieval", "surface_share_at_preferred"): (
+        "Part Surface conservée quand l’Ace démarre déjà au rang préféré sur la surface.",
+        "Surface share kept when the Ace already starts at the preferred surface rank.",
+        "La laisser à zéro consacre tout le budget restant aux autres cohortes ; l’augmenter garde une marge de sécurité.",
+        "Leaving it at zero devotes the remaining budget to the other cohorts; increasing it keeps a safety margin.",
+    ),
+    ("retrieval", "broad_minimum_share"): (
+        "Part minimale garantie à la cohorte large triée par whites, quelles que soient les autres demandes.",
+        "Minimum share guaranteed to the broad white-sorted cohort regardless of other demands.",
+        "L’augmenter protège la diversité de whites du pool ; Distance et Surface sont redimensionnées si nécessaire.",
+        "Increasing it protects white diversity in the pool; Distance and Surface are rescaled when needed.",
+    ),
+    ("retrieval", "balanced_branch_divisor"): (
+        "Diviseur appliqué au besoin d’étoiles total pour demander une branche distante équilibrée plutôt que porteuse de tout.",
+        "Divisor applied to the total star need so the remote branch is asked for a balanced share rather than everything.",
+        "L’augmenter abaisse le seuil d’étoiles demandé au côté distant et suppose que le côté local complètera le reste.",
+        "Increasing it lowers the star threshold requested from the remote side and assumes the local side completes the rest.",
+    ),
+    ("retrieval", "contextual_distance_star_target"): (
+        "Référence d’étoiles de distance visée en mode parent opposé fixé, une fois le départ A assuré.",
+        "Distance-star reference targeted in fixed-opposing-parent mode once the initial A start is covered.",
+        "L’augmenter maintient plus de porteurs de distance dans l’échantillon pour viser P(S), au lieu de réduire la recherche au strict minimum.",
+        "Increasing it keeps more distance carriers in the sample to aim at P(S) instead of shrinking the search to the bare minimum.",
+    ),
+    ("retrieval", "contextual_distance_need_floor"): (
+        "Demande minimale conservée par la cohorte Distance même quand le parent opposé couvre déjà le besoin calculé.",
+        "Minimum demand kept by the Distance cohort even when the opposing parent already covers the computed need.",
+        "L’augmenter évite qu’une couverture apparente réduise la cohorte Distance à presque rien.",
+        "Increasing it prevents apparent coverage from shrinking the Distance cohort to almost nothing.",
+    ),
+    ("retrieval", "contextual_surface_reallocation_to_distance"): (
+        "Fraction de la part Surface libérée qui est réaffectée à la cohorte Distance en mode parent opposé fixé.",
+        "Fraction of the freed Surface share reallocated to the Distance cohort in fixed-opposing-parent mode.",
+        "L’augmenter convertit la surface déjà couverte en étoiles de distance supplémentaires ; le reste va à la cohorte large.",
+        "Increasing it converts already-covered surface into extra distance stars; the remainder goes to the broad cohort.",
+    ),
+    ("preselection", "distance_share"): (
+        "Places réservées aux branches distantes les plus riches en distance avant le produit cartésien local × distant.",
+        "Slots reserved for the most distance-rich remote branches before the local × remote cartesian product.",
+        "L’augmenter garde plus de spécialistes distance pour l’évaluation exacte, au prix de candidats au score global élevé.",
+        "Increasing it keeps more distance specialists for exact evaluation at the cost of high-overall-score candidates.",
+    ),
+    ("preselection", "surface_share_below_minimum"): (
+        "Places réservées aux branches riches en surface tant que l’Ace reste sous le rang minimum.",
+        "Slots reserved for surface-rich branches while the Ace stays below the minimum rank.",
+        "L’augmenter empêche deux branches moyennes mais complémentaires de disparaître avant le score exact à six membres.",
+        "Increasing it prevents two individually average but complementary branches from vanishing before the exact six-member score.",
+    ),
+    ("preselection", "surface_share_at_minimum"): (
+        "Places Surface réservées quand l’Ace atteint le rang minimum sans le rang préféré.",
+        "Surface slots reserved once the Ace reaches the minimum but not the preferred rank.",
+        "L’augmenter conserve des porteurs de surface au-delà du seuil B ; le reste des places revient au classement global.",
+        "Increasing it keeps surface carriers past the B threshold; the remaining slots return to the overall ranking.",
+    ),
+    ("preselection", "surface_share_at_preferred"): (
+        "Places Surface conservées quand l’Ace démarre déjà au rang préféré.",
+        "Surface slots kept when the Ace already starts at the preferred rank.",
+        "Zéro rend toutes les places au classement global ; une petite valeur garde quelques spécialistes par prudence.",
+        "Zero returns every slot to the overall ranking; a small value keeps a few specialists as a precaution.",
+    ),
+}
+
+
+_CONTEXTUAL_OPPONENT_HELP: dict[str, tuple[str, str, str, str]] = {
+    "white_retrieval_coverage_decay": (
+        "Atténuation appliquée, pendant la récupération API, au poids des whites déjà couvertes par le parent opposé.",
+        "Attenuation applied during API retrieval to the weight of whites already covered by the opposing parent.",
+        "L’augmenter oriente la requête vers des whites complémentaires ; zéro ignore la couverture du parent opposé.",
+        "Increasing it steers the query towards complementary whites; zero ignores the opposing parent’s coverage.",
+    ),
+    "white_preselection_coverage_decay": (
+        "Atténuation appliquée, pendant la présélection, à la valeur des whites déjà couvertes par le parent opposé.",
+        "Attenuation applied during preselection to the value of whites already covered by the opposing parent.",
+        "L’augmenter favorise les branches qui complètent la paire au lieu de dupliquer ses whites ; zéro désactive l’effet.",
+        "Increasing it favours branches that complete the pair instead of duplicating its whites; zero disables the effect.",
+    ),
+    "preselection_affinity_weight": (
+        "Poids de l’affinité du candidat dans la présélection quand un parent opposé est fixé.",
+        "Weight of candidate affinity in preselection when an opposing parent is fixed.",
+        "Le défaut quasi nul laisse le moteur exact parent_pair juger l’affinité ; l’augmenter réintroduit ce signal trop tôt.",
+        "The near-zero default lets the exact parent_pair engine judge affinity; increasing it reintroduces the signal too early.",
+    ),
+    "preselection_g1_weight": (
+        "Poids du potentiel G1 dans la présélection quand un parent opposé est fixé.",
+        "Weight of G1 potential in preselection when an opposing parent is fixed.",
+        "Le défaut quasi nul évite de doubler le moteur exact ; l’augmenter fait remonter les liens G1 dès la présélection.",
+        "The near-zero default avoids duplicating the exact engine; increasing it surfaces G1 links as early as preselection.",
+    ),
+    "preselection_white_generation_weight": (
+        "Poids de la capacité de génération de whites dans la présélection contextuelle.",
+        "Weight of white-generation capacity in contextual preselection.",
+        "L’augmenter favorise les branches qui répètent des whites utiles pendant la fabrication, avant le score exact.",
+        "Increasing it favours branches that repeat useful whites during production, ahead of the exact score.",
+    ),
+}
 
 
 _TRANSFER_HELP: dict[str, tuple[str, str, str, str]] = {
@@ -406,6 +538,13 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
         return WeightHelp(summary, impact, scope, low, high)
 
     if root == "uma_moe_pair":
+        if len(path) > 1 and path[1] == "contextual_opponent" and leaf in _CONTEXTUAL_OPPONENT_HELP:
+            fr_summary, en_summary, fr_impact, en_impact = _CONTEXTUAL_OPPONENT_HELP[leaf]
+            return WeightHelp(
+                _pick(language, fr_summary, en_summary),
+                _pick(language, fr_impact, en_impact),
+                scope, low, high,
+            )
         if len(path) > 1 and path[1] in {"weights", "preselection_weights"}:
             component = leaf
             stage = _pick(language, "score final", "final score") if path[1] == "weights" else _pick(language, "présélection rapide", "fast preselection")
@@ -429,6 +568,17 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
             impact = _pick(language, "La rendre plus généreuse conserve davantage de candidats pour l’évaluation complète.", "Making it more generous keeps more candidates for full evaluation.")
             advanced = True
         return WeightHelp(summary, impact, scope, low, high, advanced)
+
+    if root == "uma_moe_parent_search":
+        stage = path[1] if len(path) > 1 else ""
+        help_entry = _PARENT_SEARCH_HELP.get((stage, leaf))
+        if help_entry is not None:
+            fr_summary, en_summary, fr_impact, en_impact = help_entry
+            return WeightHelp(
+                _pick(language, fr_summary, en_summary),
+                _pick(language, fr_impact, en_impact),
+                scope, low, high,
+            )
 
     if root == "transfer_helper" and leaf in _TRANSFER_HELP:
         fr_summary, en_summary, fr_impact, en_impact = _TRANSFER_HELP[leaf]
@@ -464,6 +614,56 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
         elif "b_compensation" in path:
             summary = _pick(language, f"Seuil de compensation permettant d’accepter un départ B en {dimension_label}.", f"Compensation threshold used to accept a B start in {dimension_label}.")
             impact = _pick(language, "L’augmenter rend la compensation plus exigeante et écarte davantage de paires fragiles.", "Increasing it makes compensation stricter and rejects more fragile pairs.")
+        elif leaf == "minimum_initial_rank":
+            summary = _pick(language, f"Rang initial minimum visé en {dimension_label} (6 = B) : sous ce rang, la recherche uma.moe traite l’aptitude comme un besoin prioritaire.", f"Minimum initial {dimension_label} rank targeted (6 = B): below it, the uma.moe search treats the aptitude as a priority need.")
+            impact = _pick(language, "L’augmenter élève le seuil qui déclenche les parts Surface maximales des cohortes et de la présélection.", "Increasing it raises the threshold that triggers the maximum Surface shares in cohorts and preselection.")
+        elif leaf == "preferred_initial_rank":
+            summary = _pick(language, f"Rang initial préféré en {dimension_label} (7 = A) : une fois atteint, la part Surface bascule sur sa valeur « au rang préféré ».", f"Preferred initial {dimension_label} rank (7 = A): once reached, the Surface share switches to its at-preferred value.")
+            impact = _pick(language, "L’augmenter maintient l’objectif A plus longtemps et retarde la libération du budget vers Distance et Large.", "Increasing it keeps the A goal active longer and delays freeing budget towards Distance and Broad.")
+        elif "below_b" in path:
+            below_help = {
+                "base_score": (
+                    f"Score plancher attribué quand l’Ace démarre sous B en {dimension_label}.",
+                    f"Floor score assigned when the Ace starts below B in {dimension_label}.",
+                    "L’augmenter rend les départs très faibles moins pénalisés dans le diagnostic.",
+                    "Increasing it makes very weak starts less penalised in the diagnostic.",
+                ),
+                "initial_minimum_readiness_weight": (
+                    f"Poids de la progression d’étoiles vers le rang minimum quand le départ en {dimension_label} reste sous B.",
+                    f"Weight of star progress towards the minimum rank while the {dimension_label} start stays below B.",
+                    "L’augmenter récompense chaque étoile qui rapproche du seuil B, même avant de l’atteindre.",
+                    "Increasing it rewards every star that moves closer to the B threshold, even before reaching it.",
+                ),
+                "minimum_probability_weight": (
+                    f"Poids de la probabilité d’atteindre le rang minimum pendant la run, pour un départ sous B en {dimension_label}.",
+                    f"Weight of the probability of reaching the minimum rank during the run, for a below-B {dimension_label} start.",
+                    "L’augmenter favorise les lignées capables de rattraper le seuil B grâce à leurs procs roses.",
+                    "Increasing it favours lineages able to catch up to the B threshold through their pink procs.",
+                ),
+                "a_probability_weight": (
+                    f"Poids de la probabilité d’atteindre A pendant la run, pour un départ sous B en {dimension_label}.",
+                    f"Weight of the probability of reaching A during the run, for a below-B {dimension_label} start.",
+                    "L’augmenter valorise les remontées complètes jusqu’à A malgré le départ faible.",
+                    "Increasing it rewards full climbs to A despite the weak start.",
+                ),
+                "s_probability_weight": (
+                    f"Poids de la qualité de P(S) pour un départ sous B en {dimension_label}.",
+                    f"Weight of P(S) quality for a below-B {dimension_label} start.",
+                    "L’augmenter garde un petit signal S même dans les scénarios de départ très faibles.",
+                    "Increasing it keeps a small S signal even in very weak starting scenarios.",
+                ),
+            }
+            fr_summary, en_summary, fr_impact, en_impact = below_help.get(
+                leaf,
+                (
+                    f"Paramètre du score {dimension_label} utilisé quand l’Ace démarre sous B.",
+                    f"{dimension_label} score parameter used when the Ace starts below B.",
+                    "L’augmenter donne plus de poids à ce scénario de départ dans le diagnostic final.",
+                    "Increasing it gives this starting scenario more influence in the final diagnostic.",
+                ),
+            )
+            summary = _pick(language, fr_summary, en_summary)
+            impact = _pick(language, fr_impact, en_impact)
         else:
             start = "A" if "start_a" in leaf else ("B" if "start_b" in leaf else _pick(language, "sous B", "below B"))
             summary = _pick(language, f"Contribution de « {_label(leaf, language)} » au score {dimension_label} quand l’Ace démarre {start}.", f"Contribution of “{_label(leaf, language)}” to the {dimension_label} score when the Ace starts at {start}.")

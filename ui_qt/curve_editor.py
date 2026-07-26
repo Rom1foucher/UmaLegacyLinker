@@ -169,7 +169,9 @@ class CurveEditor(QWidget):
         layout.addWidget(self.hint)
 
         self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Entrée", "Utilité"])
+        # Placeholder headers only: pages_weights always calls set_labels()
+        # with translated labels before the curve page becomes visible.
+        self.table.setHorizontalHeaderLabels(["", ""])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setMaximumHeight(190)

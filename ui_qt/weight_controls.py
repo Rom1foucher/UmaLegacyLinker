@@ -118,12 +118,28 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
         and path[1] == "preselection_weights"
     ):
         return ("online.preselection_mix", "Répartition de la présélection GP", 20)
+    if root == "uma_moe_pair" and len(path) > 1 and path[1] == "contextual_opponent":
+        return ("online.contextual_opponent", "Recherche avec parent opposé fixé", 45)
     if root == "uma_moe_pair" and "affinity" in leaf:
         return ("online.affinity_curves", "Courbes d’affinité uma.moe", 30)
     if root == "uma_moe_pair" and leaf.endswith("thresholds"):
         return ("online.potential_curves", "Courbes de potentiel uma.moe", 40)
     if root == "uma_moe_pair":
         return ("online.g1", "Hypothèses et potentiel G1", 50)
+
+    if root == "uma_moe_parent_search":
+        stage = path[1] if len(path) > 1 else ""
+        if stage == "retrieval":
+            return (
+                "online.parent_retrieval",
+                "Cohortes de récupération des parents API",
+                60,
+            )
+        return (
+            "online.parent_preselection",
+            "Présélection des paires locales × distantes",
+            70,
+        )
 
     if root == "transfer_helper" and (
         leaf.startswith("include_") or leaf == "upcoming_cm_limit"
@@ -363,7 +379,7 @@ def weight_category(path: Sequence[str]) -> str:
         return "affinity"
     if root == "course_conditions":
         return "course"
-    if root == "uma_moe_pair":
+    if root in {"uma_moe_pair", "uma_moe_parent_search"}:
         return "online"
     if root == "transfer_helper":
         return "transfer"

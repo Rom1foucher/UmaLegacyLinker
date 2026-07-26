@@ -157,7 +157,7 @@ class QtPreviewCoreTests(unittest.TestCase):
         path = ("mode_weights", "parent_pair", "distance_s")
         paths = relative_group_paths(config, path)
         shares = relative_group_shares(config, path)
-        self.assertEqual(len(paths), 6)
+        self.assertEqual(len(paths), 7)
         self.assertAlmostEqual(sum(share for _path, share in shares), 1.0)
         self.assertAlmostEqual(dict(shares)[path], 0.29)
 
@@ -184,7 +184,7 @@ class QtPreviewCoreTests(unittest.TestCase):
             and relative_group_paths(config, item)
         }
         self.assertEqual(len(groups), 7)
-        self.assertEqual(sum(len(group) for group in groups), 30)
+        self.assertEqual(sum(len(group) for group in groups), 32)
 
     def test_subcategories_cover_every_weight_in_curated_order(self) -> None:
         config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
@@ -195,7 +195,7 @@ class QtPreviewCoreTests(unittest.TestCase):
             if not any(key in hidden or key.endswith("description") for key in path)
         ]
         sources = {weight_subcategory(path)[1] for path in paths}
-        self.assertEqual(len(sources), 47)
+        self.assertEqual(len(sources), 50)
         self.assertNotIn("Autres réglages", sources)
         for source in sources:
             with self.subTest(source=source):
@@ -240,7 +240,7 @@ class QtPreviewCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 172)
+        self.assertEqual(checked, 202)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

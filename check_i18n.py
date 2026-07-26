@@ -200,6 +200,11 @@ def main() -> None:
         (ROOT / "lineage_planner.py", {"logger", "log", "raise"}),
         (ROOT / "scoring_config.py", {"logger", "log", "raise"}),
     ]
+    # Couche Qt : couverture complète, comme app.py (tout le texte est UI).
+    plans.extend(
+        (path, None) for path in sorted((ROOT / "ui_qt").glob("*.py"))
+    )
+    plans.append((ROOT / "qt_app.py", None))
     for path, contexts in plans:
         problems = check_module(path, contexts)
         for context, text, lineno, translated in problems:

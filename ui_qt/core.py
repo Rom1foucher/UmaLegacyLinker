@@ -34,6 +34,7 @@ from uma_moe import (
     OnlineSearchResult,
     UmaMoeApiClient,
     UmaMoeError,
+    extract_opposing_parent_candidates,
     generate_auto_uql,
     rank_online_grandparent_pairs,
     rank_online_parent_pairs,
@@ -286,6 +287,15 @@ class OnlineSearchRequest:
     token: str = ""
     use_custom_scoring: bool = False
     skill_priorities_path: Path | None = None
+    opposing_parent_trained_id: int | None = None
+    opposing_parent_payload: dict[str, Any] | None = None
+    local_pair_mode: bool = False
+    lineage_blue_filter: tuple[str, int] | None = None
+    lineage_pink_filter: tuple[str, int] | None = None
+
+
+class OperationCancelled(Exception):
+    """Raised inside worker threads when the user requests cancellation."""
 
 
 @dataclass(frozen=True)
@@ -648,6 +658,45 @@ def run_online_search(
         logger=logger,
     )
 
+    if request.local_pair_mode:
+        if request.search_mode != "grandparent":
+            raise UmaMoeError(
+                "Les paires de GP locales nécessitent le mode grand-parent."
+            )
+        progress(55, "Classement des paires de GP locales…")
+        result = rank_online_grandparent_pairs(
+            request.master_path,
+            linked.json_path,
+            manual_weights.weights_path,
+            linked.skills_catalog_path,
+            output,
+            race_factor_catalog_path=linked.race_factor_skills_path,
+            ace_card_id=request.ace_card_id,
+            target_parent_card_id=int(request.target_parent_card_id or 0),
+            fixed_grandparent_trained_id=request.fixed_local_id,
+            opposing_parent_trained_id=request.opposing_parent_trained_id,
+            opposing_parent=request.opposing_parent_payload,
+            exhaustive_pairs=bool(request.automatic_pairs),
+            local_pool_size=max(1, min(int(request.local_pool_size), 250)),
+            remote_pool_size=max(1, min(int(request.remote_pool_size), 500)),
+            surface=request.surface,
+            distance=request.distance,
+            style=request.style,
+            course_weights_path=manual_weights.course_weights_path,
+            course_key=request.course_key,
+            course_conditions=request.course_conditions or {},
+            scoring_config_path=scoring_config,
+            planned_g1_budget=max(0, min(int(request.planned_g1_budget), 40)),
+            single_g1_weight=max(0.0, min(float(request.single_g1_weight), 1.0)),
+            top_n=max(1, int(request.top_n)),
+            local_pair_mode=True,
+            lineage_blue_filter=request.lineage_blue_filter,
+            lineage_pink_filter=request.lineage_pink_filter,
+            logger=logger,
+        )
+        progress(100, "Paires de GP locales classées.")
+        return result
+
     effective_uql = request.uql.strip()
     auto_uql_text, generated_meta = generate_auto_uql(
         manual_weights.weights_path,
@@ -748,6 +797,8 @@ def run_online_search(
         "api_operation": operation,
         "required_main_factors": (generated_meta.get("hard_filters") or []),
         "effective_uql": effective_uql,
+        "lineage_blue_filter": request.lineage_blue_filter,
+        "lineage_pink_filter": request.lineage_pink_filter,
         "logger": logger,
     }
     if request.search_mode == "parent":
@@ -776,12 +827,22 @@ def run_online_search(
             ace_card_id=request.ace_card_id,
             target_parent_card_id=int(request.target_parent_card_id or 0),
             fixed_grandparent_trained_id=request.fixed_local_id,
+            opposing_parent_trained_id=request.opposing_parent_trained_id,
+            opposing_parent=request.opposing_parent_payload,
             planned_g1_budget=max(0, min(int(request.planned_g1_budget), 40)),
             single_g1_weight=max(0.0, min(float(request.single_g1_weight), 1.0)),
             **common,
         )
     progress(100, "Recherche uma.moe terminée.")
     return result
+
+
+def load_opposing_parent_candidates(
+    master_path: Path, payload_path: Path
+) -> list[dict[str, Any]]:
+    """Extract selectable complete opposing-parent branches from a JSON file."""
+    payload = json.loads(Path(payload_path).read_text(encoding="utf-8-sig"))
+    return extract_opposing_parent_candidates(master_path, payload)
 
 
 def run_extractor(extractor: Path, *, logger: LogCallback) -> Path:

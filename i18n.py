@@ -1989,6 +1989,8 @@ EXACT_EN.update({
     "Présélection des paires locales × distantes": "Local × remote pair preselection",
     "Sélectionne un réglage.": "Select a setting.",
     "Le résultat doit être un objet JSON.": "The result must be a JSON object.",
+    "Les paires de GP locales nécessitent le mode grand-parent.": "Local GP pairs require the grandparent search mode.",
+    "Paires de GP locales classées.": "Local GP pairs ranked.",
 })
 
 FRAGMENTS_EN.update({

@@ -775,7 +775,7 @@ class QtPreviewCoreTests(unittest.TestCase):
     def test_visible_qt_copy_has_an_english_translation(self) -> None:
         neutral = {
             "Transfer Helper", "Score", "Trainer", "Surface", "Distance", "Distance S",
-            "Whites", "ID", "Copies", "Minimum pink", "Parent", "Parent 1", "Parent 2",
+            "Whites", "ID", "Copies", "Minimum pink", "Parent", "Parent 1", "Parent 2", "Local",
             "G1", "Points", "Aptitude", "Sparks", "Export", "Verdict", "base",
             "Support",
             "Fichier introuvable", "Profil par défaut actif", "Profil personnalisé actif",

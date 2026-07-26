@@ -1991,6 +1991,17 @@ EXACT_EN.update({
     "Le résultat doit être un objet JSON.": "The result must be a JSON object.",
     "Les paires de GP locales nécessitent le mode grand-parent.": "Local GP pairs require the grandparent search mode.",
     "Paires de GP locales classées.": "Local GP pairs ranked.",
+    "Parent opposé (contexte)": "Opposing parent (context)",
+    "Avec un parent opposé fixé, chaque candidat GP est évalué par le moteur exact de la paire finale à six membres.": "With a fixed opposing parent, every GP candidate is scored by the exact six-member final-pair engine.",
+    "JSON du parent opposé (paires exportées ou réponse API)": "Opposing-parent JSON (exported pairs or API response)",
+    "Sélectionner un JSON de parent opposé": "Select an opposing-parent JSON",
+    "Extraire les candidats": "Extract candidates",
+    "Sélectionne d’abord un JSON de parent opposé.": "Select an opposing-parent JSON first.",
+    "Cohorte Surface dédiée (récupération API)": "Dedicated Surface cohort (API retrieval)",
+    "Filtre lignée par facteur (Main + parents)": "Per-factor lineage filter (Main + parents)",
+    "Facteur Blue": "Blue factor",
+    "Facteur Pink": "Pink factor",
+    "Classe toutes les paires de GP locales avec le moteur uma.moe exact, sans requête API.": "Ranks every local GP pair with the exact uma.moe engine, without any API request.",
 })
 
 FRAGMENTS_EN.update({

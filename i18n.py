@@ -2002,6 +2002,18 @@ EXACT_EN.update({
     "Facteur Blue": "Blue factor",
     "Facteur Pink": "Pink factor",
     "Classe toutes les paires de GP locales avec le moteur uma.moe exact, sans requête API.": "Ranks every local GP pair with the exact uma.moe engine, without any API request.",
+    "Orientation de la recherche": "Search steering",
+    "Préférences souples : elles orientent le tri de l'API sans exclure personne.": "Soft preferences: they steer the API ordering without excluding anybody.",
+    "Filtres durs": "Hard filters",
+    "Ils excluent réellement des candidats et réduisent le pool. À utiliser quand ta branche locale ne couvre pas l'aptitude.": "These genuinely exclude candidates and shrink the pool. Use them when your local branch does not cover the aptitude.",
+    "Étoiles minimales sur la lignée distante (Main + ses deux parents)": "Minimum stars across the remote lineage (Main + its two parents)",
+    "Stat Blue": "Blue stat",
+    "Aptitude Pink": "Pink aptitude",
+    "Étoiles pink minimum": "Minimum pink stars",
+    "Comme les curseurs du site uma.moe. Appliqué après téléchargement : augmente le fetch API si trop de candidats sont éliminés.": "Like the uma.moe site sliders. Applied after download: raise the API fetch if too many candidates are eliminated.",
+    "Stat Blue dont les étoiles sont additionnées sur le Main distant et ses deux parents.": "Blue stat whose stars are summed over the remote Main and its two parents.",
+    "Aptitude Pink (surface, distance ou style) dont les étoiles sont additionnées sur le Main distant et ses deux parents.": "Pink aptitude (surface, distance or style) whose stars are summed over the remote Main and its two parents.",
+    "désactivé": "disabled",
 })
 
 FRAGMENTS_EN.update({

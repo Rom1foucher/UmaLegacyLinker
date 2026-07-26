@@ -448,6 +448,7 @@ class OnlinePage(QWidget):
         self.top_spin = QSpinBox()
         self.top_spin.setRange(5, 200)
         self.top_spin.setValue(_integer(context.store.get("optimizer_top_n", "30"), 30))
+        self.top_spin.setMaximumWidth(160)
         form.addWidget(self.mode_label, 0, 0)
         form.addWidget(self.mode_combo, 1, 0, 1, 2)
         form.addWidget(self.ace_label, 0, 2)
@@ -487,6 +488,8 @@ class OnlinePage(QWidget):
         self.fetch_spin.setRange(100, 2000)
         self.fetch_spin.setSingleStep(100)
         self.fetch_spin.setValue(_integer(context.store.get("uma_moe_limit", "500"), 500))
+        for widget in (self.local_pool, self.remote_pool, self.fetch_spin):
+            widget.setMaximumWidth(160)
         pair.addWidget(self.auto_pairs, 0, 0, 1, 3)
         pair.addWidget(self.fixed_label, 1, 0)
         pair.addWidget(self.fixed_combo, 2, 0, 1, 3)
@@ -544,14 +547,27 @@ class OnlinePage(QWidget):
         self.pink_spin = QSpinBox()
         self.pink_spin.setRange(1, 3)
         self.pink_spin.setValue(_integer(context.store.get("uql_pink_min_stars", "1"), 1))
-        advanced.addWidget(self.prefer_profile, 0, 0, 1, 2)
-        advanced.addWidget(self.prefer_lineage, 0, 2, 1, 2)
-        advanced.addWidget(self.surface_cohort, 0, 4, 1, 2)
-        advanced.addWidget(self.require_surface, 1, 0)
-        advanced.addWidget(self.require_distance, 1, 1)
-        advanced.addWidget(self.require_style, 1, 2)
-        advanced.addWidget(self.pink_label, 1, 4)
-        advanced.addWidget(self.pink_spin, 1, 5)
+        self.soft_title = section_label("")
+        self.soft_hint = muted_label("")
+        self.soft_hint.setWordWrap(True)
+        self.hard_title = section_label("")
+        self.hard_hint = muted_label("")
+        self.hard_hint.setWordWrap(True)
+        self.pink_spin.setPrefix("≥ ")
+        self.pink_spin.setSuffix("★")
+        self.pink_spin.setMaximumWidth(120)
+        advanced.addWidget(self.soft_title, 0, 0, 1, 6)
+        advanced.addWidget(self.soft_hint, 1, 0, 1, 6)
+        advanced.addWidget(self.prefer_profile, 2, 0, 1, 2)
+        advanced.addWidget(self.prefer_lineage, 2, 2, 1, 2)
+        advanced.addWidget(self.surface_cohort, 2, 4, 1, 2)
+        advanced.addWidget(self.hard_title, 3, 0, 1, 6)
+        advanced.addWidget(self.hard_hint, 4, 0, 1, 6)
+        advanced.addWidget(self.require_surface, 5, 0)
+        advanced.addWidget(self.require_distance, 5, 1)
+        advanced.addWidget(self.require_style, 5, 2)
+        advanced.addWidget(self.pink_label, 5, 4)
+        advanced.addWidget(self.pink_spin, 5, 5)
 
         self.lineage_frame = QFrame()
         lineage = QGridLayout(self.lineage_frame)
@@ -586,6 +602,16 @@ class OnlinePage(QWidget):
         self.lineage_pink_stars.setValue(_integer(context.store.get("uql_lineage_pink_stars", "0"), 0))
         self.lineage_hint = muted_label("")
         self.lineage_hint.setWordWrap(True)
+        self.lineage_blue_stars.setPrefix("≥ ")
+        self.lineage_blue_stars.setSuffix("★")
+        self.lineage_blue_stars.setSpecialValueText(self.context.t("désactivé"))
+        self.lineage_pink_stars.setPrefix("≥ ")
+        self.lineage_pink_stars.setSuffix("★")
+        self.lineage_pink_stars.setSpecialValueText(self.context.t("désactivé"))
+        for widget in (self.lineage_blue_stars, self.lineage_pink_stars):
+            widget.setMaximumWidth(120)
+        for widget in (self.lineage_blue_combo, self.lineage_pink_combo):
+            widget.setMaximumWidth(210)
         lineage.addWidget(self.lineage_title, 0, 0, 1, 6)
         lineage.addWidget(self.lineage_blue_label, 1, 0)
         lineage.addWidget(self.lineage_blue_combo, 1, 1)
@@ -594,7 +620,7 @@ class OnlinePage(QWidget):
         lineage.addWidget(self.lineage_pink_combo, 1, 4)
         lineage.addWidget(self.lineage_pink_stars, 1, 5)
         lineage.addWidget(self.lineage_hint, 2, 0, 1, 6)
-        advanced.addWidget(self.lineage_frame, 2, 0, 1, 6)
+        advanced.addWidget(self.lineage_frame, 6, 0, 1, 6)
 
         self.parent_filters = QFrame()
         parent_filters_layout = QGridLayout(self.parent_filters)
@@ -608,7 +634,7 @@ class OnlinePage(QWidget):
         parent_filters_layout.addWidget(self.allowed_button, 1, 2)
         parent_filters_layout.addWidget(self.excluded_button, 1, 3)
         parent_filters_layout.setColumnStretch(0, 1)
-        advanced.addWidget(self.parent_filters, 3, 0, 1, 6)
+        advanced.addWidget(self.parent_filters, 7, 0, 1, 6)
 
         self.g1_options = QFrame()
         g1 = QGridLayout(self.g1_options)
@@ -631,14 +657,17 @@ class OnlinePage(QWidget):
         g1.addWidget(self.g1_weight_label, 0, 1)
         g1.addWidget(self.g1_weight, 1, 1)
         g1.setColumnStretch(2, 1)
-        advanced.addWidget(self.g1_options, 4, 0, 1, 6)
+        advanced.addWidget(self.g1_options, 8, 0, 1, 6)
 
         self.uql_label = QLabel("")
-        self.uql_edit = QPlainTextEdit(context.store.get("uma_moe_query"))
+        self.uql_edit = QPlainTextEdit()
         self.uql_edit.setReadOnly(True)
-        self.uql_edit.setMaximumHeight(88)
-        advanced.addWidget(self.uql_label, 5, 0, 1, 6)
-        advanced.addWidget(self.uql_edit, 6, 0, 1, 6)
+        self.uql_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.uql_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.uql_edit.setMaximumHeight(56)
+        self._set_uql_text(context.store.get("uma_moe_query"))
+        advanced.addWidget(self.uql_label, 9, 0, 1, 6)
+        advanced.addWidget(self.uql_edit, 10, 0, 1, 6)
         self.api_label = QLabel("")
         self.api_base = QLineEdit(context.store.get("uma_moe_base", DEFAULT_API_BASE) or DEFAULT_API_BASE)
         self.key_label = QLabel("")
@@ -658,16 +687,16 @@ class OnlinePage(QWidget):
             title="Sélectionner une réponse JSON de l’API uma.moe",
             file_filter="JSON (*.json);;Tous les fichiers (*)",
         )
-        advanced.addWidget(self.api_label, 7, 0)
-        advanced.addWidget(self.api_base, 8, 0, 1, 3)
-        advanced.addWidget(self.key_label, 7, 3)
+        advanced.addWidget(self.api_label, 11, 0)
+        advanced.addWidget(self.api_base, 12, 0, 1, 3)
+        advanced.addWidget(self.key_label, 11, 3)
         key_row = QHBoxLayout()
         key_row.addWidget(self.key_edit, 1)
         key_row.addWidget(self.show_key)
-        advanced.addLayout(key_row, 8, 3, 1, 3)
-        advanced.addWidget(self.remember_key, 9, 3, 1, 3)
-        advanced.addWidget(self.import_label, 10, 0, 1, 6)
-        advanced.addWidget(self.import_picker, 11, 0, 1, 6)
+        advanced.addLayout(key_row, 12, 3, 1, 3)
+        advanced.addWidget(self.remember_key, 13, 3, 1, 3)
+        advanced.addWidget(self.import_label, 14, 0, 1, 6)
+        advanced.addWidget(self.import_picker, 15, 0, 1, 6)
         for column in range(6):
             advanced.setColumnStretch(column, 1)
         self.advanced.content_layout.addLayout(advanced)
@@ -687,6 +716,7 @@ class OnlinePage(QWidget):
         actions.addStretch(1)
         actions.addWidget(self.open_button)
         config_layout.addLayout(actions)
+        config_layout.addStretch(1)
         scroll.setWidget(config)
 
         result_widget = QWidget()
@@ -702,7 +732,9 @@ class OnlinePage(QWidget):
         vertical.setStretchFactor(1, 1)
         self._config_scroll = scroll
         self._vertical_splitter = vertical
-        self.advanced.toggle.toggled.connect(self._sync_config_pane_height)
+        self.advanced.toggle.toggled.connect(
+            lambda _checked: QTimer.singleShot(0, self._sync_config_pane_height)
+        )
         QTimer.singleShot(0, self._sync_config_pane_height)
         root.addWidget(vertical, 1)
 
@@ -782,14 +814,28 @@ class OnlinePage(QWidget):
         self.require_surface.setText(t("Exiger la surface cible"))
         self.require_distance.setText(t("Exiger la distance cible"))
         self.require_style.setText(t("Exiger le style cible"))
-        self.pink_label.setText(t("Minimum pink"))
-        self.lineage_title.setText(t("Filtre lignée par facteur (Main + parents)"))
-        self.lineage_blue_label.setText(t("Facteur Blue"))
-        self.lineage_pink_label.setText(t("Facteur Pink"))
+        self.pink_label.setText(t("Étoiles pink minimum"))
+        self.soft_title.setText(t("Orientation de la recherche"))
+        self.soft_hint.setText(
+            t("Préférences souples : elles orientent le tri de l'API sans exclure personne.")
+        )
+        self.hard_title.setText(t("Filtres durs"))
+        self.hard_hint.setText(
+            t("Ils excluent réellement des candidats et réduisent le pool. À utiliser quand ta branche locale ne couvre pas l'aptitude.")
+        )
+        self.lineage_title.setText(t("Étoiles minimales sur la lignée distante (Main + ses deux parents)"))
+        self.lineage_blue_label.setText(t("Stat Blue"))
+        self.lineage_pink_label.setText(t("Aptitude Pink"))
         self.lineage_hint.setText(
-            t(
-                "Somme d’étoiles du facteur choisi sur le Main distant + ses deux parents, comme les curseurs du site uma.moe (ex. Stamina ≥ 7★). Appliqué localement après téléchargement — augmente la limite API si trop de candidats sont éliminés. 0 ou — = désactivé."
-            )
+            t("Comme les curseurs du site uma.moe. Appliqué après téléchargement : augmente le fetch API si trop de candidats sont éliminés.")
+        )
+        for spin in (self.lineage_blue_stars, self.lineage_pink_stars):
+            spin.setSpecialValueText(t("désactivé"))
+        self.lineage_blue_combo.setToolTip(
+            t("Stat Blue dont les étoiles sont additionnées sur le Main distant et ses deux parents.")
+        )
+        self.lineage_pink_combo.setToolTip(
+            t("Aptitude Pink (surface, distance ou style) dont les étoiles sont additionnées sur le Main distant et ses deux parents.")
         )
         self.opposing_label.setText(t("Parent opposé (contexte)"))
         self.opposing_hint.setText(
@@ -847,10 +893,14 @@ class OnlinePage(QWidget):
         total = sum(splitter.sizes()) or splitter.height()
         if total <= 0:
             return
-        content_height = scroll.widget().sizeHint().height() + 4
-        scroll.setMaximumHeight(max(140, content_height))
-        top = max(120, min(content_height, total - 120))
-        splitter.setSizes([top, max(120, total - top)])
+        # ``sizeHint`` includes the trailing stretch, so measure the real
+        # content instead: the pane must shrink back when the advanced
+        # section collapses, not keep the expanded height.
+        content_height = scroll.widget().layout().minimumSize().height() + 4
+        capped = max(140, min(content_height, max(140, total - 160)))
+        scroll.setMaximumHeight(capped)
+        scroll.setMinimumHeight(min(capped, 140))
+        splitter.setSizes([capped, max(160, total - capped)])
 
     def sync_context(self) -> None:
         self._populate_profiles()
@@ -1007,6 +1057,16 @@ class OnlinePage(QWidget):
                 save_api_key(api_key_path(), "")
             except (OSError, SecretStoreError) as exc:
                 QMessageBox.warning(self, self.context.t("Clé API"), str(exc))
+
+    def _set_uql_text(self, text: object) -> None:
+        """Show the reference UQL as flowing text.
+
+        The generated file is written one factor per line, which turns the
+        read-only preview into a tall vertical list. Collapse it so the box
+        wraps horizontally instead.
+        """
+        flowed = " ".join(str(text or "").split())
+        self.uql_edit.setPlainText(flowed)
 
     def _external_display(self, member: dict[str, Any]) -> str:
         online = member.get("online") if isinstance(member.get("online"), dict) else {}
@@ -1265,7 +1325,7 @@ class OnlinePage(QWidget):
         self.results.set_result(result, {"surface": request.surface, "distance": request.distance, "style": request.style})
         generated_uql = request.output_dir / "uma_moe_generated_uql.txt"
         if not request.local_pair_mode and generated_uql.is_file():
-            self.uql_edit.setPlainText(generated_uql.read_text(encoding="utf-8").strip())
+            self._set_uql_text(generated_uql.read_text(encoding="utf-8"))
         response = request.output_dir / "uma_moe_api_response.json"
         if not request.use_import and response.is_file():
             self.import_picker.set_text(str(response))

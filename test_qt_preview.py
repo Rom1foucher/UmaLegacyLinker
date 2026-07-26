@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from check_i18n import FRENCH_MARKERS
 from i18n import scoring_label, translate_text
 from parent_optimizer import OptimizerError
 from scoring_config import iter_leaf_paths, read_json_object
@@ -796,8 +797,18 @@ class QtPreviewCoreTests(unittest.TestCase):
                 )
                 if not is_translation or source.value in neutral:
                     continue
-                if any(character.isalpha() for character in source.value) and translate_text(source.value, "en") == source.value:
-                    missing.append(f"{path.name}:{node.lineno}: {source.value}")
+                if any(character.isalpha() for character in source.value):
+                    english = translate_text(source.value, "en")
+                    if english == source.value:
+                        missing.append(f"{path.name}:{node.lineno}: {source.value}")
+                    elif FRENCH_MARKERS.search(english):
+                        # Partial fragment substitution: the exact key never
+                        # matched (a straight/typographic apostrophe mismatch
+                        # is the usual cause) and the copy stays French.
+                        missing.append(
+                            f"{path.name}:{node.lineno}: still French after "
+                            f"translation: {english[:80]}"
+                        )
         self.assertEqual(missing, [], "Missing Qt translations:\n" + "\n".join(missing))
 
 

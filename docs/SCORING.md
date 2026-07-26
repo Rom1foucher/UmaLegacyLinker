@@ -587,21 +587,62 @@ de la même unique héritée :
 1. n'est inférieur au candidat dans aucun contexte parent testé, à la tolérance configurée ;
 2. n'est inférieur dans aucun contexte futur GP ;
 3. conserve au moins autant de G1 communes avec chaque partenaire local potentiel ;
-4. dépasse la marge moyenne minimale `dominance_mean_margin`.
+4. dépasse la marge moyenne minimale `dominance_mean_margin` ;
+5. préserve chaque signal retenu par le plancher indépendant de protection des Sparks.
 
-Les costumes alternatifs ne sont jamais regroupés. Un verdict **à examiner** signifie seulement
-que le vétéran ne dépasse ni `competitive_score_floor`, ni le top percentile
-`competitive_top_percent` dans aucun des deux rôles. Il ne s'agit pas d'une suppression sûre.
+Les costumes alternatifs ne sont jamais regroupés. Sans remplaçant dominant, la compétitivité
+combine score absolu, proximité au leader du contexte et percentile. Une performance élite ou
+répétée mène à **conserver** ; une niche plausible mais étroite à **probablement conserver** ;
+une absence de rôle détecté à **examiner**. Aucun de ces verdicts ne déclenche une action en jeu.
+
+### Plancher de protection des Sparks
+
+Ce garde-fou ne modifie jamais le score principal. Il intervient uniquement après la sélection
+d'un remplaçant dominant et ne peut que relever `safe_transfer` vers `review` ou `likely_keep`.
+
+Les sources sont d'abord normalisées par skill effective :
+
+- White Spark directe, au taux neutre 3/6/9 % par Inspiration Event ;
+- Race Spark donnant cette même skill, au taux neutre 1/2/3 % ;
+- copies présentes sur le vétéran et ses deux parents.
+
+Pour chaque skill, le rapport conserve le nombre de porteurs distincts, la somme des étoiles,
+la probabilité neutre cumulée sur les deux événements, la présence directe sur le vétéran et
+le nombre de porteurs contribuant à la génération white. L'utilité retenue est le maximum sur
+les contextes CM/Team Trials actifs, jamais une moyenne qui écraserait une niche.
+
+Trois familles de signaux peuvent fixer un plancher :
+
+1. répétition utile dans la branche (`2` porteurs, `4★` et 15 % par défaut) ;
+2. Spark utile difficile à obtenir, à partir du nombre de support cards donnant directement
+   le hint dans le `master.mdb` courant ; une table absente signifie « inconnu », pas zéro ;
+3. Spark directe 3★ à forte valeur de futur GP ou package explicitement configuré.
+
+Le remplaçant doit conserver au moins 90 % de la probabilité neutre du candidat, avec une
+tolérance absolue d'un point. Un signal direct exige aussi une source directe équivalente.
+Les packages comparent leur couverture distincte, leurs étoiles et la couverture de chaque
+skill. Les codes de raison exportés incluent notamment
+`protected_repeated_white_spark`, `protected_hard_to_obtain_spark`,
+`protected_direct_future_gp_spark`, `protected_important_skill_set` et
+`protected_package_not_preserved_by_replacement`.
 
 Paramètres disponibles dans `transfer_helper` :
 
 | Paramètre | Défaut | Rôle |
 |---|---:|---|
-| `competitive_top_percent` | 20 | meilleur percentile suffisant pour protéger une niche |
-| `competitive_score_floor` | 65 | score absolu suffisant pour protéger une niche |
-| `dominance_tolerance` | 0,25 | recul maximal accepté dans un contexte lors d'une comparaison |
-| `dominance_mean_margin` | 1,5 | avance moyenne minimale du remplaçant |
+| `competitive_score_floor` | 67,5 | référence absolue de compétitivité |
+| `competitive_utility_floor` | 0,82 | qualité minimale d'une niche viable |
+| `elite_utility_floor` | 0,92 | qualité suffisante pour une valeur élite |
+| `minimum_competitive_contexts` | 3 | contextes requis pour une valeur répétée |
+| `minimum_distinct_profiles` | 2 | profils de course distincts requis |
+| `dominance_tolerance` | 0,75 | recul maximal accepté dans un contexte lors d'une comparaison |
+| `dominance_mean_margin` | 1,0 | avance moyenne minimale du remplaçant |
 | `include_course_presets` | `true` | active l'utilisation du catalogue de presets |
 | `upcoming_cm_limit` | 5 | nombre de prochaines CM évaluées, dans l'ordre du catalogue |
 | `include_team_trials` | `true` | ajoute les cinq catégories Team Trials |
 | `include_generic_profiles` | `false` | ajoute les 32 profils génériques surface × distance × style |
+| `spark_protection.enabled` | `true` | active le plancher indépendant |
+| `spark_protection.minimum_context_weight` | 0,55 | utilité minimale d'une skill protégée |
+| `spark_protection.replacement_probability_ratio` | 0,90 | couverture relative à préserver |
+| `spark_protection.replacement_probability_tolerance` | 0,01 | perte absolue tolérée |
+| `spark_protection.important_packages` | liste | packages et seuils `review`/`likely_keep` |

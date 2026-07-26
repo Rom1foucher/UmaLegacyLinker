@@ -196,7 +196,7 @@ class QtUiCoreTests(unittest.TestCase):
             if not any(key in hidden or key.endswith("description") for key in path)
         ]
         sources = {weight_subcategory(path)[1] for path in paths}
-        self.assertEqual(len(sources), 50)
+        self.assertEqual(len(sources), 51)
         self.assertNotIn("Autres réglages", sources)
         for source in sources:
             with self.subTest(source=source):
@@ -241,7 +241,7 @@ class QtUiCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 202)
+        self.assertEqual(checked, 216)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -442,6 +442,70 @@ class QtUiCoreTests(unittest.TestCase):
                 for selector in unsupported:
                     with self.subTest(selector=selector):
                         self.assertNotIn(selector, stylesheet)
+
+    def test_transfer_detail_explains_spark_protection_deficits(self) -> None:
+        row = {
+            "card_name": "Candidate",
+            "status": "likely_keep",
+            "reason_code": "protected_direct_future_gp_spark",
+            "dominated_by": {
+                "card_name": "Replacement",
+                "mean_score_lead": 2.5,
+                "worst_context_delta": 0.5,
+            },
+            "spark_protection": {
+                "applied": True,
+                "verdict_floor": "likely_keep",
+                "reason_codes": [
+                    "protected_direct_future_gp_spark",
+                    "protected_important_skill_set",
+                ],
+                "deficits": [
+                    {
+                        "kind": "skill",
+                        "name": "Nimble Navigator",
+                        "candidate": {
+                            "present": True,
+                            "carrier_count": 2,
+                            "total_stars": 5,
+                            "neutral_probability": 0.267,
+                            "direct": True,
+                            "direct_total_stars": 3,
+                            "white_generation_carrier_count": 2,
+                            "direct_support_hint_card_count": 0,
+                        },
+                        "replacement": {
+                            "present": True,
+                            "carrier_count": 1,
+                            "total_stars": 2,
+                            "neutral_probability": 0.116,
+                            "direct": False,
+                        },
+                    },
+                    {
+                        "kind": "package",
+                        "label": "General backliner core",
+                        "candidate_distinct_count": 3,
+                        "replacement_distinct_count": 3,
+                        "candidate_total_stars": 8,
+                        "replacement_total_stars": 6,
+                        "missing_skills": [],
+                        "degraded_skills": ["ramp_up", "uma_stan"],
+                    },
+                ],
+            },
+        }
+
+        rendered = transfer_detail_html(row, "en")
+
+        self.assertIn("Spark heritage protection", rendered)
+        self.assertIn("Nimble Navigator", rendered)
+        self.assertIn("2 carrier(s)", rendered)
+        self.assertIn("direct 3★", rendered)
+        self.assertIn("generation ×2", rendered)
+        self.assertIn("0 support card(s) with a direct hint", rendered)
+        self.assertIn("General backliner core", rendered)
+        self.assertIn("Reduced coverage: Ramp Up, Uma Stan", rendered)
 
     def test_detail_html_uses_qt_compatible_tables_for_spacing(self) -> None:
         row = {

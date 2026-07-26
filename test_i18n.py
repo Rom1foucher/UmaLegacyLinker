@@ -73,6 +73,15 @@ class I18nTests(unittest.TestCase):
             translate_text(source, "en"),
             "Evaluating 42 veterans across 32 profile/category contexts…",
         )
+        self.assertEqual(
+            translate_text(
+                "Plancher de protection Spark : Alice [#1] reste review "
+                "face à Replacement [#2] — déficits : Nimble Navigator",
+                "en",
+            ),
+            "Spark-protection floor: Alice [#1] remains review versus "
+            "Replacement [#2] — deficits: Nimble Navigator",
+        )
 
 
     def test_polish_runtime_strings_are_translated(self) -> None:

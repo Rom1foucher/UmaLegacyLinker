@@ -38,6 +38,11 @@ from parent_optimizer import (
     _white_score,
     load_ace_options,
 )
+from spark_protection import (
+    build_spark_heritage,
+    compare_spark_heritage,
+    effective_skill_keys,
+)
 
 
 class TransferHelperError(RuntimeError):
@@ -576,6 +581,7 @@ def classify_transfer_records(
     minimum_competitive_contexts: int,
     minimum_distinct_profiles: int,
     dominance_mean_margin: float,
+    spark_protection_config: dict[str, Any] | None = None,
 ) -> None:
     """Assign safe_transfer/review/likely_keep/keep in place."""
     dominators = _dominance_candidates(records, relations, dominance_mean_margin)
@@ -632,8 +638,6 @@ def classify_transfer_records(
         if resolved is not None:
             winner_index, relation = resolved
             winner = records[winner_index]
-            record["status"] = "safe_transfer"
-            record["reason_code"] = "strictly_dominated_same_card"
             record["dominated_by"] = {
                 "trained_chara_id": winner.get("trained_chara_id"),
                 "card_name": winner.get("card_name"),
@@ -650,6 +654,21 @@ def classify_transfer_records(
                 "viable_parent_comparisons": relation.parent_count,
                 "viable_grandparent_comparisons": relation.grandparent_count,
             }
+            protection = compare_spark_heritage(
+                record.get("_spark_heritage"),
+                winner.get("_spark_heritage"),
+                spark_protection_config,
+            )
+            record["spark_protection"] = protection
+            if protection.get("applied"):
+                record["status"] = str(protection.get("verdict_floor") or "review")
+                record["reason_code"] = str(
+                    protection.get("primary_reason_code")
+                    or "protected_repeated_white_spark"
+                )
+            else:
+                record["status"] = "safe_transfer"
+                record["reason_code"] = "strictly_dominated_same_card"
         elif parent_competitive or grandparent_competitive:
             record["status"] = "keep"
             record["reason_code"] = (
@@ -729,6 +748,7 @@ def analyze_transfer_candidates(
     upcoming_cm_limit = max(0, int(helper_config.get("upcoming_cm_limit", 5)))
     include_team_trials = bool(helper_config.get("include_team_trials", True))
     include_generic_profiles = bool(helper_config.get("include_generic_profiles", False))
+    spark_protection_config = dict(helper_config.get("spark_protection") or {})
     settings = {
         "competitive_score_floor": competitive_score_floor,
         "competitive_utility_floor": competitive_utility_floor,
@@ -749,6 +769,13 @@ def analyze_transfer_candidates(
         "replacement_scope": "same costume ID and inherited Unique signature only",
         "grandparent_affinity_mode": "optimistic constant ceiling; relative intrinsic ranking is target-independent",
         "dominance_context_scope": "same-costume comparisons only count roles where at least one copy is globally competitive against the full local veteran pool",
+        "spark_protection": spark_protection_config,
+        "spark_protection_utility_scope": "maximum skill utility across active Transfer Helper contexts; never averaged across unrelated profiles",
+        "support_hint_metadata_available": bool(
+            (skill_catalog.get("summary") or {}).get(
+                "direct_support_hint_metadata_available", False
+            )
+        ),
     }
 
     contexts = _build_profile_contexts(
@@ -825,6 +852,10 @@ def analyze_transfer_candidates(
     resolver = AffinityResolver(master)
     ace_options = load_ace_options(master)
     race_skills = _race_skill_map(race_catalog)
+    protection_skill_keys = effective_skill_keys(
+        veterans, race_skills, spark_protection_config
+    )
+    active_skill_utility: dict[str, dict[str, Any]] = {}
     affinity_cfg = config.get("affinity") or {}
     g1_bonus_value = int(affinity_cfg.get("g1_common_bonus", 3))
     branch_thresholds = affinity_cfg.get("parent_branch_thresholds") or [[0, 0], [95, 100]]
@@ -878,6 +909,21 @@ def analyze_transfer_candidates(
                 green_floors,
                 green_modes,
             )
+            for skill_key in protection_skill_keys:
+                weight = max(0.0, float(weight_lookup(skill_key)))
+                current = active_skill_utility.get(skill_key)
+                if current is None or weight > float(current.get("weight") or 0.0):
+                    active_skill_utility[skill_key] = {
+                        "weight": round(weight, 6),
+                        "context": {
+                            "context_key": context.key,
+                            "profile": context.label,
+                            "surface": context.surface,
+                            "distance": context.distance,
+                            "style": context.style,
+                            "course_key": context.course_key,
+                        },
+                    }
 
             parent_static: list[dict[str, float]] = []
             gp_static: list[dict[str, float]] = []
@@ -1094,6 +1140,20 @@ def analyze_transfer_candidates(
     finally:
         resolver.close()
 
+    if bool(spark_protection_config.get("enabled", False)):
+        log(
+            "Protection des Sparks : normalisation du patrimoine et comparaison "
+            "avec les remplaçants dominants…"
+        )
+        for veteran, record in zip(veterans, records):
+            record["_spark_heritage"] = build_spark_heritage(
+                veteran,
+                race_skills,
+                skill_catalog,
+                active_skill_utility,
+                config,
+            )
+
     classify_transfer_records(
         records,
         relations,
@@ -1104,6 +1164,7 @@ def analyze_transfer_candidates(
         minimum_competitive_contexts=minimum_competitive_contexts,
         minimum_distinct_profiles=minimum_distinct_profiles,
         dominance_mean_margin=dominance_mean_margin,
+        spark_protection_config=spark_protection_config,
     )
 
     status_order = {"safe_transfer": 0, "review": 1, "likely_keep": 2, "keep": 3}
@@ -1116,6 +1177,7 @@ def analyze_transfer_candidates(
         record["best_grandparent_context"] = record.pop("_best_grandparent_context", None)
         parent_profiles = record.pop("_parent_profiles")
         grandparent_profiles = record.pop("_grandparent_profiles")
+        record.pop("_spark_heritage", None)
         record["top_parent_profiles"] = sorted(
             parent_profiles,
             key=lambda item: (item["score"], -item["percentile"]),
@@ -1142,12 +1204,20 @@ def analyze_transfer_candidates(
     # the selected dominator already carries the useful evidence.
     payload = {
         "metadata": {
-            "format_version": 2,
+            "format_version": 3,
             "generated_at_utc": generated_at,
             "purpose": "Selective helper for identifying redundant local veterans before transferring them in game.",
             "source_master": {"filename": master.name, "sha256": _sha256(master)},
             "source_veterans": {"filename": linked_path.name, "sha256": _sha256(linked_path)},
             "source_skill_weights": {"filename": weights_path.name, "sha256": _sha256(weights_path)},
+            "source_skill_catalog": {
+                "filename": skill_catalog_path_resolved.name,
+                "sha256": _sha256(skill_catalog_path_resolved),
+            },
+            "source_race_factor_catalog": {
+                "filename": race_catalog_path.name,
+                "sha256": _sha256(race_catalog_path),
+            },
             "source_scoring_config": {"filename": config_path.name, "sha256": _sha256(config_path)},
             "veteran_count": len(veterans),
             "profile_context_count": len(contexts),
@@ -1157,14 +1227,19 @@ def analyze_transfer_candidates(
                 "/".join(key): len(value) for key, value in sorted(ace_cache.items())
             },
             "status_counts": dict(sorted(counts.items())),
+            "spark_protection_floor_count": sum(
+                bool((record.get("spark_protection") or {}).get("applied"))
+                for record in records
+            ),
             "safety_notes": [
                 "The helper never modifies the source collection export and never transfers a veteran automatically.",
                 "Safe transfer requires one same-costume/same-Unique replacement that is not worse in every globally viable parent or grandparent context for that costume variant, remains at least as good for G1 pair support, and clears the configured average lead.",
                 "A context is ignored for same-costume dominance when every copy of that card is globally outclassed there; being the least-bad copy in a non-viable niche does not force a keep.",
                 "Keep requires elite performance or repeated competitiveness across several contexts and course profiles. A single narrow niche is classified as likely keep.",
-                "Review means no meaningful role was detected under the configured thresholds; it is not an automatic deletion recommendation.",
+                "Review means either that no meaningful role was detected without a strict replacement, or that a dominant replacement degrades a protected Spark signal. It is never an automatic deletion recommendation.",
                 "Grandparent scores use an optimistic constant affinity ceiling so a character-specific compatibility niche is not discarded merely because no target was selected.",
                 "Alternate costumes are never treated as interchangeable, even when they share the same base character.",
+                "The independent Spark-protection floor can only raise a dominated candidate from safe transfer to review or likely keep. It compares normalized direct-white and skill-granting Race-Spark inheritance assets against the proposed replacement and never modifies the primary score.",
             ],
         },
         "settings": settings,
@@ -1180,6 +1255,18 @@ def analyze_transfer_candidates(
     csv_rows = []
     for record in records:
         dominated_by = record.get("dominated_by") or {}
+        protection = record.get("spark_protection") or {}
+        protection_deficits = list(protection.get("deficits") or [])
+        deficit_labels = []
+        for deficit in protection_deficits:
+            if deficit.get("kind") == "skill":
+                deficit_labels.append(
+                    str(deficit.get("name") or deficit.get("catalog_key") or "")
+                )
+            else:
+                deficit_labels.append(
+                    str(deficit.get("label") or deficit.get("key") or "")
+                )
         csv_rows.append(
             {
                 "status": record.get("status"),
@@ -1215,6 +1302,13 @@ def analyze_transfer_candidates(
                 "worst_context_delta": dominated_by.get("worst_context_delta"),
                 "viable_parent_comparisons": dominated_by.get("viable_parent_comparisons"),
                 "viable_grandparent_comparisons": dominated_by.get("viable_grandparent_comparisons"),
+                "spark_protection_floor": protection.get("verdict_floor"),
+                "spark_protection_reasons": ",".join(
+                    str(reason) for reason in protection.get("reason_codes") or []
+                ),
+                "spark_protection_deficits": "; ".join(
+                    label for label in deficit_labels if label
+                ),
             }
         )
     _write_csv(
@@ -1254,6 +1348,9 @@ def analyze_transfer_candidates(
             "worst_context_delta",
             "viable_parent_comparisons",
             "viable_grandparent_comparisons",
+            "spark_protection_floor",
+            "spark_protection_reasons",
+            "spark_protection_deficits",
         ],
     )
 
@@ -1281,6 +1378,41 @@ def analyze_transfer_candidates(
             f"{replacement.get('card_name')} [{replacement.get('trained_chara_id')}] "
             f"(mean lead {replacement.get('mean_score_lead')})"
         )
+    protected_records = [
+        record
+        for record in records
+        if bool((record.get("spark_protection") or {}).get("applied"))
+    ]
+    summary_lines.extend(
+        [
+            "",
+            "Spark-protection floors",
+            "-----------------------",
+        ]
+    )
+    if not protected_records:
+        summary_lines.append("None.")
+    for record in protected_records:
+        replacement = record.get("dominated_by") or {}
+        protection = record.get("spark_protection") or {}
+        labels = []
+        for deficit in protection.get("deficits") or []:
+            labels.append(
+                str(
+                    deficit.get("name")
+                    or deficit.get("label")
+                    or deficit.get("catalog_key")
+                    or deficit.get("key")
+                    or "unknown"
+                )
+            )
+        summary_lines.append(
+            f"- {record.get('card_name')} [{record.get('trained_chara_id')}] -> "
+            f"{replacement.get('card_name')} [{replacement.get('trained_chara_id')}]: "
+            f"{protection.get('verdict_floor')} "
+            f"({', '.join(protection.get('reason_codes') or [])}); "
+            f"deficits: {', '.join(labels)}"
+        )
     summary_lines.extend(
         [
             "",
@@ -1301,6 +1433,26 @@ def analyze_transfer_candidates(
             f"[#{replacement.get('trained_chara_id')}] — Sparks : "
             f"{((replacement.get('sparks') or {}).get('summary') or 'aucune')} — "
             f"avance moyenne {float(replacement.get('mean_score_lead') or 0):+.3f}"
+        )
+    for record in protected_records:
+        replacement = record.get("dominated_by") or {}
+        protection = record.get("spark_protection") or {}
+        deficit_names = [
+            str(
+                deficit.get("name")
+                or deficit.get("label")
+                or deficit.get("catalog_key")
+                or deficit.get("key")
+                or "inconnu"
+            )
+            for deficit in protection.get("deficits") or []
+        ]
+        log(
+            f"Plancher de protection Spark : {record.get('card_name')} "
+            f"[#{record.get('trained_chara_id')}] reste "
+            f"{protection.get('verdict_floor')} face à "
+            f"{replacement.get('card_name')} [#{replacement.get('trained_chara_id')}] — "
+            f"déficits : {', '.join(deficit_names)}"
         )
 
     log(f"Transfer Helper terminé : {report_path}")

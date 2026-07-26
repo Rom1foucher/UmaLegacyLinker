@@ -23,7 +23,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - export of a selected final pair to the uma.moe Lineage Planner format;
 - live and imported uma.moe parent/grandparent searches, platform-aware API-key persistence, costume filters and Friend ID copy;
 - Transfer Helper with verdict/search filters and an embedded replacement diagnostic;
-- a two-pane scoring-profile editor with search, 50 gameplay subcategories, plain-language help for every setting, hover summaries and visible draft/default states;
+- a two-pane scoring-profile editor with search, 51 gameplay subcategories, plain-language help for every setting, hover summaries and visible draft/default states;
 - unambiguous probability, threshold, multiplier and 100%-budget controls, including live donut charts for all nine genuinely normalised scoring groups;
 - individual White Skill priority-file management and the diagnostic Umalator importer;
 - live French/English switching;

@@ -613,6 +613,148 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
             "transfer_helper.upcoming_cm_limit doit être un entier positif ou nul."
         )
 
+    spark_protection = _require_dict(
+        config, ("transfer_helper", "spark_protection")
+    )
+    if not isinstance(spark_protection.get("enabled"), bool):
+        raise ScoringConfigError(
+            "transfer_helper.spark_protection.enabled doit valoir true ou false."
+        )
+    for key in (
+        "minimum_context_weight",
+        "hard_to_obtain_minimum_context_weight",
+        "repeated_review_min_probability",
+        "repeated_strong_min_probability",
+        "direct_future_gp_minimum_context_weight",
+        "replacement_probability_ratio",
+        "replacement_probability_tolerance",
+    ):
+        value = spark_protection.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ScoringConfigError(
+                f"transfer_helper.spark_protection.{key} doit être numérique."
+            )
+        if not math.isfinite(float(value)) or float(value) < 0:
+            raise ScoringConfigError(
+                f"transfer_helper.spark_protection.{key} doit être un nombre fini positif ou nul."
+            )
+    for key in (
+        "repeated_review_min_probability",
+        "repeated_strong_min_probability",
+        "replacement_probability_ratio",
+        "replacement_probability_tolerance",
+    ):
+        if float(spark_protection[key]) > 1:
+            raise ScoringConfigError(
+                f"transfer_helper.spark_protection.{key} ne peut pas dépasser 1."
+            )
+    if float(spark_protection["repeated_strong_min_probability"]) < float(
+        spark_protection["repeated_review_min_probability"]
+    ):
+        raise ScoringConfigError(
+            "Le seuil fort de probabilité des Sparks répétées doit être supérieur "
+            "ou égal au seuil d’examen."
+        )
+    for key, minimum in (
+        ("hard_to_obtain_max_support_hint_count", 0),
+        ("repeated_review_min_carriers", 1),
+        ("repeated_review_min_total_stars", 1),
+        ("repeated_strong_min_carriers", 1),
+        ("direct_future_gp_min_stars", 1),
+    ):
+        value = spark_protection.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            if minimum == 0:
+                raise ScoringConfigError(
+                    f"transfer_helper.spark_protection.{key} doit être un entier positif ou nul."
+                )
+            raise ScoringConfigError(
+                f"transfer_helper.spark_protection.{key} doit être un entier strictement positif."
+            )
+    if int(spark_protection["repeated_strong_min_carriers"]) < int(
+        spark_protection["repeated_review_min_carriers"]
+    ):
+        raise ScoringConfigError(
+            "Le seuil fort de porteurs répétés doit être supérieur ou égal au seuil d’examen."
+        )
+
+    support_overrides = _require_dict(
+        config,
+        ("transfer_helper", "spark_protection", "support_hint_count_overrides"),
+    )
+    for skill_key, value in support_overrides.items():
+        if (
+            not str(skill_key).strip()
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+        ):
+            raise ScoringConfigError(
+                "transfer_helper.spark_protection.support_hint_count_overrides "
+                "doit associer chaque catalog_key à un entier positif ou nul."
+            )
+
+    packages = spark_protection.get("important_packages")
+    if not isinstance(packages, list):
+        raise ScoringConfigError(
+            "transfer_helper.spark_protection.important_packages doit être une liste."
+        )
+    package_keys: set[str] = set()
+    for index, package in enumerate(packages):
+        path = f"transfer_helper.spark_protection.important_packages[{index}]"
+        if not isinstance(package, dict):
+            raise ScoringConfigError(f"{path} doit être un objet JSON.")
+        package_key = package.get("key")
+        if not isinstance(package_key, str) or not package_key.strip():
+            raise ScoringConfigError(f"{path}.key doit être une chaîne non vide.")
+        if package_key in package_keys:
+            raise ScoringConfigError(
+                f"Le package de Sparks {package_key!r} est défini plusieurs fois."
+            )
+        package_keys.add(package_key)
+        label = package.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ScoringConfigError(f"{path}.label doit être une chaîne non vide.")
+        skills = package.get("skills")
+        if (
+            not isinstance(skills, list)
+            or not skills
+            or any(not isinstance(skill, str) or not skill.strip() for skill in skills)
+            or len(set(skills)) != len(skills)
+        ):
+            raise ScoringConfigError(
+                f"{path}.skills doit être une liste non vide de catalog_key distinctes."
+            )
+        thresholds: dict[str, int] = {}
+        for key, minimum in (
+            ("review_min_distinct", 1),
+            ("strong_min_distinct", 1),
+            ("review_min_total_stars", 0),
+            ("strong_min_total_stars", 0),
+        ):
+            value = package.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ScoringConfigError(
+                    f"{path}.{key} doit être un entier supérieur ou égal à {minimum}."
+                )
+            thresholds[key] = value
+        if thresholds["review_min_distinct"] > len(skills) or thresholds[
+            "strong_min_distinct"
+        ] > len(skills):
+            raise ScoringConfigError(
+                f"Les seuils distincts de {path} ne peuvent pas dépasser le nombre de skills."
+            )
+        if thresholds["strong_min_distinct"] < thresholds["review_min_distinct"]:
+            raise ScoringConfigError(
+                f"{path}.strong_min_distinct doit être supérieur ou égal à review_min_distinct."
+            )
+        if thresholds["strong_min_total_stars"] < thresholds[
+            "review_min_total_stars"
+        ]:
+            raise ScoringConfigError(
+                f"{path}.strong_min_total_stars doit être supérieur ou égal à review_min_total_stars."
+            )
+
 
 def validate_skill_priorities_config(config: dict[str, Any]) -> None:
     if not isinstance(config, dict):

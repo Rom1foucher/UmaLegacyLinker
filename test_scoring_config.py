@@ -96,6 +96,27 @@ class ScoringConfigTests(unittest.TestCase):
         with self.assertRaises(ScoringConfigError):
             validate_scoring_config(config)
 
+    def test_transfer_helper_spark_protection_is_validated(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["spark_protection"][
+            "replacement_probability_ratio"
+        ] = 1.2
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["spark_protection"]["important_packages"][0][
+            "strong_min_distinct"
+        ] = 4
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["spark_protection"][
+            "support_hint_count_overrides"
+        ] = {"nimble_navigator": 0}
+        validate_scoring_config(config)
+
         config = read_json_object(DEFAULT_SCORING)
         config["transfer_helper"]["include_team_trials"] = "yes"
         with self.assertRaises(ScoringConfigError):

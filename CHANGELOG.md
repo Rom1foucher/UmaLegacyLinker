@@ -10,7 +10,7 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Exposed the 1.6.0 contextual grandparent search in the Qt uma.moe page: an opposing-parent context (none, a local veteran, or candidates extracted from an exported pair result or API response), an offline "Local GP pairs" ranking that skips the API entirely, per-factor lineage star filters mirroring the uma.moe sliders, and a dedicated Surface-cohort toggle. Aligned the page with 1.6.0's structured filters by dropping the stale Dirt-only option and the free-text/auto UQL controls; the generated UQL stays visible read-only.
 - Added cooperative cancellation of long-running tasks from the status bar, reusing the logger/progress callbacks as checkpoints without any engine change.
 - Extracted the headless command line into a standalone `cli.py` that imports the engines directly, so linking, catalogue generation, ranking and the Transfer Helper no longer depend on any UI toolkit.
-- Reorganised the Qt weight editor into explicit scoring domains and 50 gameplay subcategories, with bilingual contextual help, purpose-built controls and collapsible calculation blocks.
+- Reorganised the Qt weight editor into explicit scoring domains and 51 gameplay subcategories, with bilingual contextual help, purpose-built controls and collapsible calculation blocks.
 - Made normalised group weights independently editable, with non-mutating distribution previews, live donut charts and separate value/block reset actions.
 - Covered the contextual GP search in the Qt weight catalogue, including API retrieval cohorts, local × remote preselection, fixed-opposing-parent settings and target-surface aptitude policy.
 - Added a top-down lineage inspector for local and uma.moe results, with costume artwork, White Skill icons, rich Spark summaries, inheritance probabilities, aptitude badges and result diagnostics.
@@ -21,6 +21,7 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Fixed the standalone CLI configuration imports so parent ranking and Transfer Helper commands complete successfully, and covered both dispatch paths with regression tests.
 - Closed extractor subprocess streams deterministically and aligned the 1.7.0 Windows metadata, PyInstaller manifest, release workflow and Qt-only documentation.
 - Extended optional uma.moe API-key persistence to Linux and macOS with a versioned local-file fallback, atomic writes, strict `0700`/`0600` permissions and an explicit unencrypted-storage warning; Windows keeps DPAPI and remains compatible with legacy saved payloads.
+- Added an independent Transfer Helper Spark-protection floor: direct White and skill-granting Race Sparks are normalised by effective skill, evaluated at their maximum utility over the active CM/Team Trials scope, enriched with current-MDB support-hint availability, and compared against the proposed replacement by carriers, stars, neutral inheritance probability, direct future-GP placement and configurable packages. Non-preserved assets now raise `safe_transfer` to `review` or `likely_keep` without altering the primary score, with bilingual UI and JSON/CSV diagnostics.
 
 ## 1.6.0 - Contextual grandparent search and full English coverage
 

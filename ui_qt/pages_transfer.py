@@ -162,7 +162,7 @@ class TransferPage(QWidget):
             t("Identifie les copies redondantes sans jamais modifier l’export source ni prendre une décision à ta place."),
         )
         self.safety_text.setText(
-            t("« Transfert sûr » exige un remplaçant du même costume et de la même unique, non inférieur dans chaque niche viable. Les autres verdicts restent des diagnostics manuels.")
+            t("« Transfert sûr » exige un remplaçant du même costume et de la même unique, non inférieur dans chaque niche viable et sans perte de patrimoine Spark protégé. Les autres verdicts restent des diagnostics manuels.")
         )
         self.run_button.setText(t("Analyser les vétérans locaux"))
         self.load_button.setText(t("Charger le dernier rapport"))
@@ -194,8 +194,8 @@ class TransferPage(QWidget):
             if key in counts:
                 counts[key] += 1
         self.safe_card.set_content(t("Transfert sûr"), str(counts["safe_transfer"]), t("Remplaçant strict confirmé"), "ok")
-        self.review_card.set_content(t("À examiner"), str(counts["review"]), t("Vérification manuelle"), "warning")
-        self.likely_card.set_content(t("Probablement conserver"), str(counts["likely_keep"]), t("Niche étroite ou unique"), "neutral")
+        self.review_card.set_content(t("À examiner"), str(counts["review"]), t("Rôle incertain ou Spark à vérifier"), "warning")
+        self.likely_card.set_content(t("Probablement conserver"), str(counts["likely_keep"]), t("Niche ou patrimoine Spark fort"), "neutral")
         self.keep_card.set_content(t("Conserver"), str(counts["keep"]), t("Valeur compétitive"), "info")
 
     def set_records(self, records: list[dict[str, Any]]) -> None:

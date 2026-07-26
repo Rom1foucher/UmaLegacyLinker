@@ -141,6 +141,12 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
             70,
         )
 
+    if root == "transfer_helper" and "spark_protection" in path:
+        return (
+            "transfer.spark_protection",
+            "Protection du patrimoine Spark",
+            50,
+        )
     if root == "transfer_helper" and (
         leaf.startswith("include_") or leaf == "upcoming_cm_limit"
     ):
@@ -428,6 +434,13 @@ def is_percentage_setting(path: Sequence[str], value: object) -> bool:
             "utility_absolute_weight",
             "utility_leader_weight",
             "utility_percentile_weight",
+            "minimum_context_weight",
+            "hard_to_obtain_minimum_context_weight",
+            "repeated_review_min_probability",
+            "repeated_strong_min_probability",
+            "direct_future_gp_minimum_context_weight",
+            "replacement_probability_ratio",
+            "replacement_probability_tolerance",
         }
     if root == "aptitude_inheritance":
         return (
@@ -471,6 +484,10 @@ def is_probability_setting(path: Sequence[str]) -> bool:
         "competitive_utility_floor",
         "elite_utility_floor",
         "minimum_absolute_floor_ratio",
+        "repeated_review_min_probability",
+        "repeated_strong_min_probability",
+        "replacement_probability_ratio",
+        "replacement_probability_tolerance",
     }:
         return True
     if root == "course_conditions" and (
@@ -495,6 +512,10 @@ def is_threshold_percentage(path: Sequence[str]) -> bool:
         "competitive_utility_floor",
         "elite_utility_floor",
         "minimum_absolute_floor_ratio",
+        "repeated_review_min_probability",
+        "repeated_strong_min_probability",
+        "replacement_probability_ratio",
+        "replacement_probability_tolerance",
     }
 
 

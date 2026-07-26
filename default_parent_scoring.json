@@ -1,5 +1,5 @@
 {
-  "schema_version": 19,
+  "schema_version": 20,
   "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Distinct white-skill inheritance uses a configurable diminishing-return utility curve; Blue Sparks remain affinity-independent.",
   "mode_weights": {
     "parent_branch": {
@@ -384,7 +384,74 @@
     "minimum_absolute_floor_ratio": 0.8,
     "utility_absolute_weight": 0.5,
     "utility_leader_weight": 0.4,
-    "utility_percentile_weight": 0.1
+    "utility_percentile_weight": 0.1,
+    "spark_protection": {
+      "description": "Independent verdict floor for strategically useful inheritance assets. It never changes the primary score: it only prevents safe_transfer when the selected replacement does not preserve a repeated, hard-to-obtain, direct future-GP or configured package signal.",
+      "enabled": true,
+      "minimum_context_weight": 0.55,
+      "hard_to_obtain_minimum_context_weight": 0.6,
+      "hard_to_obtain_max_support_hint_count": 0,
+      "repeated_review_min_carriers": 2,
+      "repeated_review_min_total_stars": 4,
+      "repeated_review_min_probability": 0.15,
+      "repeated_strong_min_carriers": 3,
+      "repeated_strong_min_probability": 0.28,
+      "direct_future_gp_minimum_context_weight": 0.8,
+      "direct_future_gp_min_stars": 3,
+      "replacement_probability_ratio": 0.9,
+      "replacement_probability_tolerance": 0.01,
+      "support_hint_count_overrides": {},
+      "important_packages": [
+        {
+          "key": "general_backliner",
+          "label": "General backliner core",
+          "skills": [
+            "uma_stan",
+            "nimble_navigator",
+            "ramp_up"
+          ],
+          "review_min_distinct": 2,
+          "strong_min_distinct": 3,
+          "review_min_total_stars": 4,
+          "strong_min_total_stars": 6
+        },
+        {
+          "key": "front_groundwork",
+          "label": "Front Groundwork setup",
+          "skills": [
+            "groundwork",
+            "prudent_positioning",
+            "dodging_danger"
+          ],
+          "review_min_distinct": 2,
+          "strong_min_distinct": 3,
+          "review_min_total_stars": 3,
+          "strong_min_total_stars": 5
+        },
+        {
+          "key": "pace_acceleration",
+          "label": "Pace acceleration",
+          "skills": [
+            "head_on"
+          ],
+          "review_min_distinct": 1,
+          "strong_min_distinct": 1,
+          "review_min_total_stars": 2,
+          "strong_min_total_stars": 3
+        },
+        {
+          "key": "closer_acceleration",
+          "label": "Closer acceleration",
+          "skills": [
+            "straightaway_spurt"
+          ],
+          "review_min_distinct": 1,
+          "strong_min_distinct": 1,
+          "review_min_total_stars": 2,
+          "strong_min_total_stars": 3
+        }
+      ]
+    }
   },
   "aptitude_inheritance": {
     "description": "Pink aptitude model. Each matching Spark rolls independently at both April Inspiration Events. Base proc rates are multiplied by the modern individual inheritance affinity. One proc is treated as exactly one aptitude rank; rare multi-rank procs are deliberately ignored.",

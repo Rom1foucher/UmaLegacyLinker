@@ -235,6 +235,55 @@ def text_map(connection: sqlite3.Connection, category: int) -> dict[int, str]:
     }
 
 
+def direct_support_hint_sources(
+    connection: sqlite3.Connection,
+) -> tuple[bool, dict[int, dict[str, Any]]]:
+    """Return direct support-card hint sources keyed by inherited skill ID.
+
+    ``single_mode_hint_gain`` is present in current master databases but not in
+    every historical snapshot. Missing schema therefore means "unknown", not
+    zero available supports.
+    """
+    table_exists = connection.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'single_mode_hint_gain'
+        """
+    ).fetchone()
+    if table_exists is None:
+        return False, {}
+    columns = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(single_mode_hint_gain)")
+    }
+    required = {"support_card_id", "hint_gain_type", "hint_value_1"}
+    if not required.issubset(columns):
+        return False, {}
+
+    result: dict[int, dict[str, Any]] = {}
+    for row in connection.execute(
+        """
+        SELECT hint_value_1 AS skill_id, support_card_id
+        FROM single_mode_hint_gain
+        WHERE hint_gain_type = 0
+          AND hint_value_1 > 0
+          AND support_card_id > 0
+        ORDER BY hint_value_1, support_card_id
+        """
+    ):
+        skill_id = int(row["skill_id"])
+        bucket = result.setdefault(skill_id, {"support_card_ids": set()})
+        bucket["support_card_ids"].add(int(row["support_card_id"]))
+    return True, {
+        skill_id: {
+            "direct_support_hint_card_count": len(bucket["support_card_ids"]),
+            "direct_support_hint_card_ids": sorted(bucket["support_card_ids"]),
+        }
+        for skill_id, bucket in result.items()
+    }
+
+
 def json_write(path: Path, payload: Any) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -422,6 +471,9 @@ def generate_skill_catalogs(
         skill_descriptions = text_map(connection, 48)
         factor_names = text_map(connection, 147)
         factor_descriptions = text_map(connection, 172)
+        support_hint_metadata_available, support_hint_sources = (
+            direct_support_hint_sources(connection)
+        )
 
         white_groups: dict[int, dict[str, Any]] = {}
         for row in connection.execute(
@@ -468,6 +520,18 @@ def generate_skill_catalogs(
             )
             group["candidate_skill_ids"] = [int(row["id"]) for row in candidates]
             group["catalog_key"] = slugify(group["spark_name"])
+            inherited_id = group["inherit_skill_id"]
+            support_source = support_hint_sources.get(inherited_id) if inherited_id else None
+            group["direct_support_hint_card_count"] = (
+                int((support_source or {}).get("direct_support_hint_card_count") or 0)
+                if support_hint_metadata_available and inherited_id
+                else None
+            )
+            group["direct_support_hint_card_ids"] = (
+                list((support_source or {}).get("direct_support_hint_card_ids") or [])
+                if support_hint_metadata_available and inherited_id
+                else []
+            )
 
         expression_counter: Counter[str] = Counter()
         variable_usage: dict[str, dict[str, Any]] = defaultdict(
@@ -539,6 +603,9 @@ def generate_skill_catalogs(
                     "factor_ids_by_stars": white_group["factor_ids_by_stars"],
                     "is_inherited_hint_variant": white_group["inherit_skill_id"] == skill_id,
                     "mapping_status": white_group["mapping_status"],
+                    "direct_support_hint_card_count": white_group[
+                        "direct_support_hint_card_count"
+                    ],
                 }
             skills_payload.append(skill_entry)
 
@@ -572,7 +639,7 @@ def generate_skill_catalogs(
             categories[variable["category"]].append(variable["name"])
 
         metadata = {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "master_file": master.name,
             "master_sha256": sha256_file(master),
@@ -590,6 +657,7 @@ def generate_skill_catalogs(
             "summary": {
                 "skill_count": len(skills_payload),
                 "white_skill_spark_group_count": len(white_group_payload),
+                "direct_support_hint_metadata_available": support_hint_metadata_available,
                 "skills_with_any_condition": sum(
                     any(skill["conditions"][field]["raw"] for field in CONDITION_FIELDS)
                     for skill in skills_payload
@@ -663,6 +731,12 @@ def generate_skill_catalogs(
                     "factor_ids_by_stars": group["factor_ids_by_stars"],
                     "inherit_skill_id": inherited_id,
                     "mapping_status": group["mapping_status"],
+                    "direct_support_hint_card_count": group[
+                        "direct_support_hint_card_count"
+                    ],
+                    "direct_support_hint_card_ids": group[
+                        "direct_support_hint_card_ids"
+                    ],
                 },
                 "description": (
                     inherited_skill["description"] if inherited_skill else group["description"]

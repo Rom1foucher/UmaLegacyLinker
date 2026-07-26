@@ -1004,6 +1004,11 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
         "strong_parent_value": "Forte valeur comme parent.",
         "strong_value_in_multiple_roles": "Valeur compétitive dans plusieurs rôles ou profils.",
         "narrow_or_single_context_niche": "Niche plausible mais étroite : vérification manuelle recommandée.",
+        "protected_repeated_white_spark": "Une white Spark utile et fortement répétée n’est pas suffisamment préservée par le remplaçant.",
+        "protected_hard_to_obtain_spark": "Une Spark utile difficile à obtenir autrement n’est pas suffisamment préservée par le remplaçant.",
+        "protected_direct_future_gp_spark": "Une Spark directe à forte valeur de futur grand-parent n’est pas suffisamment préservée par le remplaçant.",
+        "protected_important_skill_set": "La qualité d’un package de Sparks important est dégradée par le remplaçant.",
+        "protected_package_not_preserved_by_replacement": "Un package de Sparks important n’est pas préservé par le remplaçant.",
     }
     status = _t(statuses.get(str(row.get("status")), str(row.get("status") or "—")), language)
     title = _identity(row)
@@ -1028,6 +1033,7 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
       .eyebrow {{ color:{PANEL['accent']}; font-weight:750; font-size:9px; }}
       .muted {{ color:{PANEL['muted']}; font-size:10px; }}
       .replacement {{ background:{PANEL['surface']}; border-left:3px solid {PANEL['accent']}; padding:9px 11px; margin-top:8px; }}
+      .protection {{ background:{PANEL['surface_alt']}; border-left:3px solid {PANEL['gold']}; padding:9px 11px; margin-top:8px; }}
       table {{ width:100%; border-collapse:collapse; }}
       td {{ color:{PANEL['text_soft']}; padding:6px 1px; border-bottom:1px solid {PANEL['border_soft']}; }}
       .facts-table th {{ width:52%; color:{PANEL['muted']}; text-align:left; font-size:11px; font-weight:600; padding:6px 2px 6px 1px; border-bottom:1px solid {PANEL['border_soft']}; }}
@@ -1058,6 +1064,134 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
             f"{escape(_t('Pire écart observé', language))}: {_number(replacement.get('worst_context_delta'), 3)}"
             "</div>"
         )
+    protection = row.get("spark_protection") or {}
+    if protection.get("applied"):
+        reason_labels = {
+            "protected_repeated_white_spark": "White répétée",
+            "protected_hard_to_obtain_spark": "Acquisition difficile",
+            "protected_direct_future_gp_spark": "Spark directe de futur GP",
+            "protected_important_skill_set": "Package dégradé",
+            "protected_package_not_preserved_by_replacement": "Package non préservé",
+        }
+
+        def heritage_metrics(item: dict[str, Any]) -> str:
+            if not item.get("present"):
+                return _t("Absente", language)
+            values = [
+                _t("{count} porteur(s)", language).replace(
+                    "{count}", str(int(item.get("carrier_count") or 0))
+                ),
+                f"{int(item.get('total_stars') or 0)}★",
+                f"P={_percent(item.get('neutral_probability'), 1)}",
+            ]
+            if item.get("direct"):
+                values.append(
+                    _t("directe {stars}★", language).replace(
+                        "{stars}", str(int(item.get("direct_total_stars") or 0))
+                    )
+                )
+            generation_count = int(
+                item.get("white_generation_carrier_count") or 0
+            )
+            if generation_count:
+                values.append(
+                    _t("génération ×{count}", language).replace(
+                        "{count}", str(generation_count)
+                    )
+                )
+            support_count = item.get("direct_support_hint_card_count")
+            if isinstance(support_count, int) and not isinstance(support_count, bool):
+                values.append(
+                    _t("{count} support(s) avec hint direct", language).replace(
+                        "{count}", str(support_count)
+                    )
+                )
+            return " · ".join(values)
+
+        skill_rows = []
+        package_rows = []
+        package_labels = {
+            "general_backliner": _t("Noyau polyvalent des backliners", language),
+            "front_groundwork": _t("Préparation Groundwork Front", language),
+            "pace_acceleration": _t("Accélération Pace Chaser", language),
+            "closer_acceleration": _t("Accélération End Closer", language),
+        }
+        for deficit in protection.get("deficits") or []:
+            if deficit.get("kind") == "skill":
+                skill_rows.append(
+                    "<tr>"
+                    f"<td><b>{escape(str(deficit.get('name') or deficit.get('catalog_key') or '—'))}</b></td>"
+                    f"<td>{escape(heritage_metrics(deficit.get('candidate') or {}))}</td>"
+                    f"<td>{escape(heritage_metrics(deficit.get('replacement') or {}))}</td>"
+                    "</tr>"
+                )
+                continue
+            missing = [
+                str(key).replace("_", " ").title()
+                for key in deficit.get("missing_skills") or []
+            ]
+            degraded = [
+                str(key).replace("_", " ").title()
+                for key in deficit.get("degraded_skills") or []
+            ]
+            details = []
+            if missing:
+                details.append(
+                    _t("Manquantes : {skills}", language).replace(
+                        "{skills}", ", ".join(missing)
+                    )
+                )
+            if degraded:
+                details.append(
+                    _t("Couverture réduite : {skills}", language).replace(
+                        "{skills}", ", ".join(degraded)
+                    )
+                )
+            package_rows.append(
+                "<tr>"
+                f"<td><b>{escape(package_labels.get(str(deficit.get('key') or ''), str(deficit.get('label') or deficit.get('key') or '—')))}</b></td>"
+                f"<td>{int(deficit.get('candidate_distinct_count') or 0)} · "
+                f"{int(deficit.get('candidate_total_stars') or 0)}★</td>"
+                f"<td>{int(deficit.get('replacement_distinct_count') or 0)} · "
+                f"{int(deficit.get('replacement_total_stars') or 0)}★"
+                f"<br><span class='muted'>{escape(' · '.join(details))}</span></td>"
+                "</tr>"
+            )
+
+        labels = [
+            _t(reason_labels.get(str(code), str(code)), language)
+            for code in protection.get("reason_codes") or []
+        ]
+        html += (
+            f"<h3>{escape(_t('Protection du patrimoine Spark', language))}</h3>"
+            "<div class='protection'>"
+            f"<b>{escape(_t('Plancher de verdict', language))}: "
+            f"{escape(_t(statuses.get(str(protection.get('verdict_floor')), str(protection.get('verdict_floor') or '—')), language))}</b>"
+            f"<br><span class='muted'>{escape(' · '.join(labels))}</span>"
+            "</div>"
+        )
+        if skill_rows:
+            html += (
+                f"<h3>{escape(_t('Sparks non préservées', language))}</h3>"
+                "<table><tr>"
+                f"<td><b>{escape(_t('Spark concernée', language))}</b></td>"
+                f"<td><b>{escape(_t('Vétéran', language))}</b></td>"
+                f"<td><b>{escape(_t('Remplaçant', language))}</b></td>"
+                "</tr>"
+                + "".join(skill_rows)
+                + "</table>"
+            )
+        if package_rows:
+            html += (
+                f"<h3>{escape(_t('Packages non préservés', language))}</h3>"
+                "<table><tr>"
+                f"<td><b>{escape(_t('Package concerné', language))}</b></td>"
+                f"<td><b>{escape(_t('Vétéran', language))}</b></td>"
+                f"<td><b>{escape(_t('Remplaçant', language))}</b></td>"
+                "</tr>"
+                + "".join(package_rows)
+                + "</table>"
+            )
     html += f"<h3>{escape(_t('Meilleurs profils parent', language))}</h3><table>{profiles(list(row.get('top_parent_profiles') or []))}</table>"
     html += f"<h3>{escape(_t('Meilleurs profils grand-parent', language))}</h3><table>{profiles(list(row.get('top_grandparent_profiles') or []))}</table>"
     html += f"<p class='muted'>{escape(_t('L’outil ne modifie pas l’export source et ne supprime rien en jeu.', language))}</p>"

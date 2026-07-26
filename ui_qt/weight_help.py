@@ -62,6 +62,26 @@ def _scope(path: Sequence[str], language: str) -> str:
 def _scale_labels(path: Sequence[str], value: object, language: str) -> tuple[str, str]:
     root = path[0] if path else ""
     leaf = path[-1] if path else ""
+    if root == "transfer_helper" and "spark_protection" in path:
+        if leaf == "enabled":
+            return (
+                _pick(language, "Désactivée", "Disabled"),
+                _pick(language, "Activée", "Enabled"),
+            )
+        if leaf == "replacement_probability_tolerance":
+            return (
+                _pick(language, "Aucune tolérance", "No tolerance"),
+                _pick(language, "Plus permissif", "More permissive"),
+            )
+        if leaf == "important_packages":
+            return (
+                _pick(language, "Aucun package", "No package"),
+                _pick(language, "Packages personnalisés", "Custom packages"),
+            )
+        return (
+            _pick(language, "Protection plus large", "Broader protection"),
+            _pick(language, "Protection plus sélective", "More selective protection"),
+        )
     if root == "transfer_helper" and any(
         token in leaf for token in ("floor", "minimum", "margin", "tolerance")
     ):
@@ -371,6 +391,90 @@ _TRANSFER_HELP: dict[str, tuple[str, str, str, str]] = {
         "Share of percentile rank in competitive utility.",
         "L’augmenter donne plus d’importance à la position relative dans l’ensemble du pool.",
         "Increasing it gives relative position in the whole pool more importance.",
+    ),
+    "enabled": (
+        "Active le plancher qui protège un patrimoine Spark non reproduit par le remplaçant.",
+        "Enables the verdict floor that protects Spark heritage not reproduced by the replacement.",
+        "Le désactiver rend le verdict dépendant de la seule dominance du score et du support G1.",
+        "Disabling it makes the verdict depend only on score dominance and G1 support.",
+    ),
+    "minimum_context_weight": (
+        "Utilité maximale requise dans au moins un profil actif avant qu’une Spark puisse être protégée.",
+        "Maximum utility required in at least one active profile before a Spark can be protected.",
+        "L’augmenter écarte les Sparks faibles ou trop situationnelles du garde-fou.",
+        "Increasing it excludes weak or overly situational Sparks from the safeguard.",
+    ),
+    "hard_to_obtain_minimum_context_weight": (
+        "Utilité contextuelle minimale exigée avant d’utiliser la rareté d’acquisition.",
+        "Minimum contextual utility required before acquisition scarcity is considered.",
+        "L’augmenter évite de protéger une Spark rare mais peu utile.",
+        "Increasing it avoids protecting a scarce but low-value Spark.",
+    ),
+    "hard_to_obtain_max_support_hint_count": (
+        "Nombre maximal de support cards donnant directement le hint pour qualifier une Spark de difficile à obtenir.",
+        "Maximum number of support cards directly giving the hint for a Spark to count as hard to obtain.",
+        "L’augmenter élargit la protection d’acquisition à des Sparks disponibles sur davantage de supports.",
+        "Increasing it broadens acquisition protection to Sparks available from more support cards.",
+    ),
+    "repeated_review_min_carriers": (
+        "Nombre minimal de membres distincts portant la même skill effective pour déclencher un examen.",
+        "Minimum number of distinct members carrying the same effective skill to trigger review.",
+        "L’augmenter réserve la protection aux lignées plus fortement répétées.",
+        "Increasing it reserves protection for more strongly repeated lineages.",
+    ),
+    "repeated_review_min_total_stars": (
+        "Somme minimale d’étoiles sur les sources normalisées d’une Spark répétée.",
+        "Minimum total stars across the normalised sources of a repeated Spark.",
+        "L’augmenter exige une meilleure qualité cumulée avant de relever le verdict.",
+        "Increasing it requires stronger combined quality before raising the verdict.",
+    ),
+    "repeated_review_min_probability": (
+        "Probabilité neutre minimale d’obtenir une Spark répétée au moins une fois.",
+        "Minimum neutral probability of inheriting a repeated Spark at least once.",
+        "L’augmenter ignore les répétitions dont les taux de proc cumulés restent faibles.",
+        "Increasing it ignores repetitions whose combined proc rates remain low.",
+    ),
+    "repeated_strong_min_carriers": (
+        "Nombre de porteurs distincts à partir duquel une répétition devient un signal fort.",
+        "Number of distinct carriers at which repetition becomes a strong signal.",
+        "L’augmenter rend le plancher « probablement conserver » plus rare.",
+        "Increasing it makes the likely-keep floor less common.",
+    ),
+    "repeated_strong_min_probability": (
+        "Probabilité neutre à partir de laquelle une répétition devient un signal fort.",
+        "Neutral probability at which repetition becomes a strong signal.",
+        "L’augmenter exige une couverture cumulée plus élevée pour atteindre « probablement conserver ».",
+        "Increasing it requires higher combined coverage to reach likely keep.",
+    ),
+    "direct_future_gp_minimum_context_weight": (
+        "Utilité contextuelle minimale d’une Spark portée directement par le futur grand-parent.",
+        "Minimum contextual utility for a Spark carried directly by the future grandparent.",
+        "L’augmenter limite cette protection forte aux skills les plus déterminantes.",
+        "Increasing it limits this strong protection to the most decisive skills.",
+    ),
+    "direct_future_gp_min_stars": (
+        "Nombre minimal d’étoiles directes pour protéger fortement un futur grand-parent.",
+        "Minimum direct stars required to strongly protect a future grandparent.",
+        "L’augmenter réserve ce garde-fou aux Sparks directes de meilleure qualité.",
+        "Increasing it reserves this safeguard for higher-quality direct Sparks.",
+    ),
+    "replacement_probability_ratio": (
+        "Fraction de la probabilité du vétéran que le remplaçant doit conserver.",
+        "Fraction of the veteran’s inheritance probability the replacement must retain.",
+        "L’augmenter exige une couverture plus proche de l’original.",
+        "Increasing it requires coverage closer to the original.",
+    ),
+    "replacement_probability_tolerance": (
+        "Écart absolu de probabilité toléré lors de la comparaison des patrimoines.",
+        "Absolute probability gap tolerated when comparing inheritance assets.",
+        "L’augmenter accepte une petite perte supplémentaire chez le remplaçant.",
+        "Increasing it accepts a slightly larger loss in the replacement.",
+    ),
+    "important_packages": (
+        "Liste avancée des ensembles de skills dont la couverture combinée doit être préservée.",
+        "Advanced list of skill sets whose combined coverage should be preserved.",
+        "Modifier cette liste change uniquement le plancher de verdict, jamais le score principal.",
+        "Editing this list changes only the verdict floor, never the primary score.",
     ),
 }
 

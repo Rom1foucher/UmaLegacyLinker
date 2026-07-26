@@ -66,7 +66,7 @@ reveals a live donut chart and legend of the effective 100% distribution. Changi
 a coefficient updates only that stored value; the preview recalculates every
 effective share without rewriting untouched siblings.
 
-The broad gameplay categories are complemented by 50 ordered subcategories. They
+The broad gameplay categories are complemented by 51 ordered subcategories. They
 group settings that contribute to the same calculation (for example final-pair
 score, Long Blue stats, White proc rates or Transfer Helper utility) and replace
 the historical JSON insertion order in navigation.

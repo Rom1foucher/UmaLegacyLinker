@@ -50,9 +50,17 @@ Evaluates every local veteran as both a parent and a future grandparent across t
 Verdicts are deliberately conservative:
 
 - **Keep** — strong or repeatedly competitive role;
-- **Likely keep** — narrow but plausible role;
-- **Review** — no clear role, but no strict replacement;
-- **Safe transfer** — a same-costume, same-Unique replacement is no worse in every viable context and retains G1 pair support.
+- **Likely keep** — narrow but plausible role, or a strong non-preserved Spark signal;
+- **Review** — no clear role without a strict replacement, or a replacement that degrades a protected Spark signal;
+- **Safe transfer** — a same-costume, same-Unique replacement is no worse in every viable context, retains G1 pair support and preserves every protected Spark signal.
+
+Before confirming a safe transfer, an independent Spark-protection floor compares the candidate
+and replacement by effective inherited skill. Direct White Sparks and Race Sparks granting the
+same skill are merged; repeated carriers, total stars, neutral inheritance probability, direct
+future-grandparent placement, current-MDB support-hint availability and configurable skill
+packages are then compared. A non-preserved strategic signal raises the result to **Review** or
+**Likely keep** without changing the primary score. The detail pane and JSON/CSV reports show the
+exact Spark or package deficit.
 
 The tool never edits the collection and never transfers or deletes anything automatically.
 
@@ -185,7 +193,7 @@ The Qt lineage inspector loads costume-aware trainee artwork and resolved White 
 
 ## Weights
 
-The **Weights** tab uses a two-pane settings editor: search, gameplay categories and 50 ordered subcategories on the left, then a complete explanation and the appropriate control on the right. Every visible setting has bilingual purpose, impact and scope guidance, plus a quick hover summary. Probabilities and bounded thresholds use percentages, independent coefficients use an explicit `×1` reference, and the nine scoring groups normalised by the engine use a live 100% distribution preview with a donut chart. Adjusting a coefficient changes only that stored value; the displayed effective shares are recalculated without rewriting its siblings. Booleans, integers and curves receive controls suited to their type. Draft/default states are explicit and internal JSON paths remain out of the interface.
+The **Weights** tab uses a two-pane settings editor: search, gameplay categories and 51 ordered subcategories on the left, then a complete explanation and the appropriate control on the right. Every visible setting has bilingual purpose, impact and scope guidance, plus a quick hover summary. Probabilities and bounded thresholds use percentages, independent coefficients use an explicit `×1` reference, and the nine scoring groups normalised by the engine use a live 100% distribution preview with a donut chart. Adjusting a coefficient changes only that stored value; the displayed effective shares are recalculated without rewriting its siblings. Booleans, integers and curves receive controls suited to their type. Draft/default states are explicit and internal JSON paths remain out of the interface.
 
 Values are stored as minimal overrides on top of the bundled defaults, so new settings can be introduced without replacing the user's whole profile.
 
@@ -212,6 +220,7 @@ The effective profiles used by a run are exported as:
 | `legacy_linker.py` | Links veteran exports to `master.mdb` |
 | `parent_optimizer.py` | Local branch, pair and future-GP scoring |
 | `transfer_helper.py` | Collection cleanup analysis and dominance checks |
+| `spark_protection.py` | Independent Spark-heritage verdict floor and replacement comparison |
 | `uma_moe.py` | uma.moe API discovery, normalisation and online pairing |
 | `lineage_planner.py` | Native uma.moe Lineage Planner JSON export |
 | `scoring_config.py` | Scoring profile loading, migration and validation |

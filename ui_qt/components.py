@@ -4,6 +4,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QScrollArea,
+    QSplitter,
     QAbstractScrollArea,
     QAbstractSpinBox,
     QApplication,
@@ -302,3 +304,43 @@ def muted_label(text: str, *, wrap: bool = True) -> QLabel:
     label.setObjectName("muted")
     label.setWordWrap(wrap)
     return label
+
+
+def sync_scroll_pane_height(
+    splitter: QSplitter | None,
+    scroll: QScrollArea | None,
+    *,
+    reserve: int = 96,
+) -> None:
+    """Keep a form pane in a vertical splitter sized to its real content.
+
+    Two failure modes this guards against:
+
+    * Without a trailing stretch in the scrolled layout, ``setWidgetResizable``
+      hands surplus height to the panels, which spread their grid rows apart
+      as soon as a collapsible section closes. Callers must add that stretch;
+      this helper then measures ``layout().minimumSize()`` rather than
+      ``sizeHint()``, which the stretch would inflate.
+    * A fixed pixel split drifts out of sync with the actual layout (language,
+      DPI, populated fields, collapsed sections). The maximum is enforced on
+      the scroll area itself, not just picked as an initial split, because Qt
+      honours it while the user drags the handle.
+
+    ``reserve`` is the strip left to the pane below by default. It stays small
+    on purpose: the form is the part worth showing in full, and the handle can
+    always be dragged back up.
+    """
+    if splitter is None or scroll is None:
+        return
+    widget = scroll.widget()
+    layout = widget.layout() if widget is not None else None
+    if layout is None:
+        return
+    total = sum(splitter.sizes()) or splitter.height()
+    if total <= 0:
+        return
+    content_height = layout.minimumSize().height() + 4
+    top = max(160, min(content_height, total - reserve))
+    scroll.setMaximumHeight(min(content_height, max(top, total - 60)))
+    scroll.setMinimumHeight(min(content_height, 140))
+    splitter.setSizes([top, max(60, total - top)])

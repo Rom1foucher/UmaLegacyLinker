@@ -44,6 +44,7 @@ from ui_qt.components import (
     SearchableComboBox,
     muted_label,
     section_label,
+    sync_scroll_pane_height,
 )
 from ui_qt.context import AppContext
 from ui_qt.core import (
@@ -424,6 +425,7 @@ class OptimizerPage(QWidget):
         actions.addWidget(self.open_button)
         actions.addStretch(1)
         config_layout.addLayout(actions)
+        config_layout.addStretch(1)
         config_scroll.setWidget(config_widget)
         # Le splitter ignore sizeHint() une fois l'utilisateur en train de
         # glisser la poignée : sans plancher explicite, il autorise des
@@ -462,7 +464,9 @@ class OptimizerPage(QWidget):
         vertical.setStretchFactor(1, 1)
         self._config_scroll = config_scroll
         self._vertical_splitter = vertical
-        self.advanced.toggle.toggled.connect(self._sync_config_pane_height)
+        self.advanced.toggle.toggled.connect(
+            lambda _checked: QTimer.singleShot(0, self._sync_config_pane_height)
+        )
         QTimer.singleShot(0, self._sync_config_pane_height)
         root.addWidget(vertical, 1)
 
@@ -634,34 +638,10 @@ class OptimizerPage(QWidget):
         self._refresh_course_options()
 
     def _sync_config_pane_height(self, *_args: object) -> None:
-        """Keep the top splitter pane sized to its real content.
-
-        A fixed pixel split (``setSizes([330, 560])``) drifts out of sync
-        with the actual layout as soon as content differs from whatever
-        state it was measured under (language, DPI, populated fields,
-        collapsed/expanded advanced options): the scroll area was still
-        stretched to the stale fixed height, leaving a blank void below the
-        real content. Recomputing from ``sizeHint()`` on every relevant
-        change keeps the two in lockstep instead of guessing a constant.
-
-        The maximum height is enforced directly on the scroll area, not just
-        picked once as an initial split: Qt honours ``setMaximumHeight`` the
-        same way it honours ``setMinimumHeight`` while the user is actively
-        dragging the splitter handle, so the form pane becomes physically
-        unable to grow past what its content needs, whatever the drag speed
-        or window size.
-        """
-        splitter = getattr(self, "_vertical_splitter", None)
-        scroll = getattr(self, "_config_scroll", None)
-        if splitter is None or scroll is None:
-            return
-        total = sum(splitter.sizes()) or splitter.height()
-        if total <= 0:
-            return
-        content_height = scroll.widget().sizeHint().height() + 4
-        scroll.setMaximumHeight(max(140, content_height))
-        top = max(120, min(content_height, total - 120))
-        splitter.setSizes([top, max(120, total - top)])
+        sync_scroll_pane_height(
+            getattr(self, "_vertical_splitter", None),
+            getattr(self, "_config_scroll", None),
+        )
 
     def refresh_options(self, _checked: bool = False, *, show_errors: bool = True) -> None:
         master = Path(self.context.master_path).expanduser()

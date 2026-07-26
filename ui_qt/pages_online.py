@@ -55,6 +55,7 @@ from ui_qt.components import (
     SearchableComboBox,
     muted_label,
     section_label,
+    sync_scroll_pane_height,
 )
 from ui_qt.context import AppContext
 from ui_qt.core import (
@@ -878,29 +879,10 @@ class OnlinePage(QWidget):
         QTimer.singleShot(0, self._sync_config_pane_height)
 
     def _sync_config_pane_height(self, *_args: object) -> None:
-        """Keep the top splitter pane sized to its real content.
-
-        Same fix as ``OptimizerPage`` (see ``ui_qt/pages_optimizer.py``): a
-        fixed pixel split drifts out of sync with the actual layout, and
-        ``setMaximumHeight`` — not just an initial ``setSizes`` call — is
-        needed so the pane stays capped even while the user drags the
-        splitter handle by hand.
-        """
-        splitter = getattr(self, "_vertical_splitter", None)
-        scroll = getattr(self, "_config_scroll", None)
-        if splitter is None or scroll is None:
-            return
-        total = sum(splitter.sizes()) or splitter.height()
-        if total <= 0:
-            return
-        # ``sizeHint`` includes the trailing stretch, so measure the real
-        # content instead: the pane must shrink back when the advanced
-        # section collapses, not keep the expanded height.
-        content_height = scroll.widget().layout().minimumSize().height() + 4
-        capped = max(140, min(content_height, max(140, total - 160)))
-        scroll.setMaximumHeight(capped)
-        scroll.setMinimumHeight(min(capped, 140))
-        splitter.setSizes([capped, max(160, total - capped)])
+        sync_scroll_pane_height(
+            getattr(self, "_vertical_splitter", None),
+            getattr(self, "_config_scroll", None),
+        )
 
     def sync_context(self) -> None:
         self._populate_profiles()

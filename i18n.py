@@ -2017,6 +2017,7 @@ EXACT_EN.update({
 })
 
 FRAGMENTS_EN.update({
+    " vétéran(s) emprunté(s) écarté(s) : carrière en cours.": " borrowed veteran(s) skipped: in-progress career.",
     "Classement introuvable : ": "Ranking file not found: ",
     "Classement JSON invalide : ": "Invalid ranking JSON: ",
 })

@@ -64,7 +64,23 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def normalize_json_root(payload: Any) -> list[dict[str, Any]]:
+def is_borrowed_veteran(veteran: Any) -> bool:
+    """Tell borrowed veterans from owned ones.
+
+    Both extractors report what the game reports, which includes the
+    veterans rented for an in-progress career. The game marks those with a
+    non-zero ``use_type``; they are not part of the player's collection and
+    must not be ranked, counted or proposed for transfer.
+    """
+    if not isinstance(veteran, dict):
+        return False
+    try:
+        return int(veteran.get("use_type") or 0) != 0
+    except (TypeError, ValueError):
+        return False
+
+
+def normalize_json_root(payload: Any, *, include_borrowed: bool = False) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         veterans = payload
     elif isinstance(payload, dict):
@@ -85,6 +101,8 @@ def normalize_json_root(payload: Any) -> list[dict[str, Any]]:
     for index, veteran in enumerate(veterans):
         if not isinstance(veteran, dict):
             raise LinkerError(f"Entrée vétéran #{index} invalide : objet JSON attendu.")
+        if not include_borrowed and is_borrowed_veteran(veteran):
+            continue
         result.append(veteran)
     return result
 
@@ -473,11 +491,14 @@ def link_veterans(
     with json_input.open("r", encoding="utf-8-sig") as stream:
         raw_payload = json.load(stream)
     veterans = normalize_json_root(raw_payload)
+    borrowed = len(normalize_json_root(raw_payload, include_borrowed=True)) - len(veterans)
     exported_ids = {
         veteran["trained_chara_id"]
         for veteran in veterans
         if isinstance(veteran.get("trained_chara_id"), int)
     }
+    if borrowed:
+        log(f"{borrowed} vétéran(s) emprunté(s) écarté(s) : carrière en cours.")
     log(f"{len(veterans)} vétérans chargés.")
 
     log("Lecture et indexation du master.mdb courant…")

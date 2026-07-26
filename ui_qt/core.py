@@ -69,8 +69,9 @@ def config_path() -> Path:
     return root / "UmaLegacyLinker" / "config.json"
 
 
-def api_key_path() -> Path:
-    return config_path().parent / "uma_moe_api_key.dat"
+def api_key_path(settings_path: str | Path | None = None) -> Path:
+    parent = Path(settings_path).expanduser().parent if settings_path else config_path().parent
+    return parent / "uma_moe_api_key.dat"
 
 
 def default_scoring_path() -> Path:

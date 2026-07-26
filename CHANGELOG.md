@@ -20,6 +20,7 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Added a bilingual visual layout audit covering every page, result pane and lineage variant at three viewport sizes; the Windows workflow uploads its screenshots and report.
 - Fixed the standalone CLI configuration imports so parent ranking and Transfer Helper commands complete successfully, and covered both dispatch paths with regression tests.
 - Closed extractor subprocess streams deterministically and aligned the 1.7.0 Windows metadata, PyInstaller manifest, release workflow and Qt-only documentation.
+- Extended optional uma.moe API-key persistence to Linux and macOS with a versioned local-file fallback, atomic writes, strict `0700`/`0600` permissions and an explicit unencrypted-storage warning; Windows keeps DPAPI and remains compatible with legacy saved payloads.
 
 ## 1.6.0 - Contextual grandparent search and full English coverage
 

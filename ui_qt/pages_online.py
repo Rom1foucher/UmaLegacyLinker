@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 from i18n import profile_values
 from course_presets import course_preset_conditions, load_course_preset_payload, ordered_course_presets
 from parent_optimizer import OptimizerError, load_ace_options
-from secret_store import SecretStoreError, load_api_key, save_api_key
+from secret_store import SecretStoreError, resolve_api_key, save_api_key
 from uma_moe import (
     DEFAULT_API_BASE,
     DISTANCE_FACTOR_NAMES,
@@ -683,11 +683,13 @@ class OnlinePage(QWidget):
         self.show_key = QPushButton("")
         self.remember_key = QCheckBox("")
         remembered = context.store.get("uma_moe_remember_api_key", "0") in {"1", "true", "True"}
-        self.remember_key.setChecked(remembered and os.name == "nt")
-        if remembered and os.name == "nt":
-            self.key_edit.setText(load_api_key(api_key_path()))
-        elif os.environ.get("UMA_MOE_API_KEY"):
-            self.key_edit.setText(os.environ["UMA_MOE_API_KEY"])
+        self.remember_key.setChecked(remembered)
+        self.key_edit.setText(
+            resolve_api_key(
+                api_key_path(context.store.path),
+                remembered=remembered,
+            )
+        )
         self.import_label = QLabel("")
         self.import_picker = PathPicker(
             context.store.get("uma_moe_response_path"),
@@ -868,7 +870,17 @@ class OnlinePage(QWidget):
         self.api_label.setText(t("Base API"))
         self.key_label.setText(t("Clé API"))
         self.show_key.setText(t("Afficher"))
-        self.remember_key.setText(t("Mémoriser la clé sur ce PC — chiffrée par Windows"))
+        if os.name == "nt":
+            remember_text = "Mémoriser la clé sur ce PC — chiffrée par Windows"
+            remember_tooltip = "La clé mémorisée est chiffrée par Windows pour ce compte utilisateur."
+        else:
+            remember_text = "Mémoriser la clé sur ce PC — fichier local non chiffré"
+            remember_tooltip = (
+                "La clé mémorisée est stockée localement dans un fichier lisible uniquement "
+                "par ton compte utilisateur ; elle n’est pas chiffrée."
+            )
+        self.remember_key.setText(t(remember_text))
+        self.remember_key.setToolTip(t(remember_tooltip))
         self.import_label.setText(t("Réponse JSON à classer hors ligne"))
         self.import_picker.dialog_title = t("Sélectionner une réponse JSON de l’API uma.moe")
         self.import_picker.file_filter = f"JSON (*.json);;{t('Tous les fichiers')} (*)"
@@ -1037,16 +1049,24 @@ class OnlinePage(QWidget):
         self.show_key.setText(self.context.t("Masquer" if hidden else "Afficher"))
 
     def _remember_changed(self, checked: bool) -> None:
-        if checked and os.name != "nt":
-            self.remember_key.blockSignals(True)
-            self.remember_key.setChecked(False)
-            self.remember_key.blockSignals(False)
-            QMessageBox.information(self, self.context.t("Clé API"), self.context.t("Le stockage chiffré de la clé est disponible dans l’application Windows."))
-        elif not checked and os.name == "nt":
-            try:
-                save_api_key(api_key_path(), "")
-            except (OSError, SecretStoreError) as exc:
-                QMessageBox.warning(self, self.context.t("Clé API"), str(exc))
+        self.context.store.update({"uma_moe_remember_api_key": int(checked)})
+        if not checked:
+            self.persist_api_key()
+
+    def persist_api_key(self) -> bool:
+        try:
+            save_api_key(
+                api_key_path(self.context.store.path),
+                self.key_edit.text().strip() if self.remember_key.isChecked() else "",
+            )
+        except (OSError, SecretStoreError) as exc:
+            QMessageBox.warning(
+                self,
+                self.context.t("Clé API"),
+                self.context.t("La clé n’a pas pu être mémorisée.") + f"\n\n{exc}",
+            )
+            return False
+        return True
 
     def _set_uql_text(self, text: object) -> None:
         """Show the reference UQL as flowing text.
@@ -1254,16 +1274,7 @@ class OnlinePage(QWidget):
         except (UmaMoeError, OptimizerError, ValueError) as exc:
             QMessageBox.warning(self, self.context.t("Configuration incomplète"), self.context.t(str(exc)))
             return
-        if self.remember_key.isChecked() and os.name == "nt":
-            try:
-                save_api_key(api_key_path(), request.token)
-            except (OSError, SecretStoreError) as exc:
-                QMessageBox.warning(
-                    self,
-                    self.context.t("Clé API"),
-                    self.context.t("La recherche va continuer, mais la clé n’a pas pu être mémorisée.")
-                    + f"\n\n{exc}",
-                )
+        self.persist_api_key()
         self.context.store.update(
             {
                 "uma_moe_search_mode": request.search_mode,

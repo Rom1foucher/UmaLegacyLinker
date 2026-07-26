@@ -21,7 +21,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - rich, colour-coded Spark chips ordered Blue → Pink → Green → White, with resolved skill icons, the existing full-run White inheritance probability and gold emphasis for the three strongest White score contributions;
 - loading the latest generated ranking;
 - export of a selected final pair to the uma.moe Lineage Planner format;
-- live and imported uma.moe parent/grandparent searches, secure API-key persistence, costume filters and Friend ID copy;
+- live and imported uma.moe parent/grandparent searches, platform-aware API-key persistence, costume filters and Friend ID copy;
 - Transfer Helper with verdict/search filters and an embedded replacement diagnostic;
 - a two-pane scoring-profile editor with search, 50 gameplay subcategories, plain-language help for every setting, hover summaries and visible draft/default states;
 - unambiguous probability, threshold, multiplier and 100%-budget controls, including live donut charts for all nine genuinely normalised scoring groups;

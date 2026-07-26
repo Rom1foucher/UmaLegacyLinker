@@ -251,7 +251,7 @@ py cli.py --help
 
 The script runs the complete test suite and produces `dist\UmaLegacyLinkerQt-win64.zip` (plus its `.sha256`). Extract the whole directory before launching `UmaLegacyLinkerQt.exe`. It bundles Python, PySide6, PyYAML and the default profiles, so no Python installation and no adjacent `default_*.json` files are required on the destination PC.
 
-The uma.moe API key can be remembered from the application. On Windows it is encrypted with DPAPI for the current Windows account and stored under `%APPDATA%\UmaLegacyLinker`; it is never written in clear text to `config.json`.
+The uma.moe API key can be remembered from the application. On Windows it is encrypted with DPAPI for the current Windows account and stored under `%APPDATA%\UmaLegacyLinker`. On Linux and macOS it is stored unencrypted under `${XDG_CONFIG_HOME:-~/.config}/UmaLegacyLinker/uma_moe_api_key.dat`, with `0700` permissions on the application directory and `0600` on the file. It is never written to `config.json`; `UMA_MOE_API_KEY` keeps priority when present.
 
 ### Publishing a GitHub release
 

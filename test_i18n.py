@@ -25,6 +25,22 @@ class I18nTests(unittest.TestCase):
             ),
             "The saved key is encrypted by Windows for this user account.",
         )
+        self.assertEqual(
+            translate_text(
+                "Mémoriser la clé sur ce PC — fichier local non chiffré",
+                "en",
+            ),
+            "Remember the key on this PC — unencrypted local file",
+        )
+        self.assertEqual(
+            translate_text(
+                "La clé mémorisée est stockée localement dans un fichier lisible uniquement "
+                "par ton compte utilisateur ; elle n’est pas chiffrée.",
+                "en",
+            ),
+            "The saved key is stored locally in a file readable only by your user account; "
+            "it is not encrypted.",
+        )
 
     def test_uma_moe_filter_labels_are_translated(self) -> None:
         self.assertEqual(

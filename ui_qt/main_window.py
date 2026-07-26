@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if not self._busy:
+            self._pages["online"].persist_api_key()
             event.accept()
             return
         answer = QMessageBox.question(
@@ -361,6 +362,7 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
+            self._pages["online"].persist_api_key()
             event.accept()
         else:
             event.ignore()

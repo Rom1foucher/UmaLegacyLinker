@@ -226,8 +226,8 @@ class DataPage(QWidget):
         self.extractor_label = QLabel("")
         self.extractor_picker = PathPicker(
             self.context.extractor_path,
-            title="Sélectionner UmaExtractor",
-            file_filter="UmaExtractor (*.exe *.py);;Tous les fichiers (*)",
+            title="Sélectionner UmaExtractor ou umadump",
+            file_filter="Extracteur (*.exe *.py);;Tous les fichiers (*)",
         )
         self.output_label = QLabel("")
         self.output_picker = PathPicker(
@@ -323,14 +323,14 @@ class DataPage(QWidget):
         self.files_title.setText(t("Sources et sortie"))
         self.master_label.setText(t("Base actuelle du jeu — master.mdb"))
         self.data_label.setText(t("Collection exportée — data.json"))
-        self.extractor_label.setText(t("UmaExtractor — optionnel pour créer data.json"))
+        self.extractor_label.setText(t("Extracteur — UmaExtractor ou umadump, optionnel pour créer le JSON"))
         self.output_label.setText(t("Dossier de sortie"))
         self.master_picker.dialog_title = t("Sélectionner master.mdb")
         self.master_picker.file_filter = f"master.mdb (*.mdb);;{t('Tous les fichiers')} (*)"
         self.data_picker.dialog_title = t("Sélectionner data.json")
         self.data_picker.file_filter = f"JSON (*.json);;{t('Tous les fichiers')} (*)"
-        self.extractor_picker.dialog_title = t("Sélectionner UmaExtractor")
-        self.extractor_picker.file_filter = f"UmaExtractor (*.exe *.py);;{t('Tous les fichiers')} (*)"
+        self.extractor_picker.dialog_title = t("Sélectionner UmaExtractor ou umadump")
+        self.extractor_picker.file_filter = f"{t('Extracteur')} (*.exe *.py);;{t('Tous les fichiers')} (*)"
         self.output_picker.dialog_title = t("Sélectionner le dossier de sortie")
         for picker in (self.master_picker, self.data_picker, self.extractor_picker, self.output_picker):
             picker.set_button_text(t("Parcourir…"))
@@ -339,7 +339,7 @@ class DataPage(QWidget):
         self.catalog_button.setText(t("Générer les catalogues"))
         self.open_button.setText(t("Ouvrir la sortie"))
         self.extractor_download.setText(t("Télécharger UmaExtractor"))
-        self.umadump_link.setText(t("Découvrir umadump"))
+        self.umadump_link.setText(t("Télécharger umadump"))
         self.help_text.setText(
             t("Cette opération reconstruit les Sparks, skills, G1 et lignées sans modifier ton export original.")
         )

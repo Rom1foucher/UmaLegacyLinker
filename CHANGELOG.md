@@ -4,6 +4,8 @@ This project uses feature-level semantic versioning. Small internal iterations a
 
 ## 1.7.0 - PySide6 becomes the only interface
 
+- Added umadump as a second extraction backend, selected automatically from the tool's name. It is run once from the output folder so its exports land beside the other artefacts, and its `trained_chara_data.json` feeds the linker unchanged.
+- Skipped borrowed veterans everywhere: the game reports the ones rented for an in-progress career with a non-zero `use_type`, and nothing filtered them, so they were ranked, counted and offered for transfer as if they were owned.
 - Promoted the PySide6 interface to the sole desktop UI and removed the legacy Tkinter application (`app.py`, `autocomplete.py`, their tests, the old spec and launcher). The sidebar's "stable interface" switch and the Qt preview badge are gone.
 - Exposed the 1.6.0 contextual grandparent search in the Qt uma.moe page: an opposing-parent context (none, a local veteran, or candidates extracted from an exported pair result or API response), an offline "Local GP pairs" ranking that skips the API entirely, per-factor lineage star filters mirroring the uma.moe sliders, and a dedicated Surface-cohort toggle. Aligned the page with 1.6.0's structured filters by dropping the stale Dirt-only option and the free-text/auto UQL controls; the generated UQL stays visible read-only.
 - Added cooperative cancellation of long-running tasks from the status bar, reusing the logger/progress callbacks as checkpoints without any engine change.

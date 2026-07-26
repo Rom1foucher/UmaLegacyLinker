@@ -156,6 +156,8 @@ def auto_detect_master() -> Path | None:
 def auto_detect_extractor() -> Path | None:
     base = app_base_dir()
     candidates = (
+        base / "umadump.exe",
+        base / "tools" / "umadump.exe",
         base / "umaextractor.exe",
         base / "UmaExtractor.exe",
         base / "tools" / "umaextractor.exe",
@@ -845,20 +847,52 @@ def load_opposing_parent_candidates(
     return extract_opposing_parent_candidates(master_path, payload)
 
 
-def run_extractor(extractor: Path, *, logger: LogCallback) -> Path:
+UMADUMP_COLLECTION_FILE = "trained_chara_data.json"
+UMAEXTRACTOR_COLLECTION_FILE = "data.json"
+
+
+def extractor_backend(extractor: Path) -> str:
+    """Tell the two supported extraction backends apart.
+
+    umadump reads the game memory and writes several JSON files next to the
+    working directory; UmaExtractor intercepts a cached API response and
+    writes a single ``data.json``. Detection is by name so the user only has
+    to point at the executable, with no extra switch to keep in sync.
+    """
+    haystack = f"{extractor.stem} {extractor.parent.name}".lower()
+    return "umadump" if "umadump" in haystack else "umaextractor"
+
+
+def run_extractor(
+    extractor: Path,
+    *,
+    output_dir: Path | None = None,
+    logger: LogCallback,
+) -> Path:
     if not extractor.is_file():
-        raise LinkerError("Sélectionne umaextractor.exe, ou utilise un data.json existant.")
-    logger(f"Lancement de {extractor.name} en mode CLI…")
-    command = [str(extractor), "--cli"]
-    if extractor.suffix.lower() == ".py":
-        if getattr(sys, "frozen", False):
-            raise LinkerError(
-                "La version Windows autonome nécessite UmaExtractor.exe ; un script .py requiert une installation Python séparée."
-            )
-        command = [sys.executable, str(extractor), "--cli"]
+        raise LinkerError(
+            "Sélectionne umaextractor.exe ou umadump.exe, ou utilise un data.json existant."
+        )
+    backend = extractor_backend(extractor)
+    if backend == "umadump":
+        return _run_umadump(extractor, output_dir=output_dir, logger=logger)
+    return _run_umaextractor(extractor, logger=logger)
+
+
+def _extractor_command(extractor: Path, arguments: list[str]) -> list[str]:
+    if extractor.suffix.lower() != ".py":
+        return [str(extractor), *arguments]
+    if getattr(sys, "frozen", False):
+        raise LinkerError(
+            "La version Windows autonome nécessite un exécutable ; un script .py requiert une installation Python séparée."
+        )
+    return [sys.executable, str(extractor), *arguments]
+
+
+def _stream_extractor(command: list[str], cwd: Path, label: str, logger: LogCallback) -> None:
     process = subprocess.Popen(
         command,
-        cwd=str(extractor.parent),
+        cwd=str(cwd),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -871,16 +905,56 @@ def run_extractor(extractor: Path, *, logger: LogCallback) -> Path:
     for line in process.stdout:
         clean = line.rstrip()
         if clean:
-            logger(f"UmaExtractor: {clean}")
+            logger(f"{label}: {clean}")
     code = process.wait()
     if code != 0:
-        raise LinkerError(f"UmaExtractor s'est terminé avec le code {code}.")
-    candidates = (extractor.parent / "data.json", Path.home() / "Documents" / "data.json")
+        raise LinkerError(f"{label} s'est terminé avec le code {code}.")
+
+
+def _run_umaextractor(extractor: Path, *, logger: LogCallback) -> Path:
+    logger(f"Lancement de {extractor.name} en mode CLI…")
+    _stream_extractor(
+        _extractor_command(extractor, ["--cli"]),
+        extractor.parent,
+        "UmaExtractor",
+        logger,
+    )
+    candidates = (
+        extractor.parent / UMAEXTRACTOR_COLLECTION_FILE,
+        Path.home() / "Documents" / UMAEXTRACTOR_COLLECTION_FILE,
+    )
     for data_json in candidates:
         if data_json.is_file():
             logger(f"JSON extrait : {data_json}")
             return data_json
     raise LinkerError("UmaExtractor a terminé, mais aucun data.json n'a été trouvé.")
+
+
+def _run_umadump(
+    extractor: Path, *, output_dir: Path | None, logger: LogCallback
+) -> Path:
+    # umadump writes its exports relative to the working directory, so run it
+    # from the output folder instead of leaving the files next to the tool.
+    destination = Path(output_dir).expanduser() if output_dir else extractor.parent
+    destination.mkdir(parents=True, exist_ok=True)
+    logger(f"Lancement de {extractor.name} — lecture de la mémoire du jeu…")
+    _stream_extractor(
+        _extractor_command(extractor, ["--rerun-mode", "once", "--no-update-check"]),
+        destination,
+        "umadump",
+        logger,
+    )
+    candidates = (
+        destination / UMADUMP_COLLECTION_FILE,
+        extractor.parent / UMADUMP_COLLECTION_FILE,
+    )
+    for export in candidates:
+        if export.is_file():
+            logger(f"JSON extrait : {export}")
+            return export
+    raise LinkerError(
+        "umadump a terminé, mais aucun trained_chara_data.json n'a été trouvé."
+    )
 
 
 def run_extract_and_link(
@@ -893,7 +967,9 @@ def run_extract_and_link(
         raise LinkerError("Sélectionne un master.mdb valide.")
     request.output_dir.mkdir(parents=True, exist_ok=True)
     progress(6, "Connexion au jeu et extraction…")
-    data_json = run_extractor(request.extractor_path, logger=logger)
+    data_json = run_extractor(
+        request.extractor_path, output_dir=request.output_dir, logger=logger
+    )
     progress(48, "Extraction terminée ; liaison…")
     linked = link_veterans(
         request.master_path, data_json, request.output_dir, logger

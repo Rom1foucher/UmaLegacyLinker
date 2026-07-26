@@ -2014,10 +2014,19 @@ EXACT_EN.update({
     "Stat Blue dont les étoiles sont additionnées sur le Main distant et ses deux parents.": "Blue stat whose stars are summed over the remote Main and its two parents.",
     "Aptitude Pink (surface, distance ou style) dont les étoiles sont additionnées sur le Main distant et ses deux parents.": "Pink aptitude (surface, distance or style) whose stars are summed over the remote Main and its two parents.",
     "désactivé": "disabled",
+    "Extracteur — UmaExtractor ou umadump, optionnel pour créer le JSON": "Extractor — UmaExtractor or umadump, optional to create the JSON",
+    "Sélectionner UmaExtractor ou umadump": "Select UmaExtractor or umadump",
+    "Extracteur": "Extractor",
+    "Télécharger umadump": "Download umadump",
+    "Sélectionne umaextractor.exe ou umadump.exe, ou utilise un data.json existant.": "Select umaextractor.exe or umadump.exe, or use an existing data.json.",
+    "La version Windows autonome nécessite un exécutable ; un script .py requiert une installation Python séparée.": "The standalone Windows build requires an executable; a .py script needs a separate Python installation.",
+    "umadump a terminé, mais aucun trained_chara_data.json n'a été trouvé.": "umadump finished, but no trained_chara_data.json was found.",
 })
 
 FRAGMENTS_EN.update({
     " vétéran(s) emprunté(s) écarté(s) : carrière en cours.": " borrowed veteran(s) skipped: in-progress career.",
+    " — lecture de la mémoire du jeu…": " — reading the game memory…",
+    "s'est terminé avec le code ": "exited with code ",
     "Classement introuvable : ": "Ranking file not found: ",
     "Classement JSON invalide : ": "Invalid ranking JSON: ",
 })

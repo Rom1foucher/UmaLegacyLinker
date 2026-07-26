@@ -144,10 +144,14 @@ py -m pip install -r requirements-qt.txt
 
 Uma Legacy Linker does not bundle a game-memory reader.
 
-- [UmaExtractor](https://github.com/xancia/UmaExtractor) is the extractor currently supported by the built-in **Extract and link** launcher.
-- [umadump](https://github.com/Werseter/umadump) is a newer runtime memory reader and exporter with stronger layout validation and broader export capabilities. Using it as the preferred extraction backend instead of UmaExtractor is planned, but direct integration is not implemented yet.
+Two backends are supported by the built-in **Extract and link** launcher, which picks the right one from the tool's name:
 
-Both are separate projects with their own requirements, licences and warnings. Tools that read a running game process are used at your own discretion.
+- [umadump](https://github.com/Werseter/umadump) reads the running game's memory and validates its wrapper layouts against `global-metadata.dat`, so it survives game updates better than cache interception. It is run with `--rerun-mode once` from the output folder, and its `trained_chara_data.json` is linked directly. Note that it leaves `succession_trained_chara_id_1/2` at zero, so the informational "referenced by" column of the Transfer Helper stays empty; scoring and rankings are unaffected because every lineage member's Sparks come from the frozen `succession_chara_array` snapshot.
+- [UmaExtractor](https://github.com/xancia/UmaExtractor) intercepts a cached API response and writes a single `data.json`. It still provides the local lineage links above.
+
+Both are separate projects with their own requirements (umadump needs Python 3.14+ when run from source), licences and warnings.
+
+Tools that read a running game process are used at your own discretion.
 
 ## Quick start
 

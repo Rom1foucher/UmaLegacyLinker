@@ -29,31 +29,46 @@ Invoke-Python -m unittest -v @NonQtTestModules
 
 Invoke-Python -c "from PySide6.QtWidgets import QApplication; from ui_qt.main_window import MainWindow; print('Qt import OK')"
 $PreviousQtPlatform = $env:QT_QPA_PLATFORM
-$env:QT_QPA_PLATFORM = "offscreen"
-# Run every Qt smoke test in a fresh process. Some PySide6/Qt objects are
-# destroyed asynchronously and can trigger a native access violation during
-# interpreter teardown when several widget-heavy tests share one process.
-$QtSmokeTests = @(
-    "test_qt_runtime.QtRuntimeSmokeTests.test_distribution_chart_renders_at_editor_width",
-    "test_qt_runtime.QtRuntimeSmokeTests.test_every_page_constructs_and_retranslates",
-    "test_qt_runtime.QtRuntimeSmokeTests.test_grandparent_dialog_uses_target_parent_as_root",
-    "test_qt_runtime.QtRuntimeSmokeTests.test_lineage_dialog_renders_complete_pair_without_network",
-    "test_qt_runtime.QtRuntimeSmokeTests.test_result_panes_do_not_refresh_before_the_detail_browser_exists",
-    "test_qt_runtime.QtRuntimeSmokeTests.test_searchable_combo_resolves_text_without_stale_item_data",
-    "test_qt_runtime.QtRuntimeSmokeTests.test_weight_page_uses_categories_and_typed_controls"
-)
-foreach ($QtSmokeTest in $QtSmokeTests) {
-    Invoke-Python -m unittest -v $QtSmokeTest
-}
-if ($RunLayoutAudit) {
-    Invoke-Python -m ui_qt.layout_audit --output artifacts\ui-audit
-} else {
-    Write-Host "Layout audit skipped (use -RunLayoutAudit to enable it)."
-}
-if ($null -eq $PreviousQtPlatform) {
-    Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
-} else {
-    $env:QT_QPA_PLATFORM = $PreviousQtPlatform
+$PreviousQtFontDir = $env:QT_QPA_FONTDIR
+try {
+    $env:QT_QPA_PLATFORM = "offscreen"
+    $WindowsFontDir = Join-Path $env:WINDIR "Fonts"
+    if (Test-Path $WindowsFontDir) {
+        $env:QT_QPA_FONTDIR = $WindowsFontDir
+    }
+    # Run every Qt smoke test in a fresh process. Some PySide6/Qt objects are
+    # destroyed asynchronously and can trigger a native access violation during
+    # interpreter teardown when several widget-heavy tests share one process.
+    $QtSmokeTests = @(
+        "test_qt_runtime.QtRuntimeSmokeTests.test_distribution_chart_renders_at_editor_width",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_every_page_constructs_and_retranslates",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_grandparent_dialog_uses_target_parent_as_root",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_layout_audit_disposes_top_levels_immediately",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_layout_audit_uses_qt_control_content_rects",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_lineage_dialog_renders_complete_pair_without_network",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_result_panes_do_not_refresh_before_the_detail_browser_exists",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_searchable_combo_resolves_text_without_stale_item_data",
+        "test_qt_runtime.QtRuntimeSmokeTests.test_weight_page_uses_categories_and_typed_controls"
+    )
+    foreach ($QtSmokeTest in $QtSmokeTests) {
+        Invoke-Python -m unittest -v $QtSmokeTest
+    }
+    if ($RunLayoutAudit) {
+        Invoke-Python -m ui_qt.layout_audit --output artifacts\ui-audit
+    } else {
+        Write-Host "Layout audit skipped (use -RunLayoutAudit to enable it)."
+    }
+} finally {
+    if ($null -eq $PreviousQtPlatform) {
+        Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+    } else {
+        $env:QT_QPA_PLATFORM = $PreviousQtPlatform
+    }
+    if ($null -eq $PreviousQtFontDir) {
+        Remove-Item Env:QT_QPA_FONTDIR -ErrorAction SilentlyContinue
+    } else {
+        $env:QT_QPA_FONTDIR = $PreviousQtFontDir
+    }
 }
 Invoke-Python -m PyInstaller --noconfirm --clean UmaLegacyLinkerQt.spec
 

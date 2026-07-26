@@ -211,7 +211,7 @@ def _add_parent_branch(
         resolved_member = _resolve_raw_member(resolver, raw_veteran)
     elif not (member.get("factors") or {}).get("all"):
         raise LineagePlannerError(
-            f"Cannot resolve the selected local veteran for {position} in data.json."
+            f"Cannot resolve the selected local veteran for {position} in the source collection export."
         )
 
     entries[position] = _planner_entry(

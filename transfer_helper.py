@@ -1158,7 +1158,7 @@ def analyze_transfer_candidates(
             },
             "status_counts": dict(sorted(counts.items())),
             "safety_notes": [
-                "The helper never modifies data.json and never transfers a veteran automatically.",
+                "The helper never modifies the source collection export and never transfers a veteran automatically.",
                 "Safe transfer requires one same-costume/same-Unique replacement that is not worse in every globally viable parent or grandparent context for that costume variant, remains at least as good for G1 pair support, and clears the configured average lead.",
                 "A context is ignored for same-costume dominance when every copy of that card is globally outclassed there; being the least-bad copy in a non-viable niche does not force a keep.",
                 "Keep requires elite performance or repeated competitiveness across several contexts and course profiles. A single narrow niche is classified as likely keep.",

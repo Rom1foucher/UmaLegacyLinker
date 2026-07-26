@@ -53,7 +53,7 @@ from ui_qt.weight_help import describe_weight
 from uma_moe import UmaMoeError
 
 
-class QtPreviewCoreTests(unittest.TestCase):
+class QtUiCoreTests(unittest.TestCase):
     def test_weight_editor_groups_settings_by_user_facing_role(self) -> None:
         cases = {
             ("mode_weights", "parent_pair", "blue"): "global",
@@ -525,20 +525,20 @@ class QtPreviewCoreTests(unittest.TestCase):
         self.assertIn(">×3</td>", rendered)
         self.assertIn("present on the direct parent", rendered)
 
-    def test_preview_navigation_and_diagnostics_are_translated(self) -> None:
+    def test_qt_navigation_and_diagnostics_are_translated(self) -> None:
         sources = (
             "Vue d’ensemble",
             "Données locales",
             "Résultats intégrés",
             "Calcul du score global",
             "Sélectionne une ligne pour afficher le diagnostic.",
-            "Disponible dans l’interface stable",
+            "Interface Qt complète",
         )
         for source in sources:
             with self.subTest(source=source):
                 self.assertNotEqual(translate_text(source, "en"), source)
 
-    def test_optimizer_preview_uses_the_existing_backend_pipeline(self) -> None:
+    def test_optimizer_ui_uses_the_existing_backend_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             master = root / "master.mdb"

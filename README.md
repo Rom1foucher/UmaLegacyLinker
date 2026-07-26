@@ -21,7 +21,8 @@ Uma Legacy Linker links an exported veteran collection to the current `master.md
 
 ### Local linking
 
-Loads `data.json` and `master.mdb`, then resolves:
+Loads a supported veteran export (`data.json` from UmaExtractor or
+`trained_chara_data.json` from umadump) and `master.mdb`, then resolves:
 
 - Blue, Pink, Green, White and Race Sparks;
 - star levels and granted skills;
@@ -97,7 +98,7 @@ optional target-surface/distance/style constraints on the remote Main, and optio
 Blue/White quality for the full remote lineage. The generated UQL text is kept only as an audit
 and manual-copy representation because the public endpoint has no free-text UQL parameter.
 
-Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format. In the planner, use **Save / Load** to import the generated file. Local branches retain their full `data.json` veteran and succession records; remote branches export every Spark and lineage member available from the API result.
+Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format. In the planner, use **Save / Load** to import the generated file. Local branches retain every veteran and succession record available in the source export; remote branches export every Spark and lineage member available from the API result.
 
 ## Scoring model
 
@@ -131,7 +132,8 @@ See [`docs/SCORING.md`](docs/SCORING.md) for formulas and implementation details
 - Running from source requires Python **3.10+**.
 - PySide6 for the desktop interface.
 - A current Umamusume `master.mdb`.
-- A veteran export in `data.json` format.
+- A veteran export from UmaExtractor (`data.json`) or umadump
+  (`trained_chara_data.json`).
 - `PyYAML` for live uma.moe searches when running from source.
 
 Install the source dependencies with:
@@ -167,16 +169,17 @@ On Windows, `run.bat` starts the same application.
 Then select:
 
 1. the current `master.mdb`;
-2. the exported `data.json`;
+2. the exported `data.json` or `trained_chara_data.json`;
 3. an output directory.
 
-Run **Link an existing data.json** before using the lineage optimiser, Transfer Helper or local × online pair calculation.
+Run **Link collection** before using the lineage optimiser, Transfer Helper or
+local × online pair calculation.
 
 ### Desktop interface
 
 The PySide6 interface covers the full workflow: dashboard, extraction and linking, lineage optimisation, uma.moe search (including the fixed opposing-parent context and offline local GP-pair ranking), Transfer Helper, scoring-profile editing, diagnostic tools, sortable embedded results, a visual lineage inspector and Lineage Planner export. Long-running tasks can be cancelled from the status bar.
 
-Preferences live in `%APPDATA%\UmaLegacyLinker\config.json` and the interface renders in French and English. The Windows workflow also renders every page at three viewport sizes in both languages and rejects detected text overflow. See [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) for the UI architecture and build instructions.
+Preferences live in `%APPDATA%\UmaLegacyLinker\config.json` and the interface renders in French and English. The Windows workflow also renders every page at three viewport sizes in both languages and rejects detected text overflow. See [`docs/QT_UI.md`](docs/QT_UI.md) for the UI architecture and build instructions.
 
 The Qt lineage inspector loads costume-aware trainee artwork and resolved White Skill icons on demand from GameTora. Images are never bundled with the source or executable: they are kept in a bounded per-user cache, remain available offline once cached, and can be disabled or cleared directly in the inspector. Missing or unavailable artwork falls back to a generated initial card. White Sparks show the inheritance probability already calculated by the scoring engine across the run's configured Inspiration Events, and the three strongest White contributions receive a gold outline. Result diagnostics also show game-inspired aptitude rows, score/P(S) cards and a compact direct-Spark recap. The view does not introduce a second probability formula.
 
@@ -266,7 +269,7 @@ The workflow can also be started manually to obtain a downloadable build artifac
 - [`docs/SCORING.md`](docs/SCORING.md) — scoring model and formulas;
 - [`docs/WEIGHTS_FORMAT.md`](docs/WEIGHTS_FORMAT.md) — White Spark priority format;
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — proposed process-based multicore design;
-- [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) — desktop UI architecture and packaging;
+- [`docs/QT_UI.md`](docs/QT_UI.md) — desktop UI architecture and packaging;
 - [`docs/RELEASING.md`](docs/RELEASING.md) — Windows build and GitHub release procedure;
 - [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md) — external tools and services;
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.

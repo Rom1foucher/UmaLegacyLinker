@@ -1060,5 +1060,5 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
         )
     html += f"<h3>{escape(_t('Meilleurs profils parent', language))}</h3><table>{profiles(list(row.get('top_parent_profiles') or []))}</table>"
     html += f"<h3>{escape(_t('Meilleurs profils grand-parent', language))}</h3><table>{profiles(list(row.get('top_grandparent_profiles') or []))}</table>"
-    html += f"<p class='muted'>{escape(_t('L’outil ne modifie pas data.json et ne supprime rien en jeu.', language))}</p>"
+    html += f"<p class='muted'>{escape(_t('L’outil ne modifie pas l’export source et ne supprime rien en jeu.', language))}</p>"
     return html

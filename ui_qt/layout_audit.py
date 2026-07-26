@@ -6,14 +6,18 @@ import os
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtGui import QTextTable
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractButton,
     QCheckBox,
     QLabel,
+    QPushButton,
+    QRadioButton,
     QScrollArea,
+    QStyle,
+    QStyleOptionButton,
     QTextBrowser,
     QWidget,
 )
@@ -32,12 +36,62 @@ from ui_qt.theme import application_stylesheet
 SIZES = ((1120, 720), (1366, 768), (1600, 900))
 
 
+def _dispose_widget(widget: QWidget, application: QApplication) -> None:
+    """Destroy an audit top-level before its shared Qt dependencies.
+
+    ``close()`` only hides widgets by default.  Keeping the lineage dialogs
+    alive until interpreter shutdown also keeps their timers and connections
+    to the context-owned image repository alive.  PySide/Qt can then destroy
+    that graph in an unsafe order on Windows' offscreen platform.
+    """
+
+    widget.close()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    application.processEvents()
+
+
 def _widget_name(widget: QWidget) -> str:
     name = widget.objectName() or widget.metaObject().className()
     text = ""
     if isinstance(widget, (QLabel, QAbstractButton)):
         text = widget.text().replace("\n", " / ").strip()
     return f"{name} [{text[:80]}]" if text else name
+
+
+def _button_text_width(button: QAbstractButton) -> int:
+    """Return the width Qt actually leaves for a button's text.
+
+    A fixed padding estimate is inaccurate with Qt style sheets: Fusion,
+    Windows and the offscreen platform can all expose different content
+    margins.  Asking the active style for its content rectangle mirrors the
+    geometry used when the control is painted.
+    """
+
+    option = QStyleOptionButton()
+    option.initFrom(button)
+    option.text = button.text()
+    option.icon = button.icon()
+    if isinstance(button, QCheckBox):
+        element = QStyle.SubElement.SE_CheckBoxContents
+    elif isinstance(button, QRadioButton):
+        element = QStyle.SubElement.SE_RadioButtonContents
+    elif isinstance(button, QPushButton):
+        element = QStyle.SubElement.SE_PushButtonContents
+    else:
+        return button.contentsRect().width()
+    contents = button.style().subElementRect(element, option, button)
+    available = contents.width()
+    if not button.icon().isNull():
+        available -= button.iconSize().width() + 4
+    return max(0, available)
+
+
+def _plain_button_text(text: str) -> str:
+    """Strip mnemonic markers while preserving escaped ampersands."""
+
+    placeholder = "\0"
+    return text.replace("&&", placeholder).replace("&", "").replace(placeholder, "&")
 
 
 def _text_overflow(widget: QWidget) -> bool:
@@ -47,15 +101,14 @@ def _text_overflow(widget: QWidget) -> bool:
         text = widget.text()
         if not text or widget.wordWrap() or "\n" in text or widget.textFormat() == Qt.TextFormat.RichText:
             return False
-        required = widget.fontMetrics().horizontalAdvance(text) + 4
-        return required > widget.width() + 2
+        required = widget.fontMetrics().horizontalAdvance(text)
+        return required > widget.contentsRect().width()
     if isinstance(widget, QAbstractButton):
-        text = widget.text().replace("&", "")
+        text = _plain_button_text(widget.text())
         if not text or "\n" in text:
             return False
-        padding = 28 if isinstance(widget, QCheckBox) else 34
-        required = widget.fontMetrics().horizontalAdvance(text) + padding
-        return required > widget.width() + 4
+        required = widget.fontMetrics().horizontalAdvance(text)
+        return required > _button_text_width(widget)
     return False
 
 
@@ -109,7 +162,8 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                 "online_images": "0",
             }
         )
-        window = MainWindow(AppContext(store))
+        context = AppContext(store)
+        window = MainWindow(context)
         window.show()
         application.processEvents()
         for section in window.findChildren(CollapsibleSection):
@@ -132,6 +186,7 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         ("weights-advanced", "advanced"),
                     ]
                 for variant, mode in variants:
+                    print(f"Auditing {language}/{variant}...", flush=True)
                     if page == "online" and mode is not None:
                         combo = current_page.mode_combo
                         combo.setCurrentIndex(combo.findData(mode))
@@ -421,66 +476,81 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                 },
                 "parent",
             )
-            for variant, pane in (
+            panes = (
                 ("embedded-pair-results", pair_pane),
                 ("embedded-online-results", online_pane),
-            ):
-                pane.show()
-                for width, height in SIZES:
-                    pane.resize(width, height)
-                    application.processEvents()
-                    name = f"{language}-{variant}-{width}x{height}.png"
-                    pane.grab().save(str(output_dir / name), "PNG")
-                    issues = audit_window(pane)
-                    report["screens"].append(
-                        {
-                            "language": language,
-                            "page": variant,
-                            "size": [width, height],
-                            "screenshot": name,
-                            "issues": issues,
-                        }
-                    )
-                    for issue in issues:
-                        report["issues"].append(
-                            f"{language}/{variant}/{width}x{height}: {issue}"
+            )
+            for variant, pane in panes:
+                try:
+                    print(f"Auditing {language}/{variant}...", flush=True)
+                    pane.show()
+                    for width, height in SIZES:
+                        pane.resize(width, height)
+                        application.processEvents()
+                        name = f"{language}-{variant}-{width}x{height}.png"
+                        pane.grab().save(str(output_dir / name), "PNG")
+                        issues = audit_window(pane)
+                        report["screens"].append(
+                            {
+                                "language": language,
+                                "page": variant,
+                                "size": [width, height],
+                                "screenshot": name,
+                                "issues": issues,
+                            }
                         )
-                pane.close()
+                        for issue in issues:
+                            report["issues"].append(
+                                f"{language}/{variant}/{width}x{height}: {issue}"
+                            )
+                finally:
+                    _dispose_widget(pane, application)
             for variant, root, row, mode in fixtures:
-                if mode == "online_grandparent":
-                    details_html = online_detail_html(row, "grandparent", language)
-                else:
-                    details_html = result_detail_html(row, mode, language)
-                dialog = LineageDialog(
-                    window.context,
-                    root,
-                    row,
-                    mode=mode,
-                    details_html=details_html,
-                    parent=window,
-                )
-                dialog.show()
-                for width, height in SIZES:
-                    dialog.resize(width, height)
-                    application.processEvents()
-                    name = f"{language}-{variant}-{width}x{height}.png"
-                    dialog.grab().save(str(output_dir / name), "PNG")
-                    issues = audit_window(dialog)
-                    report["screens"].append(
-                        {
-                            "language": language,
-                            "page": variant,
-                            "size": [width, height],
-                            "screenshot": name,
-                            "issues": issues,
-                        }
+                dialog = None
+                try:
+                    print(f"Auditing {language}/{variant}...", flush=True)
+                    if mode == "online_grandparent":
+                        details_html = online_detail_html(row, "grandparent", language)
+                    else:
+                        details_html = result_detail_html(row, mode, language)
+                    dialog = LineageDialog(
+                        window.context,
+                        root,
+                        row,
+                        mode=mode,
+                        details_html=details_html,
+                        parent=window,
                     )
-                    for issue in issues:
-                        report["issues"].append(
-                            f"{language}/{variant}/{width}x{height}: {issue}"
+                    dialog.show()
+                    for width, height in SIZES:
+                        dialog.resize(width, height)
+                        application.processEvents()
+                        name = f"{language}-{variant}-{width}x{height}.png"
+                        dialog.grab().save(str(output_dir / name), "PNG")
+                        issues = audit_window(dialog)
+                        report["screens"].append(
+                            {
+                                "language": language,
+                                "page": variant,
+                                "size": [width, height],
+                                "screenshot": name,
+                                "issues": issues,
+                            }
                         )
-                dialog.close()
-        window.close()
+                        for issue in issues:
+                            report["issues"].append(
+                                f"{language}/{variant}/{width}x{height}: {issue}"
+                            )
+                finally:
+                    if dialog is not None:
+                        _dispose_widget(dialog, application)
+        _dispose_widget(window, application)
+        repository = getattr(context, "_image_repository", None)
+        if repository is not None:
+            repository.set_enabled(False)
+        context.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        application.processEvents()
     report["issue_count"] = len(report["issues"])
     (output_dir / "layout-report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -494,10 +564,11 @@ def main() -> int:
     args = parser.parse_args()
     report = run_audit(args.output)
     for issue in report["issues"]:
-        print(issue)
+        print(issue, flush=True)
     print(
         f"Rendered {len(report['screens'])} screens; "
-        f"detected {report['issue_count']} layout issue(s)."
+        f"detected {report['issue_count']} layout issue(s).",
+        flush=True,
     )
     return 1 if report["issue_count"] else 0
 

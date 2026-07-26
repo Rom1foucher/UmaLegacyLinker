@@ -22,9 +22,8 @@ class FunctionWorker(QRunnable):
     """Run a backend operation without blocking Qt's event loop.
 
     The logger and progress callbacks double as cooperative cancellation
-    checkpoints, exactly like the legacy worker: backends call them often,
-    so a requested cancellation stops at the next step without any engine
-    change.
+    checkpoints. Backends call them often, so a requested cancellation stops
+    at the next step without any engine change.
     """
 
     def __init__(self, function: Callable[..., Any]):
@@ -58,4 +57,3 @@ class FunctionWorker(QRunnable):
             self.signals.result.emit(result)
         finally:
             self.signals.finished.emit()
-

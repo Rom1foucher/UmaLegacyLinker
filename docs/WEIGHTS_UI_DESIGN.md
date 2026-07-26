@@ -1,8 +1,8 @@
 # Weights editor redesign notes
 
-## Why preview 3 still felt technical
+## Why the first Qt layout still felt technical
 
-Preview 3 solved the most visible data-editor problems: JSON paths disappeared,
+The first Qt layout solved the most visible data-editor problems: JSON paths disappeared,
 settings gained categories, and values received controls matching their type. The
 remaining friction came from the information architecture:
 
@@ -47,7 +47,7 @@ The page is now a two-pane settings editor:
 6. **Keep focus** — White Skill priority-file management moves into a collapsed
    secondary section.
 
-## Preview 5: make weight semantics visible
+## Make weight semantics visible
 
 The previous slider still used a percentage-shaped display for several different
 mathematical concepts. That made `120%` look like an invalid allocation even when

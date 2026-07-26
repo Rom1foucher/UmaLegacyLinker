@@ -1,6 +1,9 @@
 # Performance and parallelisation design
 
-UmaLegacyLinker already runs long GUI operations outside Tk's main thread, which keeps the interface responsive. That thread does not, however, make CPU-bound scoring use multiple cores because most of the workload is Python code constrained by the GIL.
+Uma Legacy Linker already runs long desktop operations in a Qt worker thread,
+which keeps the interface responsive and supports cooperative cancellation.
+That thread does not make CPU-bound scoring use multiple cores because most of
+the workload is Python code constrained by the GIL.
 
 ## Main hotspots
 
@@ -22,9 +25,15 @@ Use `concurrent.futures.ProcessPoolExecutor`, not a larger thread pool.
 
 ## Windows and packaged builds
 
-The application targets Windows and may be packaged with PyInstaller. The executable entry point must call `multiprocessing.freeze_support()`. Worker functions must remain at module scope and must not capture Tk widgets, callbacks, locks or open database handles.
+The application targets Windows and is packaged with PyInstaller. Before
+process-based parallelism is enabled, the executable entry point must call
+`multiprocessing.freeze_support()`. Worker functions must remain at module
+scope and must not capture Qt widgets, callbacks, locks or open database
+handles.
 
-Progress should be reported by completed batches through the existing application queue. Cancellation can be added later through a shared event checked between batches.
+Progress should be reported by completed batches through the existing worker
+signals. The current cooperative cancellation flag must be propagated to a
+shared process-safe event and checked between batches.
 
 ## Suggested rollout
 

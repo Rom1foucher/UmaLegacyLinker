@@ -226,7 +226,10 @@ def run_cli(args: argparse.Namespace) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=APP_NAME)
     parser.add_argument("--master", help="Chemin de master.mdb")
-    parser.add_argument("--json", help="Chemin de data.json")
+    parser.add_argument(
+        "--json",
+        help="Chemin de data.json ou trained_chara_data.json",
+    )
     parser.add_argument("--output", help="Dossier de sortie", default="output")
     parser.add_argument(
         "--catalog-only",

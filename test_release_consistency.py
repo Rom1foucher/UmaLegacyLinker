@@ -31,6 +31,18 @@ class ReleaseConsistencyTests(unittest.TestCase):
             r".\build_windows_qt.ps1 -SkipInstall -RunLayoutAudit",
             workflow,
         )
+        self.assertIn("actions/checkout@v7", workflow)
+        self.assertIn("actions/setup-python@v7", workflow)
+        self.assertIn("actions/upload-artifact@v7", workflow)
+
+    def test_windows_build_restores_qt_audit_environment(self) -> None:
+        script = (ROOT / "build_windows_qt.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertIn("$env:QT_QPA_PLATFORM = \"offscreen\"", script)
+        self.assertIn("$env:QT_QPA_FONTDIR = $WindowsFontDir", script)
+        self.assertIn("} finally {", script)
+        self.assertIn("$env:QT_QPA_PLATFORM = $PreviousQtPlatform", script)
+        self.assertIn("$env:QT_QPA_FONTDIR = $PreviousQtFontDir", script)
 
     def test_removed_tkinter_interface_is_not_packaged_or_advertised(self) -> None:
         spec = (ROOT / "UmaLegacyLinkerQt.spec").read_text(encoding="utf-8")
@@ -40,6 +52,16 @@ class ReleaseConsistencyTests(unittest.TestCase):
         self.assertNotIn('"app"', spec)
         self.assertNotIn("QT_UI_VERSION", package)
         self.assertNotIn("Tkinter reste disponible", home)
+
+    def test_release_docs_and_dependencies_are_qt_only(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        spec = (ROOT / "UmaLegacyLinkerQt.spec").read_text(encoding="utf-8")
+
+        self.assertTrue((ROOT / "docs" / "QT_UI.md").is_file())
+        self.assertFalse((ROOT / "docs" / "QT_UI_PREVIEW.md").exists())
+        self.assertNotIn("QT_UI_PREVIEW.md", readme)
+        self.assertNotIn("QT_UI_PREVIEW.md", spec)
+        self.assertFalse((ROOT / "requirements-build.txt").exists())
 
 
 if __name__ == "__main__":

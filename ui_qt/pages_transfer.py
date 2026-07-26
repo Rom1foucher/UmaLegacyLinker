@@ -159,7 +159,7 @@ class TransferPage(QWidget):
         t = self.context.t
         self.header.set_text(
             t("Transfer Helper"),
-            t("Identifie les copies redondantes sans jamais modifier data.json ni prendre une décision à ta place."),
+            t("Identifie les copies redondantes sans jamais modifier l’export source ni prendre une décision à ta place."),
         )
         self.safety_text.setText(
             t("« Transfert sûr » exige un remplaçant du même costume et de la même unique, non inférieur dans chaque niche viable. Les autres verdicts restent des diagnostics manuels.")

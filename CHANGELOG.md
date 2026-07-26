@@ -10,9 +10,16 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Exposed the 1.6.0 contextual grandparent search in the Qt uma.moe page: an opposing-parent context (none, a local veteran, or candidates extracted from an exported pair result or API response), an offline "Local GP pairs" ranking that skips the API entirely, per-factor lineage star filters mirroring the uma.moe sliders, and a dedicated Surface-cohort toggle. Aligned the page with 1.6.0's structured filters by dropping the stale Dirt-only option and the free-text/auto UQL controls; the generated UQL stays visible read-only.
 - Added cooperative cancellation of long-running tasks from the status bar, reusing the logger/progress callbacks as checkpoints without any engine change.
 - Extracted the headless command line into a standalone `cli.py` that imports the engines directly, so linking, catalogue generation, ranking and the Transfer Helper no longer depend on any UI toolkit.
+- Reorganised the Qt weight editor into explicit scoring domains and 50 gameplay subcategories, with bilingual contextual help, purpose-built controls and collapsible calculation blocks.
+- Made normalised group weights independently editable, with non-mutating distribution previews, live donut charts and separate value/block reset actions.
+- Covered the contextual GP search in the Qt weight catalogue, including API retrieval cohorts, local × remote preselection, fixed-opposing-parent settings and target-surface aptitude policy.
+- Added a top-down lineage inspector for local and uma.moe results, with costume artwork, White Skill icons, rich Spark summaries, inheritance probabilities, aptitude badges and result diagnostics.
+- Added an optional bounded image cache with offline reuse, placeholders and direct cache controls.
+- Kept the historical Umalator importer in a dedicated "Tools and diagnostics" page, separate from the primary scoring workflow.
 - Switched the Windows build and release workflow to the Qt bundle only (`UmaLegacyLinkerQt-win64.zip`), removed the redundant preview workflow, and updated the docs, run script and release checklist accordingly.
+- Added a bilingual visual layout audit covering every page, result pane and lineage variant at three viewport sizes; the Windows workflow uploads its screenshots and report.
 - Fixed the standalone CLI configuration imports so parent ranking and Transfer Helper commands complete successfully, and covered both dispatch paths with regression tests.
-- Closed extractor subprocess streams deterministically and aligned the 1.7.0 Windows metadata, PyInstaller manifest, workflow visual audit, Qt-only copy and weight-editor documentation.
+- Closed extractor subprocess streams deterministically and aligned the 1.7.0 Windows metadata, PyInstaller manifest, release workflow and Qt-only documentation.
 
 ## 1.6.0 - Contextual grandparent search and full English coverage
 
@@ -30,6 +37,7 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Added cooperative task cancellation from the status bar, and linking completion now points to the next step in the status bar and log.
 - Migrated pre-V17 `pink_other` overrides without changing their total pink allocation.
 
+## 1.5.0 — uma.moe Lineage Planner export
 
 - Unified future-grandparent weights across local ranking, Transfer Helper and uma.moe pair searches.
 - Removed the obsolete independent uma.moe GP-pair weight tables and migrated legacy overrides.
@@ -44,9 +52,6 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Added compact Spark-based fallback export for remote lineage members returned by uma.moe.
 - Completed English translations for optimiser detail panels and related runtime diagnostics.
 - Prevented a target parent Uma from being selected as its own grandparent, including alternate costumes; the target Ace remains eligible.
-- Reorganised the Qt weight editor into explicit scoring domains and collapsible calculation blocks.
-- Made normalised group weights independently editable, with non-mutating distribution previews and separate value/block reset actions.
-- Covered the 1.6.0 contextual GP search in the Qt weight editor: dedicated subcategories and bilingual contextual help for the API retrieval cohorts, the local × remote pair preselection, the fixed-opposing-parent settings, and the target-surface aptitude policy, with the i18n coverage checker extended to the full Qt layer.
 
 ## 1.4.0 — Interface polish, diagnostics and terminology
 

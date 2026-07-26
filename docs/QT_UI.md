@@ -6,7 +6,8 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 
 - a dashboard showing the current MDB, local collection and latest ranking state;
 - shared paths and language preference across sessions;
-- extraction through UmaExtractor, local `data.json` linking and skill-catalogue generation;
+- extraction through UmaExtractor or umadump, linking of `data.json` or
+  `trained_chara_data.json`, and skill-catalogue generation;
 - searchable Ace, target-parent, course and racecourse selection with contains-based autocomplete;
 - course presets and advanced static race conditions;
 - local lineage optimisation in a background worker;

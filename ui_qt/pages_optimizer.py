@@ -602,7 +602,7 @@ class OptimizerPage(QWidget):
         self.context_label.setText(
             t("Contexte actif")
             + f" · MDB: {master.name if master.is_file() else t('manquant')}"
-            + f" · data.json: {data.name if data.is_file() else t('manquant')}"
+            + f" · {t('Collection locale')}: {data.name if data.is_file() else t('manquant')}"
             + f" · {profile_summary(self._current_profile(), self.context.language)}"
         )
         self.course_picker.set_text(self.context.course_overrides_path)

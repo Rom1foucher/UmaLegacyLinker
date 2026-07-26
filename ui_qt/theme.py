@@ -99,7 +99,7 @@ def application_stylesheet() -> str:
         font-weight: 700;
         padding: 4px 10px 0 10px;
     }}
-    QLabel#versionBadge, QLabel#previewBadge {{
+    QLabel#versionBadge {{
         background: {COLORS['accent_dark']};
         color: {COLORS['accent']};
         border: 1px solid #2a6659;

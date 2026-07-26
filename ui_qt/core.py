@@ -90,7 +90,7 @@ def user_skill_priorities_path() -> Path:
 
 
 class SettingsStore:
-    """Compatibility layer for the configuration already used by Tkinter."""
+    """Compatibility layer for configuration created by earlier releases."""
 
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path).expanduser() if path is not None else config_path()
@@ -346,7 +346,7 @@ def validate_link_request(request: LinkRequest) -> None:
     if not request.master_path.is_file():
         raise LinkerError("Sélectionne un master.mdb valide.")
     if not request.veterans_json_path.is_file():
-        raise LinkerError("Sélectionne un data.json valide.")
+        raise LinkerError("Sélectionne un export JSON de collection valide.")
     request.output_dir.mkdir(parents=True, exist_ok=True)
 
 
@@ -484,7 +484,7 @@ def load_local_veteran_options(
     if not master.is_file():
         raise OptimizerError("Sélectionne un master.mdb valide.")
     if not data_path.is_file():
-        raise OptimizerError("Sélectionne un data.json valide.")
+        raise OptimizerError("Sélectionne un export JSON de collection valide.")
     identities = {option.card_id: option for option in load_ace_options(master)}
     try:
         payload = json.loads(data_path.read_text(encoding="utf-8-sig"))
@@ -871,7 +871,7 @@ def run_extractor(
 ) -> Path:
     if not extractor.is_file():
         raise LinkerError(
-            "Sélectionne umaextractor.exe ou umadump.exe, ou utilise un data.json existant."
+            "Sélectionne umaextractor.exe ou umadump.exe, ou utilise un export JSON existant."
         )
     backend = extractor_backend(extractor)
     if backend == "umadump":

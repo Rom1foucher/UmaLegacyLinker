@@ -10,7 +10,7 @@ data_files = [
     (str(project_root / "default_parent_scoring.json"), "."),
     (str(project_root / "default_skill_priorities.json"), "."),
     (str(project_root / "docs" / "THIRD_PARTY.md"), "docs"),
-    (str(project_root / "docs" / "QT_UI_PREVIEW.md"), "docs"),
+    (str(project_root / "docs" / "QT_UI.md"), "docs"),
     (str(project_root / "docs" / "WEIGHTS_UI_DESIGN.md"), "docs"),
 ]
 for distribution in ("PySide6", "PySide6_Essentials", "shiboken6"):

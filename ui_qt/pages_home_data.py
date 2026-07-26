@@ -159,7 +159,10 @@ class HomePage(QWidget):
             )
         else:
             self.collection_card.set_content(
-                t("Collection locale"), t("À sélectionner"), t("data.json est requis"), "warning"
+                t("Collection locale"),
+                t("À sélectionner"),
+                t("Un export de collection est requis"),
+                "warning",
             )
 
         rankings = latest_rankings_path(self.context.output_dir)
@@ -220,10 +223,11 @@ class DataPage(QWidget):
         self.data_label = QLabel("")
         self.data_picker = PathPicker(
             self.context.veterans_json_path,
-            title="Sélectionner data.json",
+            title="Sélectionner un export de collection",
             file_filter="JSON (*.json);;Tous les fichiers (*)",
         )
         self.extractor_label = QLabel("")
+        self.extractor_label.setWordWrap(True)
         self.extractor_picker = PathPicker(
             self.context.extractor_path,
             title="Sélectionner UmaExtractor ou umadump",
@@ -322,12 +326,14 @@ class DataPage(QWidget):
         )
         self.files_title.setText(t("Sources et sortie"))
         self.master_label.setText(t("Base actuelle du jeu — master.mdb"))
-        self.data_label.setText(t("Collection exportée — data.json"))
+        self.data_label.setText(
+            t("Collection exportée — data.json ou trained_chara_data.json")
+        )
         self.extractor_label.setText(t("Extracteur — UmaExtractor ou umadump, optionnel pour créer le JSON"))
         self.output_label.setText(t("Dossier de sortie"))
         self.master_picker.dialog_title = t("Sélectionner master.mdb")
         self.master_picker.file_filter = f"master.mdb (*.mdb);;{t('Tous les fichiers')} (*)"
-        self.data_picker.dialog_title = t("Sélectionner data.json")
+        self.data_picker.dialog_title = t("Sélectionner un export de collection")
         self.data_picker.file_filter = f"JSON (*.json);;{t('Tous les fichiers')} (*)"
         self.extractor_picker.dialog_title = t("Sélectionner UmaExtractor ou umadump")
         self.extractor_picker.file_filter = f"{t('Extracteur')} (*.exe *.py);;{t('Tous les fichiers')} (*)"

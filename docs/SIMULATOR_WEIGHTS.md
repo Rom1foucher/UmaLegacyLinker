@@ -1,4 +1,6 @@
-> **Legacy.** Depuis la V9, le classement n'utilise plus Umalator ; ce pipeline reste disponible comme outil de diagnostic (onglet « Outils legacy » et `--umalator-batch`).
+> **Legacy.** Depuis la V9, le classement n'utilise plus Umalator ; ce pipeline
+> reste disponible uniquement pour le diagnostic dans « Outils et diagnostics »
+> et via `--umalator-batch`.
 
 # Poids Umalator, corrections manuelles et tracés exacts
 

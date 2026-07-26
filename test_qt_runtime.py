@@ -121,6 +121,105 @@ class QtRuntimeSmokeTests(unittest.TestCase):
         self.assertIn("Distance S", chart.toolTip())
         chart.close()
 
+    def test_layout_audit_disposes_top_levels_immediately(self) -> None:
+        from PySide6.QtWidgets import QWidget
+        from shiboken6 import isValid
+
+        from ui_qt.layout_audit import _dispose_widget
+
+        widget = QWidget()
+        widget.show()
+        self.application.processEvents()
+        self.assertTrue(isValid(widget))
+        _dispose_widget(widget, self.application)
+        self.assertFalse(isValid(widget))
+
+    def test_layout_audit_uses_qt_control_content_rects(self) -> None:
+        from PySide6.QtWidgets import QLabel, QPushButton
+
+        from ui_qt.layout_audit import _button_text_width, _text_overflow
+        from ui_qt.theme import application_stylesheet
+
+        self.application.setStyle("Fusion")
+        self.application.setStyleSheet(application_stylesheet())
+
+        label = QLabel("Exactly fitted label")
+        label.resize(320, 40)
+        label.show()
+
+        button = QPushButton("Exactly fitted button")
+        button.resize(320, button.sizeHint().height())
+        button.show()
+        self.application.processEvents()
+        label_chrome_width = label.width() - label.contentsRect().width()
+        label_text_width = label.fontMetrics().horizontalAdvance(label.text())
+        label.resize(label_text_width + label_chrome_width, label.height())
+        chrome_width = button.width() - _button_text_width(button)
+        text_width = button.fontMetrics().horizontalAdvance(button.text())
+        button.resize(text_width + chrome_width, button.height())
+        self.application.processEvents()
+
+        self.assertFalse(_text_overflow(label))
+        self.assertFalse(_text_overflow(button))
+
+        label.resize(label.width() - 1, label.height())
+        button.resize(button.width() - 1, button.height())
+        self.assertTrue(_text_overflow(label))
+        self.assertTrue(_text_overflow(button))
+        label.close()
+        button.close()
+
+    def test_narrow_layouts_fit_the_audited_content_width(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget, _text_overflow, audit_window
+        from ui_qt.main_window import MainWindow
+        from ui_qt.theme import application_stylesheet
+
+        self.application.setStyle("Fusion")
+        self.application.setStyleSheet(application_stylesheet())
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = SettingsStore(root / "config.json")
+            store.update({"output_dir": str(root / "output"), "ui_language": "fr"})
+            window = MainWindow(AppContext(store))
+            window.resize(1120, 720)
+            window.show()
+            self.application.processEvents()
+            try:
+                for language in ("fr", "en"):
+                    window.context.set_language(language)
+                    window.show_page("data")
+                    self.application.processEvents()
+                    self.assertFalse(
+                        _text_overflow(window._pages["data"].extractor_label)
+                    )
+
+                    weights = window._pages["weights"]
+                    window.show_page("weights")
+                    self.application.processEvents()
+                    self.assertFalse(_text_overflow(weights.changed_only))
+                    self.assertFalse(_text_overflow(weights.show_advanced))
+
+                    online = window._pages["online"]
+                    online.advanced.toggle.setChecked(True)
+                    window.show_page("online")
+                    for mode in ("parent", "grandparent"):
+                        online.mode_combo.setCurrentIndex(
+                            online.mode_combo.findData(mode)
+                        )
+                        self.application.processEvents()
+                        issues = audit_window(window)
+                        self.assertFalse(
+                            any(
+                                "hidden horizontal overflow" in issue
+                                for issue in issues
+                            ),
+                            f"{language}/{mode}: {issues}",
+                        )
+            finally:
+                _dispose_widget(window, self.application)
+
     def test_lineage_dialog_renders_complete_pair_without_network(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore

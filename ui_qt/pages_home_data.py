@@ -128,7 +128,7 @@ class HomePage(QWidget):
         self.refresh_button.setText(t("Actualiser"))
         self.preview_title.setText(t("Interface Qt complète"))
         self.preview_text.setText(
-            t("Tous les workflows principaux utilisent désormais les mêmes moteurs dans l’interface Qt : extraction, optimisation, recherche uma.moe, Transfer Helper, pondérations et outils de diagnostic. L’interface Tkinter reste disponible comme solution de repli.")
+            t("Tous les workflows principaux utilisent désormais les mêmes moteurs dans l’interface Qt : extraction, optimisation, recherche uma.moe, Transfer Helper, pondérations et outils de diagnostic.")
         )
         self.refresh()
 

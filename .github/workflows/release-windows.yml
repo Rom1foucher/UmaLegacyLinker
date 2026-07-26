@@ -28,7 +28,7 @@ jobs:
 
       - name: Build and test Qt application
         shell: pwsh
-        run: .\build_windows_qt.ps1 -SkipInstall
+        run: .\build_windows_qt.ps1 -SkipInstall -RunLayoutAudit
 
       - name: Upload visual QA report
         if: always()

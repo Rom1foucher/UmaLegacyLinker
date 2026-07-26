@@ -23,6 +23,7 @@ artifacts/
 # Generated application data
 output/
 UmaLegacyLinker*.zip
+*.bundle
 *.prof
 
 # Test modules are project source code and are intentionally not ignored.

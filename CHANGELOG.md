@@ -11,6 +11,8 @@ This project uses feature-level semantic versioning. Small internal iterations a
 - Added cooperative cancellation of long-running tasks from the status bar, reusing the logger/progress callbacks as checkpoints without any engine change.
 - Extracted the headless command line into a standalone `cli.py` that imports the engines directly, so linking, catalogue generation, ranking and the Transfer Helper no longer depend on any UI toolkit.
 - Switched the Windows build and release workflow to the Qt bundle only (`UmaLegacyLinkerQt-win64.zip`), removed the redundant preview workflow, and updated the docs, run script and release checklist accordingly.
+- Fixed the standalone CLI configuration imports so parent ranking and Transfer Helper commands complete successfully, and covered both dispatch paths with regression tests.
+- Closed extractor subprocess streams deterministically and aligned the 1.7.0 Windows metadata, PyInstaller manifest, workflow visual audit, Qt-only copy and weight-editor documentation.
 
 ## 1.6.0 - Contextual grandparent search and full English coverage
 

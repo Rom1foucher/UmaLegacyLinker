@@ -13,7 +13,7 @@
    git push origin v1.7.0
    ```
 
-The `Windows release` workflow runs the tests on Windows, builds the packaged bundle, computes its SHA-256 checksum and attaches both files to the GitHub release.
+The `Windows release` workflow runs the tests and full visual layout audit on Windows, builds the packaged bundle, computes its SHA-256 checksum and attaches both files to the GitHub release. The visual QA report is uploaded even when the audit fails.
 
 The workflow can be run manually from the Actions tab when a test build is needed without publishing a release.
 
@@ -24,6 +24,8 @@ From PowerShell:
 ```powershell
 .\build_windows_qt.ps1
 ```
+
+Add `-RunLayoutAudit` to reproduce the complete workflow verification locally.
 
 Outputs:
 

@@ -890,7 +890,7 @@ def _extractor_command(extractor: Path, arguments: list[str]) -> list[str]:
 
 
 def _stream_extractor(command: list[str], cwd: Path, label: str, logger: LogCallback) -> None:
-    process = subprocess.Popen(
+    with subprocess.Popen(
         command,
         cwd=str(cwd),
         stdin=subprocess.DEVNULL,
@@ -900,13 +900,13 @@ def _stream_extractor(command: list[str], cwd: Path, label: str, logger: LogCall
         encoding="utf-8",
         errors="replace",
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        clean = line.rstrip()
-        if clean:
-            logger(f"{label}: {clean}")
-    code = process.wait()
+    ) as process:
+        assert process.stdout is not None
+        for line in process.stdout:
+            clean = line.rstrip()
+            if clean:
+                logger(f"{label}: {clean}")
+        code = process.wait()
     if code != 0:
         raise LinkerError(f"{label} s'est terminé avec le code {code}.")
 

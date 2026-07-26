@@ -16,6 +16,14 @@ from pathlib import Path
 from legacy_linker import LinkerError, link_veterans
 from manual_weights import generate_manual_skill_weights
 from parent_optimizer import OptimizerError, optimize_parents
+from scoring_config import (
+    deep_merge,
+    migrate_scoring_overrides,
+    read_json_object,
+    validate_scoring_config,
+    validate_skill_priorities_config,
+    write_json_object,
+)
 from simulator_weights import generate_simulator_weights
 from skill_catalog import generate_skill_catalogs
 from transfer_helper import TransferHelperError, analyze_transfer_candidates

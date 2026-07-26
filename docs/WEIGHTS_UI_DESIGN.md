@@ -59,12 +59,12 @@ separates three control families:
 - **normalised mixes** expose the effective share of a 100% budget rather than the
   raw stored coefficient.
 
-Nine mixes (42 settings) are genuinely normalised by the scoring engine: the three
-global scoring roles, both aptitude-dimension roles, parent-branch partial scoring,
-both uma.moe ranking stages and Transfer Helper utility. Selecting one of these
-settings reveals a live donut chart and legend. Changing its share redistributes
-the remainder proportionally, so the group stays at exactly 100% without changing
-the relative balance of untouched siblings.
+Nine mixes (42 settings) are normalised by the scoring engine: the three global
+scoring roles, both aptitude-dimension roles, parent-branch partial scoring, both
+uma.moe ranking stages and Transfer Helper utility. Selecting one of these settings
+reveals a live donut chart and legend of the effective 100% distribution. Changing
+a coefficient updates only that stored value; the preview recalculates every
+effective share without rewriting untouched siblings.
 
 The broad gameplay categories are complemented by 50 ordered subcategories. They
 group settings that contribute to the same calculation (for example final-pair

@@ -182,7 +182,7 @@ The Qt lineage inspector loads costume-aware trainee artwork and resolved White 
 
 ## Weights
 
-The **Weights** tab uses a two-pane settings editor: search, gameplay categories and 50 ordered subcategories on the left, then a complete explanation and the appropriate control on the right. Every visible setting has bilingual purpose, impact and scope guidance, plus a quick hover summary. Probabilities and bounded thresholds use percentages, independent coefficients use an explicit `×1` reference, and the nine genuinely normalised scoring groups use a live 100% distribution with a donut chart. Adjusting one share redistributes its siblings proportionally. Booleans, integers and curves receive controls suited to their type. Draft/default states are explicit and internal JSON paths remain out of the interface.
+The **Weights** tab uses a two-pane settings editor: search, gameplay categories and 50 ordered subcategories on the left, then a complete explanation and the appropriate control on the right. Every visible setting has bilingual purpose, impact and scope guidance, plus a quick hover summary. Probabilities and bounded thresholds use percentages, independent coefficients use an explicit `×1` reference, and the nine scoring groups normalised by the engine use a live 100% distribution preview with a donut chart. Adjusting a coefficient changes only that stored value; the displayed effective shares are recalculated without rewriting its siblings. Booleans, integers and curves receive controls suited to their type. Draft/default states are explicit and internal JSON paths remain out of the interface.
 
 Values are stored as minimal overrides on top of the bundled defaults, so new settings can be introduced without replacing the user's whole profile.
 

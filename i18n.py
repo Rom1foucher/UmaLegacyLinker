@@ -246,7 +246,6 @@ EXACT_EN: dict[str, str] = {
 # ``card_id`` name, while user-facing English consistently refers to costume
 # variants and trained veterans/copies.
 EXACT_EN.update({
-    "Aperçu Qt 5": "Qt Preview 5",
     "Diagnostic Umalator (legacy)": "Umalator diagnostics (legacy)",
     "(aucun)": "(none)",
     "Sélectionne un master.mdb valide avant d’importer un parent.": "Select a valid master.mdb before importing a parent.",
@@ -795,14 +794,9 @@ FRAGMENTS_EN: dict[str, str] = {
     "Le profil de priorités white doit être un objet JSON.": "The white priority profile must be a JSON object.",
     " doit être positif ou nul.": " must be non-negative.",
     "skills doit être un objet JSON indexé par catalog_key.": "skills must be a JSON object indexed by catalog_key.",
-    # PySide6 preview shell. Keeping these strings in the shared catalogue
-    # means both desktop frontends retain the same language preference and
-    # terminology while the migration is in progress.
-    "Aperçu Qt": "Qt preview",
+    # PySide6 desktop shell.
     "Accueil": "Home",
     "Données locales": "Local data",
-    "Interface stable (Tkinter)": "Stable interface (Tkinter)",
-    "Interface stable": "Stable interface",
     "Journal": "Log",
     "Journal d’exécution": "Activity log",
     "Effacer": "Clear",
@@ -835,8 +829,6 @@ FRAGMENTS_EN: dict[str, str] = {
     "Configurer les données": "Configure data",
     "Nouvelle optimisation": "New optimisation",
     "Actualiser": "Refresh",
-    "Refonte progressive": "Incremental redesign",
-    "L’interface Tkinter reste disponible comme solution de repli. Recherche uma.moe, Transfer Helper et édition avancée des pondérations seront migrés dans les prochaines étapes.": "The Tkinter interface remains available as a fallback. uma.moe search, Transfer Helper, and advanced weight editing will be migrated in the next stages.",
     "Relie ton export de vétérans au master.mdb courant avant les analyses.": "Link your veteran export to the current master.mdb before running analyses.",
     "Sources et sortie": "Sources and output",
     "Base actuelle du jeu — master.mdb": "Current game database — master.mdb",
@@ -919,13 +911,12 @@ FRAGMENTS_EN: dict[str, str] = {
 # it easier to audit every visible label in both languages.
 EXACT_EN.update({
     "VUE D’ENSEMBLE": "OVERVIEW",
-    "Aperçu Qt 2": "Qt preview 2",
     "PRÉPARER": "PREPARE",
     "ANALYSER": "ANALYSE",
     "CONFIGURER": "CONFIGURE",
     "Prépare ta collection, optimise une lignée ou lance directement une analyse ciblée.": "Prepare your collection, optimise a lineage, or start a focused analysis.",
     "Interface Qt complète": "Complete Qt interface",
-    "Tous les workflows principaux utilisent désormais les mêmes moteurs dans l’interface Qt : extraction, optimisation, recherche uma.moe, Transfer Helper, pondérations et outils de diagnostic. L’interface Tkinter reste disponible comme solution de repli.": "All main workflows now use the same engines in the Qt interface: extraction, optimisation, uma.moe search, Transfer Helper, weights, and diagnostic tools. The Tkinter interface remains available as a fallback.",
+    "Tous les workflows principaux utilisent désormais les mêmes moteurs dans l’interface Qt : extraction, optimisation, recherche uma.moe, Transfer Helper, pondérations et outils de diagnostic.": "All main workflows now use the same engines in the Qt interface: extraction, optimisation, uma.moe search, Transfer Helper, weights, and diagnostic tools.",
     "UmaExtractor — optionnel pour créer data.json": "UmaExtractor — optional data.json exporter",
     "Extraire puis lier": "Extract and link",
     "Générer les catalogues": "Generate catalogues",
@@ -1898,12 +1889,6 @@ FRAGMENTS_EN.update({
 
 # Qt visual lineage and on-demand artwork cache.
 EXACT_EN.update({
-    "Aperçu Qt 6": "Qt preview 6",
-    "Aperçu Qt 7": "Qt preview 7",
-    "Aperçu Qt 8": "Qt preview 8",
-    "Aperçu Qt 9": "Qt preview 9",
-    "Aperçu Qt 10": "Qt preview 10",
-    "Aperçu Qt 11": "Qt preview 11",
     "Ouvrir la vue de lignée": "Open lineage view",
     "Voir la lignée": "View lineage",
     "Vue de lignée": "Lineage view",
@@ -1980,9 +1965,8 @@ EXACT_EN.update({
     "Supprimer les illustrations téléchargées ? Elles pourront être rechargées à la prochaine ouverture.": "Delete downloaded artwork? It can be loaded again next time the view is opened.",
 })
 
-# Reconciliation of the Qt preview with the contextual GP search shipped on
-# main: subcategory labels of the new weight groups plus Qt strings surfaced
-# by the extended check_i18n coverage.
+# Contextual GP search merged from main: subcategory labels of the new weight
+# groups plus Qt strings surfaced by the extended check_i18n coverage.
 EXACT_EN.update({
     "Recherche avec parent opposé fixé": "Search with a fixed opposing parent",
     "Cohortes de récupération des parents API": "API parent-retrieval cohorts",

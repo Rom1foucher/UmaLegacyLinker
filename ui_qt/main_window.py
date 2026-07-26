@@ -41,6 +41,7 @@ class MainWindow(QMainWindow):
         self.context = context or AppContext()
         self.thread_pool = QThreadPool.globalInstance()
         self._workers: list[FunctionWorker] = []
+        self._active_worker: FunctionWorker | None = None
         self._busy = False
         self._status_source = "Prêt"
         self._nav_order = ["home", "data", "optimizer", "online", "transfer", "weights", "tools"]
@@ -161,8 +162,12 @@ class MainWindow(QMainWindow):
         self.log_button = QPushButton("")
         self.log_button.setCheckable(True)
         self.log_button.toggled.connect(self.log_frame.setVisible)
+        self.cancel_button = QPushButton("")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._request_cancel)
         status_layout.addWidget(self.status_label, 1)
         status_layout.addWidget(self.progress)
+        status_layout.addWidget(self.cancel_button)
         status_layout.addWidget(self.log_button)
         right_layout.addWidget(status)
         outer.addWidget(right, 1)
@@ -199,6 +204,7 @@ class MainWindow(QMainWindow):
     def retranslate(self) -> None:
         t = self.context.t
         self.preview_badge.setText(t("Aperçu Qt 11"))
+        self.cancel_button.setText(t("Annuler la tâche"))
         labels = {
             "home": "Accueil",
             "data": "Données locales",
@@ -290,12 +296,30 @@ class MainWindow(QMainWindow):
 
         worker = FunctionWorker(operation)
         self._workers.append(worker)
+        self._active_worker = worker
+        self.cancel_button.setEnabled(True)
         worker.signals.progress.connect(self._task_progress)
         worker.signals.log.connect(self.append_log)
         worker.signals.result.connect(lambda result: self._task_result(on_success, result))
         worker.signals.error.connect(self._task_error)
+        worker.signals.cancelled.connect(self._task_cancelled)
         worker.signals.finished.connect(lambda: self._task_finished(worker))
         self.thread_pool.start(worker)
+
+    def _request_cancel(self) -> None:
+        worker = self._active_worker
+        if worker is None:
+            return
+        worker.cancel_event.set()
+        self.cancel_button.setEnabled(False)
+        self._status_source = "Annulation demandée — arrêt à la prochaine étape…"
+        self.status_label.setText(self.context.t(self._status_source))
+        self.append_log(self.context.t(self._status_source))
+
+    @Slot()
+    def _task_cancelled(self) -> None:
+        self._status_source = "Tâche annulée."
+        self.append_log(self.context.t(self._status_source))
 
     @Slot(int, str)
     def _task_progress(self, value: int, message: str) -> None:
@@ -324,6 +348,9 @@ class MainWindow(QMainWindow):
     def _task_finished(self, worker: FunctionWorker) -> None:
         if worker in self._workers:
             self._workers.remove(worker)
+        if worker is self._active_worker:
+            self._active_worker = None
+        self.cancel_button.setEnabled(False)
         self._set_busy(False)
         self.set_status("Prêt")
         for page in self._pages.values():

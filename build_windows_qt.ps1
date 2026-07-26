@@ -59,7 +59,7 @@ Invoke-Python -m PyInstaller --noconfirm --clean UmaLegacyLinkerQt.spec
 
 $Bundle = Join-Path $PSScriptRoot "dist\UmaLegacyLinkerQt"
 $Executable = Join-Path $Bundle "UmaLegacyLinkerQt.exe"
-$Archive = Join-Path $PSScriptRoot "dist\UmaLegacyLinkerQt-preview-win64.zip"
+$Archive = Join-Path $PSScriptRoot "dist\UmaLegacyLinkerQt-win64.zip"
 $ChecksumFile = "$Archive.sha256"
 
 if (Test-Path $Archive) {
@@ -67,7 +67,7 @@ if (Test-Path $Archive) {
 }
 Compress-Archive -Path "$Bundle\*" -DestinationPath $Archive -CompressionLevel Optimal
 $Checksum = (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
-"$Checksum  UmaLegacyLinkerQt-preview-win64.zip" | Set-Content $ChecksumFile -Encoding ascii
+"$Checksum  UmaLegacyLinkerQt-win64.zip" | Set-Content $ChecksumFile -Encoding ascii
 
 Write-Host "Build termine : $Executable"
 Write-Host "Archive : $Archive"

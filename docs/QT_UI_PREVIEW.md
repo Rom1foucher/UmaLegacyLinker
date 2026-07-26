@@ -1,11 +1,11 @@
-# Qt UI preview 12
+# Qt desktop UI
 
-This branch now contains a complete first pass of the PySide6 redesign. It is deliberately shipped beside the Tkinter application while the new interface receives wider testing.
+The PySide6 interface is the desktop application. It shares the engines, configuration and output formats used by the CLI (`cli.py`).
 
 ## Included
 
 - a dashboard showing the current MDB, local collection and latest ranking state;
-- shared paths and language preference with the stable interface;
+- shared paths and language preference across sessions;
 - extraction through UmaExtractor, local `data.json` linking and skill-catalogue generation;
 - searchable Ace, target-parent, course and racecourse selection with contains-based autocomplete;
 - course presets and advanced static race conditions;
@@ -26,7 +26,8 @@ This branch now contains a complete first pass of the PySide6 redesign. It is de
 - unambiguous probability, threshold, multiplier and 100%-budget controls, including live donut charts for all nine genuinely normalised scoring groups;
 - individual White Skill priority-file management and the diagnostic Umalator importer;
 - live French/English switching;
-- a direct fallback launcher for the stable Tkinter interface.
+- cooperative cancellation of long-running tasks from the status bar;
+- a fixed opposing-parent context and offline local GP-pair ranking in the uma.moe search.
 
 Pair ranking and every scoring formula remain unchanged. The lineage view retains the compact identities, Sparks and skill IDs required for rendering, then displays the White full-run probability already emitted by the scoring engine for its configured Inspiration Events. It neither substitutes the separate future-GP generation mechanic nor calculates a second rate in the UI.
 
@@ -47,23 +48,22 @@ py -m pip install -r requirements-qt.txt
 py qt_app.py
 ```
 
-`py qt_app.py --legacy` opens the Tkinter interface using the same configuration.
-
-## Windows preview build
+## Windows build
 
 ```powershell
 .\build_windows_qt.ps1
 ```
 
-The Qt build is an `onedir` bundle packaged as `dist\UmaLegacyLinkerQt-preview-win64.zip`. After extracting the complete directory, run `UmaLegacyLinkerQt.exe`. Python is not required on the destination PC.
+The build is an `onedir` bundle packaged as `dist\UmaLegacyLinkerQt-win64.zip`. After extracting the complete directory, run `UmaLegacyLinkerQt.exe`. Python is not required on the destination PC.
 
-The dedicated **Windows Qt preview** GitHub Actions workflow runs the tests and visual audit, builds the bundle, and uploads the ZIP plus its SHA-256 checksum. It is manual-only and does not create a GitHub release.
+The **Windows release** GitHub Actions workflow runs the tests and visual audit, builds the bundle, and attaches the ZIP plus its SHA-256 checksum to the release on every `v*` tag.
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
-| `qt_app.py` | Qt entry point and stable-UI fallback switch |
+| `qt_app.py` | Qt entry point |
+| `cli.py` | Headless CLI sharing the same engines |
 | `ui_qt/core.py` | GUI-independent configuration and workflow orchestration |
 | `ui_qt/main_window.py` | application shell, navigation, progress and log drawer |
 | `ui_qt/pages_home_data.py` | dashboard and local linking workflow |
@@ -87,4 +87,4 @@ The reasoning and comparable-app patterns behind the weights redesign are record
 
 ## Packaging note
 
-PySide6 is the official Qt for Python binding and is available under LGPLv3/GPLv3 or a commercial Qt licence. The preview uses an extracted `onedir` layout so the Qt runtime remains made of separate dynamically loaded libraries. Review [`THIRD_PARTY.md`](THIRD_PARTY.md) and the licence metadata included with the binary bundle before publishing a release.
+PySide6 is the official Qt for Python binding and is available under LGPLv3/GPLv3 or a commercial Qt licence. The build uses an extracted `onedir` layout so the Qt runtime remains made of separate dynamically loaded libraries. Review [`THIRD_PARTY.md`](THIRD_PARTY.md) and the licence metadata included with the binary bundle before publishing a release.

@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import QProcess, QThreadPool, Slot
+from PySide6.QtCore import QThreadPool, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from i18n import LANGUAGE_LABELS
 from ui_qt.context import AppContext
-from ui_qt.core import APP_NAME, APP_VERSION, resource_base_dir
+from ui_qt.core import APP_NAME, APP_VERSION
 from ui_qt.pages_home_data import DataPage, HomePage
 from ui_qt.pages_online import OnlinePage
 from ui_qt.pages_optimizer import OptimizerPage
@@ -73,10 +73,7 @@ class MainWindow(QMainWindow):
         badges = QHBoxLayout()
         version = QLabel(f"v{APP_VERSION}")
         version.setObjectName("versionBadge")
-        self.preview_badge = QLabel("")
-        self.preview_badge.setObjectName("previewBadge")
         badges.addWidget(version)
-        badges.addWidget(self.preview_badge)
         badges.addStretch(1)
         sidebar_layout.addLayout(badges)
         sidebar_layout.addSpacing(9)
@@ -114,11 +111,8 @@ class MainWindow(QMainWindow):
             max(0, self.language_combo.findData(self.context.language))
         )
         self.language_combo.currentIndexChanged.connect(self._language_selected)
-        self.stable_button = QPushButton("")
-        self.stable_button.clicked.connect(self.launch_legacy)
         sidebar_layout.addWidget(self.language_label)
         sidebar_layout.addWidget(self.language_combo)
-        sidebar_layout.addWidget(self.stable_button)
         outer.addWidget(sidebar)
 
         right = QWidget()
@@ -203,7 +197,6 @@ class MainWindow(QMainWindow):
 
     def retranslate(self) -> None:
         t = self.context.t
-        self.preview_badge.setText(t("Aperçu Qt 11"))
         self.cancel_button.setText(t("Annuler la tâche"))
         labels = {
             "home": "Accueil",
@@ -234,7 +227,6 @@ class MainWindow(QMainWindow):
         for key, source in section_labels.items():
             self._nav_sections[key].setText(t(source))
         self.language_label.setText(t("Langue"))
-        self.stable_button.setText(t("Interface stable (Tkinter)"))
         self.log_title.setText(t("Journal d’exécution"))
         self.clear_log_button.setText(t("Effacer"))
         self.log_button.setText(t("Journal"))
@@ -268,7 +260,6 @@ class MainWindow(QMainWindow):
             setter = getattr(page, "set_busy", None)
             if callable(setter):
                 setter(busy)
-        self.stable_button.setEnabled(not busy)
         self.language_combo.setEnabled(not busy)
         self.progress.setVisible(busy)
         if not busy:
@@ -357,24 +348,6 @@ class MainWindow(QMainWindow):
             refresher = getattr(page, "refresh", None)
             if callable(refresher) and page is self._pages.get("home"):
                 refresher()
-
-    def launch_legacy(self) -> None:
-        if self._busy:
-            return
-        if getattr(sys, "frozen", False):
-            program = sys.executable
-            arguments = ["--legacy"]
-        else:
-            program = sys.executable
-            arguments = [str(resource_base_dir() / "app.py")]
-        started = QProcess.startDetached(program, arguments)
-        ok = started[0] if isinstance(started, tuple) else bool(started)
-        if not ok:
-            QMessageBox.warning(
-                self,
-                self.context.t("Interface stable"),
-                self.context.t("Impossible de démarrer l’interface Tkinter."),
-            )
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if not self._busy:

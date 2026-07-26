@@ -187,9 +187,10 @@ def check_module(path: Path, contexts_filter: set[str] | None = None) -> list[tu
 
 def main() -> None:
     total = 0
-    # app.py : tout ; moteurs : logger/raise (ce qui remonte à l'utilisateur)
+    # cli.py : tout ; couche Qt : tout (voir plus bas) ; moteurs : logger/raise
+    # (ce qui remonte à l'utilisateur).
     plans = [
-        (ROOT / "app.py", None),
+        (ROOT / "cli.py", None),
         (ROOT / "legacy_linker.py", {"logger", "log", "raise"}),
         (ROOT / "skill_catalog.py", {"logger", "log", "raise"}),
         (ROOT / "manual_weights.py", {"logger", "log", "raise"}),

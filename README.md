@@ -129,23 +129,15 @@ See [`docs/SCORING.md`](docs/SCORING.md) for formulas and implementation details
 - Windows is the primary supported platform.
 - The Windows release executable requires no Python installation.
 - Running from source requires Python **3.10+**.
-- Tkinter, included with the standard Windows Python installer, for the stable UI.
-- PySide6 for the optional redesigned Qt preview.
+- PySide6 for the desktop interface.
 - A current Umamusume `master.mdb`.
 - A veteran export in `data.json` format.
 - `PyYAML` for live uma.moe searches when running from source.
 
-Install the source dependency with:
-
-```powershell
-py -m pip install -r requirements.txt
-```
-
-For the redesigned UI preview instead:
+Install the source dependencies with:
 
 ```powershell
 py -m pip install -r requirements-qt.txt
-py qt_app.py
 ```
 
 ## Veteran data extraction
@@ -162,8 +154,8 @@ Both are separate projects with their own requirements, licences and warnings. T
 ```powershell
 git clone https://github.com/Rom1foucher/UmaLegacyLinker.git
 cd UmaLegacyLinker
-py -m pip install -r requirements.txt
-py app.py
+py -m pip install -r requirements-qt.txt
+py qt_app.py
 ```
 
 On Windows, `run.bat` starts the same application.
@@ -176,11 +168,11 @@ Then select:
 
 Run **Link an existing data.json** before using the lineage optimiser, Transfer Helper or local × online pair calculation.
 
-### Redesigned Qt interface
+### Desktop interface
 
-`qt_app.py` contains the complete first pass of the desktop redesign: dashboard, extraction and linking, lineage optimisation, uma.moe search, Transfer Helper, scoring-profile editing, diagnostic tools, sortable embedded results, a visual lineage inspector and Lineage Planner export. The stable Tkinter interface remains available from the sidebar while this branch receives wider testing.
+The PySide6 interface covers the full workflow: dashboard, extraction and linking, lineage optimisation, uma.moe search (including the fixed opposing-parent context and offline local GP-pair ranking), Transfer Helper, scoring-profile editing, diagnostic tools, sortable embedded results, a visual lineage inspector and Lineage Planner export. Long-running tasks can be cancelled from the status bar.
 
-Both interfaces read the same `%APPDATA%\UmaLegacyLinker\config.json` preferences and generate the same output formats. The Windows preview workflow also renders every page at three viewport sizes in French and English and rejects detected text overflow. See [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) for the migration scope and build instructions.
+Preferences live in `%APPDATA%\UmaLegacyLinker\config.json` and the interface renders in French and English. The Windows workflow also renders every page at three viewport sizes in both languages and rejects detected text overflow. See [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) for the UI architecture and build instructions.
 
 The Qt lineage inspector loads costume-aware trainee artwork and resolved White Skill icons on demand from GameTora. Images are never bundled with the source or executable: they are kept in a bounded per-user cache, remain available offline once cached, and can be disabled or cleared directly in the inspector. Missing or unavailable artwork falls back to a generated initial card. White Sparks show the inheritance probability already calculated by the scoring engine across the run's configured Inspiration Events, and the three strongest White contributions receive a gold outline. Result diagnostics also show game-inspired aptitude rows, score/P(S) cards and a compact direct-Spark recap. The view does not introduce a second probability formula.
 
@@ -207,8 +199,8 @@ The effective profiles used by a run are exported as:
 
 | File | Purpose |
 | --- | --- |
-| `app.py` | Tkinter GUI, CLI entry point and workflow orchestration |
-| `qt_app.py` | PySide6 redesign preview entry point |
+| `qt_app.py` | PySide6 desktop entry point |
+| `cli.py` | Headless CLI: linking, catalogues, ranking and Transfer Helper |
 | `ui_qt/` | Qt shell, pages, visual lineage/artwork system, table model and shared workflow orchestration |
 | `legacy_linker.py` | Links veteran exports to `master.mdb` |
 | `parent_optimizer.py` | Local branch, pair and future-GP scoring |
@@ -241,39 +233,26 @@ Additional diagnostics, raw API responses and catalogues are written alongside t
 The GUI is the recommended workflow. Local linking, catalogue generation, lineage ranking and Transfer Helper are also available through the CLI:
 
 ```powershell
-py app.py --help
+py cli.py --help
 ```
 
 ## Windows build
 
 ```powershell
-.\build_windows.ps1
-```
-
-The script runs the complete test suite and generates:
-
-- `dist\UmaLegacyLinker.exe`, a standalone one-file application containing Python, PyYAML and the default profiles;
-- `dist\UmaLegacyLinker.exe.sha256`, used to verify the download.
-
-No Python installation and no adjacent `default_*.json` files are required on the destination PC.
-
-The Qt preview has a separate, non-release build so it cannot replace the stable executable accidentally:
-
-```powershell
 .\build_windows_qt.ps1
 ```
 
-It produces `dist\UmaLegacyLinkerQt-preview-win64.zip`. Extract the whole directory before launching `UmaLegacyLinkerQt.exe`.
+The script runs the complete test suite and produces `dist\UmaLegacyLinkerQt-win64.zip` (plus its `.sha256`). Extract the whole directory before launching `UmaLegacyLinkerQt.exe`. It bundles Python, PySide6, PyYAML and the default profiles, so no Python installation and no adjacent `default_*.json` files are required on the destination PC.
 
 The uma.moe API key can be remembered from the application. On Windows it is encrypted with DPAPI for the current Windows account and stored under `%APPDATA%\UmaLegacyLinker`; it is never written in clear text to `config.json`.
 
 ### Publishing a GitHub release
 
-The `Windows release` GitHub Actions workflow builds the same executable on every `v*` tag and attaches the EXE and checksum to the corresponding GitHub release:
+The `Windows release` GitHub Actions workflow builds the same package on every `v*` tag and attaches the archive and checksum to the corresponding GitHub release:
 
 ```powershell
-git tag v1.5.0
-git push origin v1.5.0
+git tag v1.7.0
+git push origin v1.7.0
 ```
 
 The workflow can also be started manually to obtain a downloadable build artifact without creating a release.
@@ -283,7 +262,7 @@ The workflow can also be started manually to obtain a downloadable build artifac
 - [`docs/SCORING.md`](docs/SCORING.md) — scoring model and formulas;
 - [`docs/WEIGHTS_FORMAT.md`](docs/WEIGHTS_FORMAT.md) — White Spark priority format;
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — proposed process-based multicore design;
-- [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) — scope and packaging of the PySide6 redesign;
+- [`docs/QT_UI_PREVIEW.md`](docs/QT_UI_PREVIEW.md) — desktop UI architecture and packaging;
 - [`docs/RELEASING.md`](docs/RELEASING.md) — Windows build and GitHub release procedure;
 - [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md) — external tools and services;
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.

@@ -43,8 +43,8 @@ jobs:
         with:
           name: UmaLegacyLinker-Qt-Windows
           path: |
-            dist/UmaLegacyLinkerQt-preview-win64.zip
-            dist/UmaLegacyLinkerQt-preview-win64.zip.sha256
+            dist/UmaLegacyLinkerQt-win64.zip
+            dist/UmaLegacyLinkerQt-win64.zip.sha256
 
       - name: Publish GitHub release assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -55,7 +55,7 @@ jobs:
           $tag = "${{ github.ref_name }}"
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag dist/UmaLegacyLinkerQt-preview-win64.zip dist/UmaLegacyLinkerQt-preview-win64.zip.sha256 --clobber
+            gh release upload $tag dist/UmaLegacyLinkerQt-win64.zip dist/UmaLegacyLinkerQt-win64.zip.sha256 --clobber
           } else {
-            gh release create $tag dist/UmaLegacyLinkerQt-preview-win64.zip dist/UmaLegacyLinkerQt-preview-win64.zip.sha256 --generate-notes --title "$tag"
+            gh release create $tag dist/UmaLegacyLinkerQt-win64.zip dist/UmaLegacyLinkerQt-win64.zip.sha256 --generate-notes --title "$tag"
           }

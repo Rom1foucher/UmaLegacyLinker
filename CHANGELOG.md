@@ -2,6 +2,14 @@
 
 This project uses feature-level semantic versioning. Small internal iterations are consolidated into the nearest meaningful release instead of receiving their own public version.
 
+## 1.7.0 - PySide6 becomes the only interface
+
+- Promoted the PySide6 interface to the sole desktop UI and removed the legacy Tkinter application (`app.py`, `autocomplete.py`, their tests, the old spec and launcher). The sidebar's "stable interface" switch and the Qt preview badge are gone.
+- Exposed the 1.6.0 contextual grandparent search in the Qt uma.moe page: an opposing-parent context (none, a local veteran, or candidates extracted from an exported pair result or API response), an offline "Local GP pairs" ranking that skips the API entirely, per-factor lineage star filters mirroring the uma.moe sliders, and a dedicated Surface-cohort toggle. Aligned the page with 1.6.0's structured filters by dropping the stale Dirt-only option and the free-text/auto UQL controls; the generated UQL stays visible read-only.
+- Added cooperative cancellation of long-running tasks from the status bar, reusing the logger/progress callbacks as checkpoints without any engine change.
+- Extracted the headless command line into a standalone `cli.py` that imports the engines directly, so linking, catalogue generation, ranking and the Transfer Helper no longer depend on any UI toolkit.
+- Switched the Windows build and release workflow to the Qt bundle only (`UmaLegacyLinkerQt-win64.zip`), removed the redundant preview workflow, and updated the docs, run script and release checklist accordingly.
+
 ## 1.6.0 - Contextual grandparent search and full English coverage
 
 - Added an optional opposing-parent branch to future-grandparent searches (local, imported or from uma.moe). With one set, GP1/GP2 are ranked through the canonical six-member final-pair engine instead of the generic heuristic, with a projected G1 plan spanning both candidate GPs and the opposing parent, and matching contextual diagnostics/CSV fields.

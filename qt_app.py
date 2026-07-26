@@ -3,23 +3,12 @@ from __future__ import annotations
 import sys
 
 
-def _run_legacy() -> int:
-    sys.argv = [argument for argument in sys.argv if argument != "--legacy"]
-    from app import main as legacy_main
-
-    result = legacy_main()
-    return int(result or 0)
-
-
 def main() -> int:
-    if "--legacy" in sys.argv:
-        return _run_legacy()
-
     try:
         from PySide6.QtWidgets import QApplication
     except ImportError:
         print(
-            "PySide6 is required for the Qt preview. "
+            "PySide6 is required to run Uma Legacy Linker. "
             "Install it with: python -m pip install -r requirements-qt.txt",
             file=sys.stderr,
         )
@@ -42,4 +31,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

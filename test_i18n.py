@@ -26,6 +26,18 @@ class I18nTests(unittest.TestCase):
             "The saved key is encrypted by Windows for this user account.",
         )
 
+    def test_uma_moe_filter_labels_are_translated(self) -> None:
+        self.assertEqual(
+            translate_text("Filtres de recherche uma.moe", "en"),
+            "uma.moe search filters",
+        )
+        self.assertEqual(translate_text("Surface cible", "en"), "Target surface")
+        self.assertEqual(translate_text("Étoiles blue", "en"), "Blue stars")
+        self.assertEqual(
+            translate_text("Parent opposé prévu (optionnel)", "en"),
+            "Planned opposing parent (optional)",
+        )
+
     def test_language_labels_round_trip(self) -> None:
         self.assertEqual(language_from_label(language_label("fr")), "fr")
         self.assertEqual(language_from_label(language_label("en")), "en")
@@ -76,7 +88,7 @@ class I18nTests(unittest.TestCase):
 Roses — détail brut
 Blues — pertinence selon la distance :
 Style — optimisation secondaire :
-Terrain — optimisation secondaire :
+Surface — optimisation secondaire :
 - dont parents directs : 1
 - procs requis pour A : 0 | pour S : 1
 Distance S — contrainte de la paire finale :
@@ -134,6 +146,8 @@ Modern affinity — global diagnostic:"""
     def test_scoring_labels_are_localised(self) -> None:
         self.assertEqual(scoring_label("future_grandparent", "fr"), "Futur grand-parent")
         self.assertEqual(scoring_label("future_grandparent", "en"), "Future grandparent")
+        self.assertEqual(scoring_label("surface_aptitude", "fr"), "Aptitude de la surface cible")
+        self.assertEqual(scoring_label("surface_aptitude", "en"), "Target-surface aptitude")
 
 
 if __name__ == "__main__":

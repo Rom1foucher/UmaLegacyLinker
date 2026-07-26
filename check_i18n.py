@@ -17,7 +17,7 @@ FRENCH_MARKERS = re.compile(
     r"|chaque|tous|toutes|entre|depuis|vers|choisis|fichier|dossier|paires?|lignées?"
     r"|réponse|recherche|résultats?|pondérations?|priorités?|vétérans?|liés?|utilisées?"
     r"|manuelles?|générations?|calculs?|liaisons?|terminées?|étapes?|suivante|contient"
-    r"|entier|supérieur|positif|nulle?s?|vide|deux|autre|même|personnages?|introuvables?|invalides?|requis|manquants?)\b",
+    r"|entier|supérieur|positif|nulle?s?|vide|deux|autre|même|contextuel(le)?|automatique|complémentaire|pondération|personnages?|introuvables?|invalides?|requis|manquants?)\b",
     re.IGNORECASE,
 )
 
@@ -51,6 +51,7 @@ class Collector(ast.NodeVisitor):
     LOG_FUNCS = {
         "_append_log", "_enqueue_log", "_worker_log", "_set_status",
         "_show_error", "_show_warning", "_show_info", "_ask_yes_no", "logger",
+        "log",
     }
 
     def __init__(self, module: str) -> None:
@@ -71,6 +72,14 @@ class Collector(ast.NodeVisitor):
             return [node.value]
         if isinstance(node, ast.JoinedStr):
             return [fstring_template(node)]
+        if isinstance(node, ast.IfExp):
+            # Both branches of a ternary are alternative user-facing texts:
+            # concatenate them so an untranslated branch flags the whole node.
+            body = self._string_parts(node.body) or ["7"]
+            orelse = self._string_parts(node.orelse) or ["7"]
+            if body == ["7"] and orelse == ["7"]:
+                return None
+            return body + [" / "] + orelse
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             left = self._string_parts(node.left)
             right = self._string_parts(node.right)
@@ -80,6 +89,12 @@ class Collector(ast.NodeVisitor):
         return None
 
     def add(self, context: str, node: ast.AST) -> None:
+        if isinstance(node, ast.IfExp):
+            # Exact-path contexts (titles, widget texts) translate one branch
+            # at a time at runtime: test each branch on its own.
+            self.add(context, node.body)
+            self.add(context, node.orelse)
+            return
         parts = self._string_parts(node)
         if parts is None:
             return
@@ -175,15 +190,15 @@ def main() -> None:
     # app.py : tout ; moteurs : logger/raise (ce qui remonte à l'utilisateur)
     plans = [
         (ROOT / "app.py", None),
-        (ROOT / "legacy_linker.py", {"logger", "raise"}),
-        (ROOT / "skill_catalog.py", {"logger", "raise"}),
-        (ROOT / "manual_weights.py", {"logger", "raise"}),
-        (ROOT / "simulator_weights.py", {"logger", "raise"}),
-        (ROOT / "parent_optimizer.py", {"logger", "raise"}),
-        (ROOT / "transfer_helper.py", {"logger", "raise"}),
-        (ROOT / "uma_moe.py", {"logger", "raise"}),
-        (ROOT / "lineage_planner.py", {"logger", "raise"}),
-        (ROOT / "scoring_config.py", {"logger", "raise"}),
+        (ROOT / "legacy_linker.py", {"logger", "log", "raise"}),
+        (ROOT / "skill_catalog.py", {"logger", "log", "raise"}),
+        (ROOT / "manual_weights.py", {"logger", "log", "raise"}),
+        (ROOT / "simulator_weights.py", {"logger", "log", "raise"}),
+        (ROOT / "parent_optimizer.py", {"logger", "log", "raise"}),
+        (ROOT / "transfer_helper.py", {"logger", "log", "raise"}),
+        (ROOT / "uma_moe.py", {"logger", "log", "raise"}),
+        (ROOT / "lineage_planner.py", {"logger", "log", "raise"}),
+        (ROOT / "scoring_config.py", {"logger", "log", "raise"}),
     ]
     for path, contexts in plans:
         problems = check_module(path, contexts)

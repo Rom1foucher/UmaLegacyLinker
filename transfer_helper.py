@@ -967,6 +967,9 @@ def analyze_transfer_candidates(
                         )
                         parent_components["pink"] = parent_pink
                         parent_components["distance_s"] = float(parent_pink_detail["distance_s"]["score"])
+                        parent_components["surface_aptitude"] = float(
+                            parent_pink_detail["surface_aptitude"]["score"]
+                        )
                         parent_components["pink_other"] = float(parent_pink_detail["pink_other"]["score"])
                         parent_components["affinity"] = _affinity_score(
                             float(affinity["total"]), branch_thresholds

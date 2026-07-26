@@ -7,6 +7,7 @@ from parent_optimizer import (
     evaluate_parent_pair,
     parent_pair_sort_key,
 )
+from scoring_config import read_json_object
 
 
 class FakeResolver:
@@ -480,6 +481,152 @@ def test_surface_and_style_b_are_scored_more_softly_than_distance_b():
     assert aptitudes["style"]["score"] > aptitudes["surface"]["score"]
 
 
+def _surface_policy_pair(surface_stars: list[int], *, config=None, surface_rank=3):
+    members = [
+        member(2, "Local", [], member(4, "GP1", []), member(5, "GP2", [])),
+        member(3, "Remote", [], member(6, "GP3", []), member(7, "GP4", [])),
+    ]
+    visible = [
+        members[0],
+        members[0]["when_used_as_parent"]["grandparent_1"],
+        members[0]["when_used_as_parent"]["grandparent_2"],
+        members[1],
+        members[1]["when_used_as_parent"]["grandparent_1"],
+        members[1]["when_used_as_parent"]["grandparent_2"],
+    ]
+    for target, stars in zip(visible, surface_stars):
+        add_red(target, "Turf", stars)
+    add_red(members[0], "Medium", 3)
+    add_red(members[1], "Medium", 3)
+    effective_config = config or read_json_object("default_parent_scoring.json")
+    return evaluate_parent_pair(
+        FakeResolver(), ace(distance_rank=7, surface_rank=surface_rank), members[0], members[1],
+        surface="turf", distance="medium", style="pace_chaser",
+        weight_lookup=lambda _key: 0.0, race_skills={}, config=effective_config,
+    )
+
+
+def test_low_natural_surface_uses_soft_b_minimum_and_a_preferred_policy():
+    below_minimum = _surface_policy_pair([])
+    starts_b = _surface_policy_pair([3, 3, 1])
+    starts_a = _surface_policy_pair([3, 3, 3, 1])
+
+    assert below_minimum["surface_aptitude_summary"]["initial_rank_label"] == "E"
+    assert below_minimum["surface_viability"]["key"] == "surface_below_minimum"
+    assert starts_b["surface_aptitude_summary"]["initial_rank_label"] == "B"
+    assert starts_b["surface_viability"]["key"] == "surface_minimum_met"
+    assert starts_a["surface_aptitude_summary"]["initial_rank_label"] == "A"
+    assert starts_a["surface_viability"]["key"] == "surface_preferred_met"
+    assert (
+        below_minimum["components"]["surface_aptitude"]
+        < starts_b["components"]["surface_aptitude"]
+        < starts_a["components"]["surface_aptitude"]
+    )
+
+
+def test_surface_below_minimum_scores_progress_toward_b_for_turf_f():
+    zero = _surface_policy_pair([], surface_rank=2)
+    four = _surface_policy_pair([2, 2], surface_rank=2)
+    seven = _surface_policy_pair([3, 2, 2], surface_rank=2)
+    ten = _surface_policy_pair([3, 3, 2, 2], surface_rank=2)
+
+    assert zero["surface_aptitude_summary"]["stars_required_to_start_at_minimum"] == 10
+    assert zero["surface_aptitude_summary"]["initial_minimum_readiness"] == 0.0
+    assert four["surface_aptitude_summary"]["initial_minimum_readiness"] == 0.4
+    assert seven["surface_aptitude_summary"]["initial_minimum_readiness"] == 0.7
+    assert ten["surface_aptitude_summary"]["initial_rank_label"] == "B"
+    assert ten["surface_viability"]["key"] == "surface_minimum_met"
+    assert (
+        zero["components"]["surface_aptitude"]
+        < four["components"]["surface_aptitude"]
+        < seven["components"]["surface_aptitude"]
+        < ten["components"]["surface_aptitude"]
+    )
+
+
+def test_f_cannot_start_at_a_even_with_the_maximum_initial_gain():
+    pair = _surface_policy_pair([3, 3, 2, 2], surface_rank=2)
+    detail = pair["surface_aptitude_summary"]
+
+    assert detail["initial_rank_label"] == "B"
+    assert detail["maximum_initial_rank_label"] == "B"
+    assert detail["can_start_at_a"] is False
+    assert detail["stars_required_to_start_at_a"] is None
+
+
+def test_e_can_start_at_a_with_ten_stars():
+    pair = _surface_policy_pair([3, 3, 2, 2], surface_rank=3)
+    detail = pair["surface_aptitude_summary"]
+
+    assert detail["initial_rank_label"] == "A"
+    assert detail["maximum_initial_rank_label"] == "A"
+    assert detail["can_start_at_a"] is True
+    assert detail["stars_required_to_start_at_a"] == 10
+
+
+def test_surface_policy_thresholds_are_configurable():
+    config = read_json_object("default_parent_scoring.json")
+    config["aptitude_inheritance"]["surface"]["minimum_initial_rank"] = 3
+    config["aptitude_inheritance"]["surface"]["preferred_initial_rank"] = 6
+
+    pair = _surface_policy_pair([], config=config)
+
+    assert pair["surface_viability"]["key"] == "surface_minimum_met"
+    assert pair["surface_viability"]["minimum_initial_rank_label"] == "E"
+    assert pair["surface_viability"]["preferred_initial_rank_label"] == "B"
+
+
+def test_surface_minimum_is_secondary_to_distance_while_a_remains_compensable():
+    distance_ready_surface_b = {
+        "score": 80.0,
+        "distance_viability": {"sort_priority": 4},
+        "surface_viability": {"key": "surface_minimum_met", "tier": 1},
+        "surface_aptitude_summary": {"probability_reach_preferred": 0.40},
+    }
+    distance_ready_surface_a = {
+        "score": 75.0,
+        "distance_viability": {"sort_priority": 4},
+        "surface_viability": {"key": "surface_preferred_met", "tier": 2},
+        "surface_aptitude_summary": {"probability_reach_preferred": 1.0},
+    }
+    distance_b_surface_a = {
+        "score": 99.0,
+        "distance_viability": {"sort_priority": 3},
+        "surface_viability": {"key": "surface_preferred_met", "tier": 2},
+        "surface_aptitude_summary": {"probability_reach_preferred": 1.0},
+    }
+    distance_ready_below_surface_minimum = {
+        "score": 99.0,
+        "distance_viability": {"sort_priority": 4},
+        "surface_viability": {
+            "key": "surface_below_minimum",
+            "tier": 0,
+            "sort_priority": 0,
+        },
+        "surface_aptitude_summary": {"probability_reach_preferred": 0.25},
+    }
+    distance_ready_surface_b["surface_viability"]["sort_priority"] = 1
+    distance_ready_surface_a["surface_viability"]["sort_priority"] = 1
+    distance_b_surface_a["surface_viability"]["sort_priority"] = 1
+
+    ranked = sorted(
+        [
+            distance_b_surface_a,
+            distance_ready_below_surface_minimum,
+            distance_ready_surface_a,
+            distance_ready_surface_b,
+        ],
+        key=parent_pair_sort_key,
+        reverse=True,
+    )
+    assert ranked == [
+        distance_ready_surface_b,
+        distance_ready_surface_a,
+        distance_ready_below_surface_minimum,
+        distance_b_surface_a,
+    ]
+
+
 def test_online_parent_search_exports_canonical_pair_results(tmp_path, monkeypatch):
     import json
     import uma_moe
@@ -566,6 +713,8 @@ def test_online_parent_search_exports_canonical_pair_results(tmp_path, monkeypat
     assert payload["metadata"]["scoring_engine"] == "parent_optimizer.evaluate_parent_pair"
     assert payload["metadata"]["complete_branch_validation"]["remote_incomplete_excluded"] == 1
     assert payload["results"][0]["component_details"]["blue"]["slot_count"] == 6
+    assert payload["results"][0]["surface_viability"]["key"] == "surface_preferred_met"
+    assert "surface_aptitude" in payload["results"][0]["components"]
     assert result.rankings_csv_path.is_file()
     assert result.diagnostics_path.is_file()
 

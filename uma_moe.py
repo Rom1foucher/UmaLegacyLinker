@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import math
 import re
@@ -31,6 +32,7 @@ from parent_optimizer import (
     _compile_static_condition_rules,
     _future_grandparent_pink_score,
     _future_grandparent_white_score,
+    _initial_aptitude_rank,
     _lineage_members,
     _member_g1,
     _mode_weights,
@@ -110,6 +112,210 @@ def _future_gp_pair_g1_score(final_parent_affinity: dict[str, Any]) -> float:
     return min(100.0, 100.0 * planned_bonus / maximum_bonus)
 
 
+def _matching_factor_stars(
+    member: dict[str, Any] | None,
+    factor_name: str,
+    *,
+    include_lineage: bool = True,
+) -> int:
+    """Return known stars for one factor on a complete parent branch."""
+    if not isinstance(member, dict):
+        return 0
+    members = _lineage_members(member) if include_lineage else [(member, "parent", "member")]
+    total = 0
+    for candidate, _position, _role in members:
+        for factor in ((candidate.get("factors") or {}).get("by_type") or {}).get("red_aptitude", []):
+            if str(factor.get("name") or "") == factor_name:
+                total += max(0, int(factor.get("stars") or 0))
+    return total
+
+
+def _lineage_factor_type_stars(
+    member: dict[str, Any] | None,
+    factor_name: str,
+    factor_type: str,
+) -> int:
+    """Sum a named factor's stars over a member and its two parents.
+
+    Mirrors the uma.moe site's per-factor sliders, which filter on the
+    lineage aggregate (Main + both parents), e.g. "Stamina 7-9★"."""
+    if not isinstance(member, dict):
+        return 0
+    total = 0
+    for candidate, _position, _role in _lineage_members(member):
+        factors = ((candidate.get("factors") or {}).get("by_type") or {}).get(factor_type, [])
+        for factor in factors:
+            if str(factor.get("name") or "").casefold() == factor_name.casefold():
+                total += max(0, int(factor.get("stars") or 0))
+    return total
+
+
+def _apply_lineage_factor_filters(
+    candidates: list[dict[str, Any]],
+    lineage_blue_filter: tuple[str, int] | None,
+    lineage_pink_filter: tuple[str, int] | None,
+    log: Callable[[str], None],
+) -> list[dict[str, Any]]:
+    """Post-fetch hard filter on lineage per-factor star sums (Main + parents).
+
+    Applied locally on normalized candidates rather than pushed to the API:
+    the only empirically confirmed per-factor parameter on /api/v3/search is
+    main_parent_pink_sparks (Main only), and unknown parameters are unsafe to
+    guess (see UmaMoeApiClient.search). Over-fetching compensates."""
+    for label, ftype, spec in (
+        ("Blue", "blue_stat", lineage_blue_filter),
+        ("Pink", "red_aptitude", lineage_pink_filter),
+    ):
+        if not spec:
+            continue
+        name, minimum = spec
+        name = str(name).strip()
+        minimum = int(minimum)
+        if name and minimum > 0:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if _lineage_factor_type_stars(candidate, name, ftype) >= minimum
+            ]
+            log(
+                f"Filtre lignée {label} {name} ≥ {minimum}★ (Main + parents) : "
+                f"{len(candidates)} candidats restants."
+            )
+    return candidates
+
+
+def _opposing_white_coverage(member: dict[str, Any] | None) -> dict[str, float]:
+    """Approximate already-known white coverage for API/preselection guidance.
+
+    This is deliberately not the final white score.  The exact pair evaluator
+    still combines per-carrier probabilities.  Here we only need a stable soft
+    signal so the API does not spend most of its limited sample on skills that
+    the fixed branch already carries several times.
+    """
+    if not isinstance(member, dict):
+        return {}
+    coverage: dict[str, float] = {}
+    for candidate, position, _role in _lineage_members(member):
+        position_weight = 1.0 if position == "parent" else 0.5
+        for factor in ((candidate.get("factors") or {}).get("by_type") or {}).get("white_skill", []):
+            key = str(factor.get("name") or "").strip()
+            if not key:
+                continue
+            stars = max(0, min(3, int(factor.get("stars") or 0)))
+            coverage[key] = coverage.get(key, 0.0) + position_weight * stars / 3.0
+    return coverage
+
+
+def _planned_future_parent_g1(
+    gp1: dict[str, Any],
+    gp2: dict[str, Any],
+    opposing_parent: dict[str, Any],
+    *,
+    budget: int,
+    single_g1_weight: float,
+) -> dict[str, Any]:
+    """Build a deterministic projected G1 history for an untrained parent.
+
+    Races overlapping two or three visible relatives are always selected first.
+    Single-link races are retained only in proportion to the configured
+    realization factor.  This turns the former fractional G1 heuristic into a
+    concrete branch that the canonical six-member evaluator can consume.
+    """
+    capped_budget = max(0, min(int(budget), 40))
+    single_weight = max(0.0, min(float(single_g1_weight), 1.0))
+    sources = {
+        "gp1": _member_g1(gp1),
+        "gp2": _member_g1(gp2),
+        "opposing_parent": _member_g1(opposing_parent),
+    }
+    races: dict[str, list[str]] = {}
+    for source, names in sources.items():
+        for name in names:
+            races.setdefault(str(name), []).append(source)
+
+    shared = sorted(
+        ((name, owners) for name, owners in races.items() if len(owners) >= 2),
+        key=lambda item: (-len(item[1]), item[0]),
+    )
+    selected_shared = shared[:capped_budget]
+    remaining = max(0, capped_budget - len(selected_shared))
+
+    single_buckets: dict[str, list[str]] = {key: [] for key in sources}
+    for name, owners in races.items():
+        if len(owners) == 1:
+            single_buckets[owners[0]].append(name)
+    for names in single_buckets.values():
+        names.sort()
+    single_available = sum(len(names) for names in single_buckets.values())
+    single_target = min(remaining, int(round(single_available * single_weight)))
+    selected_single: list[tuple[str, list[str]]] = []
+    while len(selected_single) < single_target:
+        progressed = False
+        for owner in ("gp1", "gp2", "opposing_parent"):
+            bucket = single_buckets[owner]
+            if bucket and len(selected_single) < single_target:
+                selected_single.append((bucket.pop(0), [owner]))
+                progressed = True
+        if not progressed:
+            break
+
+    selected = selected_shared + selected_single
+    return {
+        "names": [name for name, _owners in selected],
+        "details": [
+            {"name": name, "matching_members": owners, "link_count": len(owners)}
+            for name, owners in selected
+        ],
+        "budget": capped_budget,
+        "single_g1_weight": single_weight,
+        "shared_selected": len(selected_shared),
+        "single_available": single_available,
+        "single_selected": len(selected_single),
+        "selected_count": len(selected),
+    }
+
+
+def _project_future_parent_branch(
+    target_parent: dict[str, Any],
+    gp1: dict[str, Any],
+    gp2: dict[str, Any],
+    opposing_parent: dict[str, Any],
+    *,
+    planned_g1_budget: int,
+    single_g1_weight: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create the known portion of the future parent branch.
+
+    The target parent's own Sparks do not exist yet and therefore remain empty.
+    Its selected GP pair and projected G1 history are the only assumptions added.
+    """
+    g1_plan = _planned_future_parent_g1(
+        gp1,
+        gp2,
+        opposing_parent,
+        budget=planned_g1_budget,
+        single_g1_weight=single_g1_weight,
+    )
+    projected = {
+        **copy.deepcopy(target_parent),
+        "trained_chara_id": "planned:future-parent",
+        "rank_score": None,
+        "rank": None,
+        "factors": grouped_factors([]),
+        "g1_wins": {
+            "count": len(g1_plan["names"]),
+            "names": list(g1_plan["names"]),
+            "details": [],
+        },
+        "when_used_as_parent": {
+            "grandparent_1": gp1,
+            "grandparent_2": gp2,
+        },
+        "source_role": "projected_future_parent",
+    }
+    return projected, g1_plan
+
+
 class UmaMoeError(RuntimeError):
     pass
 
@@ -129,6 +335,8 @@ class OnlineSearchResult:
     evaluated_pair_count: int
     ace: dict[str, Any]
     target_parent: dict[str, Any]
+    opposing_parent: dict[str, Any] | None
+    scoring_context: str
     api_operation: dict[str, Any] | None
 
 
@@ -696,7 +904,152 @@ class UmaMoeApiClient:
             "page_size": page_size,
             "max_pages": max_pages,
             "filters": filters or {},
+            "retrieval_plan_applied": False,
         })
+        return merged, operation
+
+    def search_many_planned(
+        self,
+        *,
+        base_filters: dict[str, Any] | None = None,
+        retrieval_plan: dict[str, Any] | None = None,
+        desired_candidates: int = 250,
+        page_size: int = 100,
+        logger: Callable[[str], None] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Fetch several complementary candidate cohorts under one global cap.
+
+        A single white-sorted query can consume all 2,000 slots before a rare
+        aptitude branch appears. Parent mode and contextual future-GP mode
+        therefore reserve parts of the same cap for aptitude cohorts, then
+        spend the remainder on the broad white-preferred search. Results are
+        deduplicated before local scoring.
+        """
+        logger = logger or (lambda _message: None)
+        desired = max(1, min(int(desired_candidates), MAX_FETCH_CANDIDATES))
+        page_size = max(1, min(int(page_size), 100))
+        cohorts = list((retrieval_plan or {}).get("cohorts") or [])
+        if not cohorts:
+            return self.search_many(
+                filters=base_filters,
+                desired_candidates=desired,
+                page_size=page_size,
+                logger=logger,
+            )
+
+        weighted = [
+            cohort
+            for cohort in cohorts
+            if max(0.0, float(cohort.get("share") or 0.0)) > 0.0
+        ]
+        if not weighted:
+            return self.search_many(
+                filters=base_filters,
+                desired_candidates=desired,
+                page_size=page_size,
+                logger=logger,
+            )
+        broad = next((item for item in weighted if item.get("kind") == "broad"), None)
+        targeted = [item for item in weighted if item is not broad]
+        total_share = sum(max(0.0, float(item.get("share") or 0.0)) for item in weighted) or 1.0
+
+        merged_items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        strategy_diagnostics: list[dict[str, Any]] = []
+        total_api_items = 0
+        first_payload: dict[str, Any] | None = None
+
+        def run_cohort(cohort: dict[str, Any], budget: int) -> None:
+            nonlocal total_api_items, first_payload
+            if budget <= 0:
+                return
+            name = str(cohort.get("name") or cohort.get("kind") or "cohort")
+            filters = dict(base_filters or {})
+            filters.update(dict(cohort.get("filters") or {}))
+            logger(f"uma.moe : cohorte {name} — budget {budget} candidats…")
+            try:
+                payload, operation = self.search_many(
+                    filters=filters,
+                    desired_candidates=budget,
+                    page_size=page_size,
+                    logger=logger,
+                )
+            except UmaMoeError as exc:
+                strategy_diagnostics.append({
+                    "name": name,
+                    "kind": cohort.get("kind"),
+                    "budget": budget,
+                    "filters": filters,
+                    "received": 0,
+                    "unique_added": 0,
+                    "error": str(exc),
+                })
+                logger(f"uma.moe : cohorte {name} indisponible ({exc}); budget rendu à la recherche large.")
+                return
+            if first_payload is None:
+                first_payload = dict(payload)
+            items = list(payload.get("items") or []) if isinstance(payload, dict) else []
+            total_api_items += len(items)
+            added = 0
+            for item in items:
+                identity = self._record_identity(item)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged_items.append(item)
+                added += 1
+            strategy_diagnostics.append({
+                "name": name,
+                "kind": cohort.get("kind"),
+                "share": round(float(cohort.get("share") or 0.0), 6),
+                "budget": budget,
+                "filters": filters,
+                "received": len(items),
+                "unique_added": added,
+                "operation": operation,
+            })
+
+        allocated = 0
+        for cohort in targeted:
+            share = max(0.0, float(cohort.get("share") or 0.0)) / total_share
+            budget = min(desired - allocated, max(1, int(round(desired * share))))
+            if budget <= 0:
+                break
+            run_cohort(cohort, budget)
+            allocated += budget
+
+        broad_cohort = broad or {
+            "name": "recherche large",
+            "kind": "broad",
+            "share": 0.0,
+            "filters": {},
+        }
+        # A targeted cohort that returns fewer rows yields its unused allowance
+        # to the broad cohort. The number of API records retained never exceeds
+        # the same global 2,000-candidate cap.
+        broad_budget = max(0, desired - total_api_items)
+        run_cohort(broad_cohort, broad_budget)
+
+        merged = first_payload or {}
+        merged["items"] = merged_items[:desired]
+        merged["page"] = 0
+        merged["limit"] = page_size
+        merged["requested_candidates"] = desired
+        merged["unique_items"] = len(merged["items"])
+        merged["retrieval_plan"] = retrieval_plan
+        operation = {
+            "method": "GET",
+            "path": "/api/v3/search",
+            "discovery_mode": "planned_complementary_cohorts",
+            "retrieval_plan_applied": True,
+            "requested_candidates": desired,
+            "received_api_items": total_api_items,
+            "received_candidates": len(merged["items"]),
+            "page_size": page_size,
+            "filters": base_filters or {},
+            "retrieval_plan": retrieval_plan,
+            "strategies": strategy_diagnostics,
+        }
         return merged, operation
 
 
@@ -724,6 +1077,502 @@ def _uql_list(predicate: str, names: list[str], directive: str) -> str:
     return f"{predicate} (\n  {body}\n)"
 
 
+def _initial_star_target(base_rank: int, target_rank: int) -> int:
+    """Stars needed for the best useful initial-rank step, capped at +4."""
+    base = max(1, min(7, int(base_rank)))
+    target = max(1, min(7, int(target_rank)))
+    ranks = max(0, target - base)
+    if ranks <= 0:
+        return 0
+    capped = min(4, ranks)
+    return 1 + 3 * (capped - 1)
+
+
+def resolve_lineage_pink_group_ids(
+    master_path: str | Path,
+    factor_names: Iterable[str],
+) -> dict[str, int]:
+    """Resolve target aptitude names to uma.moe lineage aggregate prefixes.
+
+    The API's global ``pink_sparks`` field stores an aptitude's total stars over
+    Main + GP1 + GP2. Turf 5★ is therefore 1105, while the underlying per-slot
+    game factor is 1101/1102/1103. The aggregate prefix is ``factor_id // 10``.
+    """
+    requested = {str(name) for name in factor_names if name}
+    if not requested:
+        return {}
+    resolver = MasterResolver(Path(master_path))
+    try:
+        result: dict[str, int] = {}
+        for factor in resolver.factors.values():
+            name = str(factor.get("name") or "")
+            if (
+                name in requested
+                and factor.get("type") == "red_aptitude"
+                and name not in result
+            ):
+                result[name] = int(factor["factor_id"]) // 10
+        return result
+    finally:
+        resolver.close()
+
+
+def build_parent_retrieval_plan(
+    *,
+    ace_target_aptitudes: dict[str, Any],
+    surface: str,
+    distance: str,
+    config: dict[str, Any],
+    pink_group_ids: dict[str, int],
+    fixed_parent: dict[str, Any] | None = None,
+    surface_cohort_enabled: bool | None = None,
+) -> dict[str, Any]:
+    """Build complementary API cohorts from the Ace's remaining aptitude deficit.
+
+    When a local parent is locked, its complete three-member branch is already
+    known.  Targeted API cohorts must therefore search only for the stars still
+    missing from the distant branch.  In particular, a target surface already
+    starting at A never receives an automatic Surface cohort.
+    """
+    parent_cfg = config.get("uma_moe_parent_search") or {}
+    retrieval_cfg = parent_cfg.get("retrieval") or {}
+    enabled = bool(retrieval_cfg.get("enabled", True))
+    if not enabled:
+        return {"enabled": False, "cohorts": []}
+
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    surface_cfg = aptitude_cfg.get("surface") or {}
+    minimum_surface_rank = int(surface_cfg.get("minimum_initial_rank", 6))
+    preferred_surface_rank = int(surface_cfg.get("preferred_initial_rank", 7))
+    surface_rank = int(((ace_target_aptitudes.get("surface") or {}).get("rank")) or 7)
+    distance_rank = int(((ace_target_aptitudes.get("distance") or {}).get("rank")) or 7)
+    divisor = max(1.0, float(retrieval_cfg.get("balanced_branch_divisor", 2.0)))
+    surface_name = SURFACE_FACTOR_NAMES[surface]
+    distance_name = DISTANCE_FACTOR_NAMES[distance]
+    configured_surface_enabled = bool(
+        retrieval_cfg.get("surface_cohort_enabled", True)
+    )
+    use_surface_cohort = configured_surface_enabled and (
+        True if surface_cohort_enabled is None else bool(surface_cohort_enabled)
+    )
+
+    fixed_surface_stars = _matching_factor_stars(fixed_parent, surface_name)
+    fixed_distance_stars = _matching_factor_stars(fixed_parent, distance_name)
+    known_surface_rank = _initial_aptitude_rank(surface_rank, fixed_surface_stars)
+
+    distance_total_target = (
+        1 if distance_rank >= 7 else _initial_star_target(distance_rank, 7)
+    )
+    remaining_distance_stars = max(0, distance_total_target - fixed_distance_stars)
+    distance_branch_minimum = max(
+        1,
+        min(
+            9,
+            (
+                remaining_distance_stars
+                if fixed_parent is not None
+                else int(math.ceil(distance_total_target / divisor))
+            ),
+        ),
+    ) if remaining_distance_stars > 0 else 0
+
+    maximum_surface_rank = min(7, surface_rank + 4)
+    if surface_rank >= preferred_surface_rank:
+        surface_total_target = 0
+    elif maximum_surface_rank >= preferred_surface_rank:
+        surface_total_target = _initial_star_target(
+            surface_rank, preferred_surface_rank
+        )
+    else:
+        surface_total_target = _initial_star_target(
+            surface_rank, minimum_surface_rank
+        )
+    remaining_surface_stars = max(0, surface_total_target - fixed_surface_stars)
+
+    if known_surface_rank >= preferred_surface_rank:
+        surface_share = float(retrieval_cfg.get("surface_share_at_preferred", 0.0))
+        if fixed_parent is not None:
+            # A locked branch that already starts the target surface at A fully
+            # covers the automatic Surface search, regardless of a legacy
+            # non-zero preferred-rank share.
+            surface_share = 0.0
+    elif known_surface_rank >= minimum_surface_rank:
+        surface_share = float(retrieval_cfg.get("surface_share_at_minimum", 0.20))
+    else:
+        surface_share = float(
+            retrieval_cfg.get("surface_share_below_minimum", 0.40)
+        )
+    if not use_surface_cohort or remaining_surface_stars <= 0:
+        surface_share = 0.0
+    surface_branch_minimum = (
+        max(
+            1,
+            min(
+                9,
+                (
+                    remaining_surface_stars
+                    if fixed_parent is not None
+                    else int(math.ceil(surface_total_target / divisor))
+                ),
+            ),
+        )
+        if remaining_surface_stars > 0
+        else 0
+    )
+
+    distance_share = (
+        max(0.0, float(retrieval_cfg.get("distance_share", 0.45)))
+        if remaining_distance_stars > 0
+        else 0.0
+    )
+    surface_share = max(0.0, surface_share)
+    broad_minimum = max(0.0, float(retrieval_cfg.get("broad_minimum_share", 0.15)))
+    if distance_share + surface_share > 1.0 - broad_minimum:
+        scale = (1.0 - broad_minimum) / max(0.000001, distance_share + surface_share)
+        distance_share *= scale
+        surface_share *= scale
+    broad_share = max(broad_minimum, 1.0 - distance_share - surface_share)
+
+    cohorts: list[dict[str, Any]] = []
+    distance_prefix = pink_group_ids.get(distance_name)
+    if distance_share > 0 and distance_prefix:
+        cohorts.append({
+            "name": f"distance {distance_name} >= {distance_branch_minimum}★",
+            "kind": "distance",
+            "share": round(distance_share, 8),
+            "filters": {
+                "pink_sparks": [
+                    distance_prefix * 10 + stars
+                    for stars in range(distance_branch_minimum, 10)
+                ]
+            },
+            "target_factor": distance_name,
+            "target_branch_stars": distance_branch_minimum,
+        })
+    else:
+        broad_share += distance_share
+
+    surface_prefix = pink_group_ids.get(surface_name)
+    if surface_share > 0 and surface_branch_minimum > 0 and surface_prefix:
+        cohorts.append({
+            "name": f"surface {surface_name} >= {surface_branch_minimum}★",
+            "kind": "surface",
+            "share": round(surface_share, 8),
+            "filters": {
+                "pink_sparks": [
+                    surface_prefix * 10 + stars
+                    for stars in range(surface_branch_minimum, 10)
+                ]
+            },
+            "target_factor": surface_name,
+            "target_branch_stars": surface_branch_minimum,
+        })
+    else:
+        broad_share += surface_share
+    cohorts.append({
+        "name": "recherche large / whites",
+        "kind": "broad",
+        "share": round(broad_share, 8),
+        "filters": {},
+    })
+
+    total_share = sum(float(item["share"]) for item in cohorts) or 1.0
+    for cohort in cohorts:
+        cohort["share"] = round(float(cohort["share"]) / total_share, 8)
+    return {
+        "enabled": True,
+        "policy": (
+            "Separate distance, target-surface and broad cohorts are merged under "
+            "the same global fetch cap; this is sampling guidance, not a final hard filter."
+        ),
+        "surface": {
+            "factor": surface_name,
+            "base_rank": surface_rank,
+            "minimum_rank": minimum_surface_rank,
+            "preferred_rank": preferred_surface_rank,
+            "final_pair_star_target": surface_total_target,
+            "known_locked_parent_stars": fixed_surface_stars,
+            "remaining_stars": remaining_surface_stars,
+            "initial_rank_with_locked_parent": known_surface_rank,
+            "cohort_enabled": use_surface_cohort,
+            "balanced_remote_branch_minimum": surface_branch_minimum,
+        },
+        "distance": {
+            "factor": distance_name,
+            "base_rank": distance_rank,
+            "final_pair_star_target": distance_total_target,
+            "known_locked_parent_stars": fixed_distance_stars,
+            "remaining_stars": remaining_distance_stars,
+            "balanced_remote_branch_minimum": distance_branch_minimum,
+        },
+        "cohorts": cohorts,
+    }
+
+
+def build_contextual_grandparent_retrieval_plan(
+    *,
+    ace_target_aptitudes: dict[str, Any],
+    opposing_parent: dict[str, Any],
+    surface: str,
+    distance: str,
+    config: dict[str, Any],
+    main_pink_factor_ids: dict[str, list[int]],
+    fixed_grandparent: dict[str, Any] | None = None,
+    surface_cohort_enabled: bool | None = None,
+) -> dict[str, Any]:
+    """Allocate GP API cohorts from the deficit left by a fixed parent branch.
+
+    Unlike parent-mode cohorts, a returned Main is itself the future GP.  The
+    targeted query must therefore use ``main_parent_pink_sparks`` rather than
+    aggregate lineage stars.  Shares only guide sampling; the final result is
+    still evaluated on the complete projected six-member lineage.
+    """
+    parent_cfg = config.get("uma_moe_parent_search") or {}
+    retrieval_cfg = parent_cfg.get("retrieval") or {}
+    if not bool(retrieval_cfg.get("enabled", True)):
+        return {"enabled": False, "cohorts": []}
+
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    surface_cfg = aptitude_cfg.get("surface") or {}
+    minimum_surface_rank = int(surface_cfg.get("minimum_initial_rank", 6))
+    preferred_surface_rank = int(surface_cfg.get("preferred_initial_rank", 7))
+    surface_rank = int(((ace_target_aptitudes.get("surface") or {}).get("rank")) or 7)
+    distance_rank = int(((ace_target_aptitudes.get("distance") or {}).get("rank")) or 7)
+    surface_name = SURFACE_FACTOR_NAMES[surface]
+    distance_name = DISTANCE_FACTOR_NAMES[distance]
+    configured_surface_enabled = bool(
+        retrieval_cfg.get("surface_cohort_enabled", True)
+    )
+    use_surface_cohort = configured_surface_enabled and (
+        True if surface_cohort_enabled is None else bool(surface_cohort_enabled)
+    )
+
+    maximum_surface_rank = min(7, surface_rank + 4)
+    if surface_rank >= preferred_surface_rank:
+        surface_total_target = 0
+        surface_base_share = float(retrieval_cfg.get("surface_share_at_preferred", 0.0))
+    elif maximum_surface_rank >= preferred_surface_rank:
+        surface_total_target = _initial_star_target(
+            surface_rank, preferred_surface_rank
+        )
+        surface_base_share = float(
+            retrieval_cfg.get(
+                "surface_share_at_minimum"
+                if surface_rank >= minimum_surface_rank
+                else "surface_share_below_minimum",
+                0.20 if surface_rank >= minimum_surface_rank else 0.40,
+            )
+        )
+    else:
+        surface_total_target = _initial_star_target(surface_rank, minimum_surface_rank)
+        surface_base_share = float(retrieval_cfg.get("surface_share_below_minimum", 0.40))
+    opposing_surface_stars = _matching_factor_stars(opposing_parent, surface_name)
+    locked_local_surface_stars = _matching_factor_stars(
+        fixed_grandparent, surface_name, include_lineage=False
+    )
+    fixed_surface_stars = opposing_surface_stars + locked_local_surface_stars
+    remaining_surface_stars = max(0, surface_total_target - fixed_surface_stars)
+    known_surface_rank = _initial_aptitude_rank(surface_rank, fixed_surface_stars)
+    surface_need = (
+        min(1.0, remaining_surface_stars / max(1.0, float(surface_total_target)))
+        if surface_total_target > 0 else 0.0
+    )
+    if known_surface_rank >= preferred_surface_rank:
+        surface_need = 0.0
+
+    # Initial-A is a hard prerequisite when the Ace starts below A.  Once that
+    # is covered, a configurable six-star reference keeps enough distance
+    # carriers in the sample for the practical P(S) target instead of reducing
+    # the search to a single matching factor.
+    contextual_distance_target = max(
+        1,
+        min(18, int(retrieval_cfg.get("contextual_distance_star_target", 6))),
+    )
+    distance_initial_target = (
+        1 if distance_rank >= 7 else _initial_star_target(distance_rank, 7)
+    )
+    distance_total_target = max(distance_initial_target, contextual_distance_target)
+    opposing_distance_stars = _matching_factor_stars(opposing_parent, distance_name)
+    locked_local_distance_stars = _matching_factor_stars(
+        fixed_grandparent, distance_name, include_lineage=False
+    )
+    fixed_distance_stars = opposing_distance_stars + locked_local_distance_stars
+    remaining_distance_stars = max(0, distance_total_target - fixed_distance_stars)
+    distance_need = min(
+        1.0,
+        remaining_distance_stars / max(1.0, float(distance_total_target)),
+    )
+
+    base_distance_share = max(0.0, float(retrieval_cfg.get("distance_share", 0.45)))
+    base_surface_share = (
+        max(0.0, surface_base_share) if use_surface_cohort else 0.0
+    )
+    broad_minimum = max(0.0, float(retrieval_cfg.get("broad_minimum_share", 0.15)))
+    freed_surface = base_surface_share * (1.0 - surface_need)
+    distance_floor = max(
+        0.0, min(1.0, float(retrieval_cfg.get("contextual_distance_need_floor", 0.25)))
+    )
+    distance_demand = max(distance_floor, distance_need)
+    distance_share = base_distance_share * distance_demand
+    distance_share += (
+        freed_surface
+        * max(0.0, min(1.0, float(retrieval_cfg.get("contextual_surface_reallocation_to_distance", 0.70))))
+        * distance_demand
+    )
+    surface_share = base_surface_share * surface_need
+    if distance_share + surface_share > 1.0 - broad_minimum:
+        scale = (1.0 - broad_minimum) / max(0.000001, distance_share + surface_share)
+        distance_share *= scale
+        surface_share *= scale
+    broad_share = max(broad_minimum, 1.0 - distance_share - surface_share)
+
+    def targeted_ids(name: str, minimum_stars: int) -> list[int]:
+        values = []
+        for raw in main_pink_factor_ids.get(name, []):
+            try:
+                factor_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if factor_id % 10 >= minimum_stars:
+                values.append(factor_id)
+        return sorted(set(values))
+
+    cohorts: list[dict[str, Any]] = []
+    distance_minimum = max(
+        1,
+        min(
+            3,
+            (
+                remaining_distance_stars
+                if fixed_grandparent is not None
+                else int(math.ceil(remaining_distance_stars / 2.0))
+            ),
+        ),
+    )
+    distance_ids = targeted_ids(distance_name, distance_minimum)
+    if distance_share > 0 and remaining_distance_stars > 0 and distance_ids:
+        cohorts.append({
+            "name": f"GP distance {distance_name} >= {distance_minimum}★",
+            "kind": "distance",
+            "share": round(distance_share, 8),
+            "filters": {"main_parent_pink_sparks": distance_ids},
+            "target_factor": distance_name,
+            "target_main_stars": distance_minimum,
+        })
+    else:
+        broad_share += distance_share
+
+    surface_minimum = max(
+        1,
+        min(
+            3,
+            (
+                remaining_surface_stars
+                if fixed_grandparent is not None
+                else int(math.ceil(remaining_surface_stars / 2.0))
+            ),
+        ),
+    )
+    surface_ids = targeted_ids(surface_name, surface_minimum)
+    if surface_share > 0 and remaining_surface_stars > 0 and surface_ids:
+        cohorts.append({
+            "name": f"GP surface {surface_name} >= {surface_minimum}★",
+            "kind": "surface",
+            "share": round(surface_share, 8),
+            "filters": {"main_parent_pink_sparks": surface_ids},
+            "target_factor": surface_name,
+            "target_main_stars": surface_minimum,
+        })
+    else:
+        broad_share += surface_share
+    cohorts.append({
+        "name": "recherche complémentaire / whites",
+        "kind": "broad",
+        "share": round(broad_share, 8),
+        "filters": {},
+    })
+    total_share = sum(float(item["share"]) for item in cohorts) or 1.0
+    for cohort in cohorts:
+        cohort["share"] = round(float(cohort["share"]) / total_share, 8)
+    return {
+        "enabled": True,
+        "contextual_opposing_parent": True,
+        "policy": (
+            "Distance/surface cohorts target only the future GP Main and are reduced by "
+            "the known opposing branch plus any locked local GP. The local GP contributes "
+            "only its own factors. Freed surface budget is mostly reassigned to distance; "
+            "broad/white search keeps the remainder."
+        ),
+        "opposing_parent": _identity(opposing_parent),
+        "surface": {
+            "factor": surface_name,
+            "base_rank": surface_rank,
+            "minimum_rank": minimum_surface_rank,
+            "preferred_rank": preferred_surface_rank,
+            "target_stars": surface_total_target,
+            "known_opposing_stars": opposing_surface_stars,
+            "known_locked_local_stars": locked_local_surface_stars,
+            "known_total_stars": fixed_surface_stars,
+            "remaining_stars": remaining_surface_stars,
+            "initial_rank_with_known_branches": known_surface_rank,
+            "cohort_enabled": use_surface_cohort,
+            "need_ratio": round(surface_need, 6),
+        },
+        "distance": {
+            "factor": distance_name,
+            "base_rank": distance_rank,
+            "target_stars": distance_total_target,
+            "known_opposing_stars": opposing_distance_stars,
+            "known_locked_local_stars": locked_local_distance_stars,
+            "known_total_stars": fixed_distance_stars,
+            "remaining_stars": remaining_distance_stars,
+            "need_ratio": round(distance_need, 6),
+        },
+        "cohorts": cohorts,
+    }
+
+
+def _prune_locked_surface_hard_filter(
+    hard_filters: list[dict[str, Any]],
+    retrieval_plan: dict[str, Any],
+    *,
+    surface_name: str,
+    fixed_local_parent: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drop a redundant remote-Main Surface constraint after locked coverage.
+
+    A persisted explicit Surface filter used to survive independently from the
+    automatic cohort plan.  That could still force a Dirt/Turf-only API search
+    even when the locked local branch already started the Ace at A.  Explicit
+    filters remain untouched in every other case.
+    """
+    if fixed_local_parent is None:
+        return list(hard_filters), []
+    surface_plan = retrieval_plan.get("surface") or {}
+    try:
+        preferred_rank = int(surface_plan.get("preferred_rank") or 7)
+        known_rank = int(
+            surface_plan.get("initial_rank_with_locked_parent")
+            or surface_plan.get("initial_rank_with_known_branches")
+            or 0
+        )
+    except (TypeError, ValueError):
+        return list(hard_filters), []
+    if known_rank < preferred_rank:
+        return list(hard_filters), []
+    kept: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    for item in hard_filters:
+        if str(item.get("factor") or "") == surface_name:
+            suppressed.append({
+                **item,
+                "reason": "covered_at_preferred_rank_by_locked_local_context",
+            })
+        else:
+            kept.append(item)
+    return kept, suppressed
+
+
 def generate_auto_uql(
     manual_weights_path: str | Path,
     skill_catalog_path: str | Path,
@@ -739,16 +1588,23 @@ def generate_auto_uql(
     max_lineage_skills: int = 12,
     options: dict[str, Any] | None = None,
     master_path: str | Path | None = None,
+    ace_card_id: int | None = None,
+    search_mode: str = "grandparent",
+    opposing_parent: dict[str, Any] | None = None,
+    fixed_local_parent: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build a broad UQL with optional user-selected hard constraints.
 
     White-skill clauses are primarily sorting/prioritisation helpers. Pink and blue
-    factors remain open by default; the user may explicitly require a factor on the
-    online main parent (the distant GP candidate), for example ``Main Dirt >= 1``.
+    factors remain open by default; the user may explicitly require the target
+    surface, distance or style on the online Main (the distant candidate). Numeric
+    lineage-quality thresholds are emitted as documented ``/api/v3/search``
+    parameters rather than invented free-text UQL predicates.
     """
     options = dict(options or {})
     use_optional_whites = bool(options.get("prefer_profile_whites", True))
     use_lineage_whites = bool(options.get("prefer_lineage_whites", True))
+    use_surface_retrieval = bool(options.get("enable_surface_retrieval", True))
     min_pink_stars = max(1, min(int(options.get("pink_min_stars", 1) or 1), 3))
 
     weights_payload = _read_json(Path(manual_weights_path))
@@ -775,6 +1631,15 @@ def generate_auto_uql(
     )
 
     static_rules = _compile_static_condition_rules(skill_catalog)
+    opposing_coverage = _opposing_white_coverage(opposing_parent)
+    coverage_decay = max(
+        0.0,
+        float(
+            (((config.get("uma_moe_pair") or {}).get("contextual_opponent") or {}).get(
+                "white_retrieval_coverage_decay", 0.75
+            ))
+        ),
+    )
     ranked: list[dict[str, Any]] = []
     for key, entry in (weights_payload.get("skills") or {}).items():
         name = str(entry.get("spark_name") or "").strip()
@@ -786,10 +1651,14 @@ def generate_auto_uql(
         static_state = "not_static"
         if key in static_rules:
             static_state = _static_condition_state(static_rules[key], normalized_conditions)
+        known_coverage = max(0.0, float(opposing_coverage.get(name, 0.0)))
+        retrieval_weight = weight / (1.0 + coverage_decay * known_coverage)
         ranked.append({
             "catalog_key": str(key),
             "name": name,
-            "weight": round(weight, 6),
+            "weight": round(retrieval_weight, 6),
+            "profile_weight": round(weight, 6),
+            "opposing_parent_coverage": round(known_coverage, 6),
             "static_state": static_state,
         })
     ranked.sort(key=lambda row: (float(row["weight"]), row["name"]), reverse=True)
@@ -835,15 +1704,13 @@ def generate_auto_uql(
 
     hard_filters: list[dict[str, Any]] = []
     requested_factor_names: list[str] = []
-    if options.get("require_main_dirt"):
-        requested_factor_names.append("Dirt")
     if options.get("require_main_surface"):
         requested_factor_names.append(SURFACE_FACTOR_NAMES[surface])
     if options.get("require_main_distance"):
         requested_factor_names.append(DISTANCE_FACTOR_NAMES[distance])
     if options.get("require_main_style"):
         requested_factor_names.append(STYLE_FACTOR_NAMES[style])
-    # Preserve order while avoiding duplicate clauses (e.g. Dirt + target surface Dirt).
+    # Preserve order defensively even though the three target dimensions are distinct.
     deduped_names: list[str] = []
     for name in requested_factor_names:
         if name not in deduped_names:
@@ -874,9 +1741,106 @@ def generate_auto_uql(
         if master_path and use_lineage_whites and lineage
         else []
     )
+    ace_target_aptitudes: dict[str, Any] = {}
+    retrieval_plan: dict[str, Any] = {"enabled": False, "cohorts": []}
+    suppressed_hard_filters: list[dict[str, Any]] = []
+    if master_path and ace_card_id is not None and (
+        search_mode == "parent" or opposing_parent is not None
+    ):
+        affinity_resolver = AffinityResolver(master_path)
+        try:
+            ace_target_aptitudes = affinity_resolver.ace_details(
+                int(ace_card_id), surface, distance, style
+            )["target_aptitudes"]
+        finally:
+            affinity_resolver.close()
+        target_pinks = [SURFACE_FACTOR_NAMES[surface], DISTANCE_FACTOR_NAMES[distance]]
+        if search_mode == "parent":
+            pink_group_ids = resolve_lineage_pink_group_ids(master_path, target_pinks)
+            retrieval_plan = build_parent_retrieval_plan(
+                ace_target_aptitudes=ace_target_aptitudes,
+                surface=surface,
+                distance=distance,
+                config=config,
+                pink_group_ids=pink_group_ids,
+                fixed_parent=fixed_local_parent,
+                surface_cohort_enabled=use_surface_retrieval,
+            )
+        elif opposing_parent is not None:
+            main_factor_ids = {
+                name: resolve_main_pink_factor_ids(
+                    master_path,
+                    [{"factor": name, "minimum_stars": 1}],
+                )
+                for name in target_pinks
+            }
+            retrieval_plan = build_contextual_grandparent_retrieval_plan(
+                ace_target_aptitudes=ace_target_aptitudes,
+                opposing_parent=opposing_parent,
+                surface=surface,
+                distance=distance,
+                config=config,
+                main_pink_factor_ids=main_factor_ids,
+                fixed_grandparent=fixed_local_parent,
+                surface_cohort_enabled=use_surface_retrieval,
+            )
+    hard_filters, suppressed_hard_filters = _prune_locked_surface_hard_filter(
+        hard_filters,
+        retrieval_plan,
+        surface_name=SURFACE_FACTOR_NAMES[surface],
+        fixed_local_parent=fixed_local_parent,
+    )
+    if suppressed_hard_filters:
+        clauses = list(soft_clauses) + [item["uql"] for item in hard_filters]
+        uql = " and\n".join(clauses)
+        simple_parts = list(soft_clauses[:1]) + [
+            item["uql"] for item in hard_filters
+        ]
+        simple_uql = " and\n".join(simple_parts)
+        main_parent_pink_sparks = (
+            resolve_main_pink_factor_ids(master_path, hard_filters)
+            if master_path and hard_filters
+            else []
+        )
+    quality_filters: dict[str, int] = {}
+    for key, maximum in (
+        ("min_blue_stars_sum", 9),
+        ("min_white_count", 60),
+        ("min_white_stars_sum", 99),
+    ):
+        try:
+            value = max(0, min(int(options.get(key, 0) or 0), maximum))
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            quality_filters[key] = value
+
+    search_filters: dict[str, Any] = {
+        "main_parent_pink_sparks": main_parent_pink_sparks,
+        "optional_main_white_factors": optional_main_white_factors,
+        "optional_white_sparks": optional_white_sparks,
+    }
+    search_filters.update(quality_filters)
+    if (
+        opposing_parent is not None
+        and main_parent_pink_sparks
+        and retrieval_plan.get("enabled")
+    ):
+        retrieval_plan = {
+            **retrieval_plan,
+            "enabled": False,
+            "disabled_reason": (
+                "An explicit hard Main-pink constraint already occupies the API's "
+                "main_parent_pink_sparks parameter; contextual cohorts cannot express an "
+                "additional independent Main-pink condition safely."
+            ),
+        }
+
     return uql, {
-        "generator_version": 3,
+        "generator_version": 7,
+        "search_mode": search_mode,
         "profile": {"surface": surface, "distance": distance, "style": style},
+        "ace_target_aptitudes": ace_target_aptitudes,
         "weight_source": source_label,
         "course_key": course_key,
         "course_conditions": {key: sorted(values) for key, values in normalized_conditions.items()},
@@ -884,17 +1848,49 @@ def generate_auto_uql(
         "optional_skills": optional if use_optional_whites else [],
         "lineage_skills": lineage if use_lineage_whites else [],
         "hard_filters": hard_filters,
+        "suppressed_hard_filters": suppressed_hard_filters,
+        "quality_filters": quality_filters,
         "simple_fallback_uql": simple_uql,
         "weight_diagnostics": diagnostics,
-        "search_filters": {
-            "main_parent_pink_sparks": main_parent_pink_sparks,
-            "optional_main_white_factors": optional_main_white_factors,
-            "optional_white_sparks": optional_white_sparks,
-        },
+        "opposing_parent_context": (
+            {
+                "identity": _identity(opposing_parent),
+                "white_coverage": opposing_coverage,
+                "white_retrieval_coverage_decay": coverage_decay,
+                "policy": (
+                    "Known whites are softly de-prioritized for retrieval only; "
+                    "the final six-member scorer still values repeated copies through exact cumulative probability."
+                ),
+            }
+            if opposing_parent is not None else None
+        ),
+        "fixed_local_context": (
+            {
+                "identity": _identity(fixed_local_parent),
+                "role": (
+                    "complete_locked_parent_branch"
+                    if search_mode == "parent"
+                    else "locked_local_grandparent_only"
+                ),
+                "policy": (
+                    "The locked local parent contributes its complete branch to the known aptitude coverage."
+                    if search_mode == "parent"
+                    else "A locked local GP contributes only its own factors; its ancestors are outside the final six-member lineage."
+                ),
+            }
+            if fixed_local_parent is not None else None
+        ),
+        "search_filters": search_filters,
+        "retrieval_plan": retrieval_plan,
         "policy": {
-            "blue_filter": None,
+            "blue_filter": quality_filters.get("min_blue_stars_sum"),
             "pink_filter": hard_filters or None,
-            "reason": "Keep the API pool broad unless the user explicitly checks a main-parent factor constraint.",
+            "lineage_quality_filters": quality_filters or None,
+            "reason": (
+                "Explicit Main pink constraints and non-zero lineage-quality minima remain "
+                "hard. Parent mode samples complete-branch aptitude cohorts. Contextual GP mode "
+                "samples only the remaining Main-GP deficits before exact projected pair scoring."
+            ),
         },
     }
 
@@ -1097,6 +2093,14 @@ def _candidate_object_score(obj: dict[str, Any]) -> int:
 def _extract_record_list(payload: Any) -> list[dict[str, Any]]:
     candidates: list[tuple[int, list[dict[str, Any]]]] = []
 
+    # This key holds diagnostic metadata the app itself injects (retrieval
+    # strategy, and — for contextual GP searches — a full resolved copy of
+    # the opposing-parent branch with its own factor lists). It is never
+    # part of the uma.moe API response and must not be mistaken for one:
+    # its small, uniformly well-formed factor-object lists can outscore the
+    # real (but more heterogeneous) candidate list in the heuristic below.
+    METADATA_KEYS_TO_SKIP = {"retrieval_plan"}
+
     def walk(value: Any, depth: int = 0) -> None:
         if depth > 7:
             return
@@ -1109,6 +2113,8 @@ def _extract_record_list(payload: Any) -> list[dict[str, Any]]:
                 walk(item, depth + 1)
         elif isinstance(value, dict):
             for key, child in value.items():
+                if str(key).lower() in METADATA_KEYS_TO_SKIP:
+                    continue
                 bonus = 120 if str(key).lower() in {"results", "items", "records", "data", "parents", "inheritances", "rows"} else 0
                 if isinstance(child, list):
                     dicts = [item for item in child if isinstance(item, dict)]
@@ -1122,6 +2128,22 @@ def _extract_record_list(payload: Any) -> list[dict[str, Any]]:
         return [payload]
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1] if candidates else []
+
+
+def _empty_candidates_diagnostic(records: list[dict[str, Any]]) -> str:
+    """Build a short, PII-free diagnostic appended when zero candidates normalize.
+
+    Surfaces the record count and the top-level key names of the first record
+    (structure only, no values) so a schema change on the uma.moe side can be
+    spotted from the log without needing to share the raw response.
+    """
+    if not records:
+        return " Diagnostic : la réponse ne contient aucun enregistrement détectable."
+    sample_keys = sorted(str(key) for key in records[0].keys())[:25]
+    return (
+        f" Diagnostic : {len(records)} enregistrement(s) détecté(s), 0 exploitable. "
+        f"Clés du premier enregistrement : {', '.join(sample_keys) or '(aucune)'}."
+    )
 
 
 class OnlineRecordNormalizer:
@@ -1429,6 +2451,69 @@ class OnlineRecordNormalizer:
         }
 
 
+def extract_opposing_parent_candidates(
+    master_path: str | Path,
+    payload: Any,
+) -> list[dict[str, Any]]:
+    """Extract selectable complete parent branches from supported JSON files.
+
+    Supported inputs include this application's parent-pair result JSON, one
+    already-normalized member object, and a raw uma.moe API response.  Only
+    branches containing the parent plus both visible grandparents are returned.
+    """
+    candidates: list[dict[str, Any]] = []
+
+    def add(member: Any) -> None:
+        if not isinstance(member, dict):
+            return
+        if not _has_complete_parent_branch(member):
+            return
+        if int(member.get("card_id") or 0) <= 0 or int(member.get("chara_id") or 0) <= 0:
+            return
+        if not isinstance(member.get("factors"), dict):
+            return
+        candidates.append(copy.deepcopy(member))
+
+    add(payload)
+    if isinstance(payload, dict):
+        add(payload.get("fixed_parent"))
+        for row in payload.get("results") or []:
+            if not isinstance(row, dict):
+                continue
+            for key in ("candidate", "fixed_parent", "parent_1", "parent_2"):
+                add(row.get(key))
+
+    if not candidates:
+        normalizer = OnlineRecordNormalizer(master_path)
+        try:
+            normalized, _diagnostics = normalizer.normalize_records(payload)
+        finally:
+            normalizer.close()
+        for member in normalized:
+            add(member)
+
+    unique: dict[str, dict[str, Any]] = {}
+    for member in candidates:
+        lineage = member.get("when_used_as_parent") or {}
+        signature = [
+            member.get("trained_chara_id"),
+            member.get("card_id"),
+            (member.get("online") or {}).get("inheritance_id"),
+            sorted(
+                (factor.get("name"), int(factor.get("stars") or 0))
+                for factor in (member.get("factors") or {}).get("all", [])
+                if isinstance(factor, dict)
+            ),
+            int((lineage.get("grandparent_1") or {}).get("card_id") or 0),
+            int((lineage.get("grandparent_2") or {}).get("card_id") or 0),
+        ]
+        key = hashlib.sha256(
+            json.dumps(signature, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        unique[key] = member
+    return list(unique.values())
+
+
 def _full_production_affinity(
     resolver: AffinityResolver,
     target_parent_chara: int,
@@ -1648,7 +2733,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     import csv
 
     fields = [
-        "rank", "score",
+        "rank", "score", "scoring_context", "opposing_parent",
         "local_id", "local_candidate", "local_rank_score",
         "friend_code", "trainer_name", "candidate", "rank_score",
         "final_parent_base", "planned_g1_budget", "planned_g1_bonus",
@@ -1658,6 +2743,9 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "remote_only_g1_count", "common_gp_g1_races", "local_only_g1_races",
         "remote_only_g1_races", "blue", "pink", "white", "white_generation",
         "unique", "candidate_g1",
+        "final_pair_affinity_total", "projected_parent_g1_count",
+        "distance_status", "distance_stars", "distance_probability_s",
+        "surface_status", "surface_stars", "surface_probability_a",
         "updated_at", "follow_status",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
@@ -1678,13 +2766,15 @@ def rank_online_grandparent_pairs(
     ace_card_id: int,
     target_parent_card_id: int,
     fixed_grandparent_trained_id: int | None = None,
+    opposing_parent_trained_id: int | None = None,
+    opposing_parent: dict[str, Any] | None = None,
     exhaustive_pairs: bool = False,
     local_pool_size: int = 100,
     remote_pool_size: int = 100,
     surface: str,
     distance: str,
     style: str,
-    raw_payload: Any,
+    raw_payload: Any = None,
     course_weights_path: str | Path | None = None,
     course_key: str | None = None,
     course_conditions: dict[str, int | list[int] | tuple[int, ...] | set[int] | None] | None = None,
@@ -1695,6 +2785,9 @@ def rank_online_grandparent_pairs(
     api_operation: dict[str, Any] | None = None,
     required_main_factors: Iterable[dict[str, Any]] | None = None,
     effective_uql: str = "",
+    local_pair_mode: bool = False,
+    lineage_blue_filter: tuple[str, int] | None = None,
+    lineage_pink_filter: tuple[str, int] | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> OnlineSearchResult:
     log = logger or (lambda _message: None)
@@ -1717,6 +2810,24 @@ def rank_online_grandparent_pairs(
     config = _read_json(scoring_config_path)
     veterans = list(linked.get("veterans") or [])
 
+    contextual_opposing_parent: dict[str, Any] | None = None
+    if opposing_parent is not None:
+        contextual_opposing_parent = copy.deepcopy(opposing_parent)
+    elif opposing_parent_trained_id is not None:
+        contextual_opposing_parent = next(
+            (
+                veteran
+                for veteran in veterans
+                if int(veteran.get("trained_chara_id") or 0)
+                == int(opposing_parent_trained_id)
+            ),
+            None,
+        )
+        if contextual_opposing_parent is None:
+            raise UmaMoeError(
+                f"Parent opposé local introuvable : #{opposing_parent_trained_id}"
+            )
+
     fixed: dict[str, Any] | None = None
     if fixed_grandparent_trained_id is not None:
         fixed = next(
@@ -1726,13 +2837,28 @@ def rank_online_grandparent_pairs(
         if fixed is None and not exhaustive_pairs:
             raise UmaMoeError(f"Grand-parent local introuvable : #{fixed_grandparent_trained_id}")
 
-    normalizer = OnlineRecordNormalizer(master_path)
-    try:
-        online_candidates, normalization_diag = normalizer.normalize_records(raw_payload)
-    finally:
-        normalizer.close()
-    if not online_candidates:
-        raise UmaMoeError("La réponse uma.moe ne contient aucun candidat avec costume/factors exploitables.")
+    if local_pair_mode:
+        online_candidates = [copy.deepcopy(veteran) for veteran in veterans]
+        for member in online_candidates:
+            online_meta = dict(member.get("online") or {})
+            online_meta.setdefault("local_pool", True)
+            member["online"] = online_meta
+        normalization_diag: dict[str, Any] = {
+            "mode": "local_second_pool",
+            "count": len(online_candidates),
+        }
+        log(f"Second pool : {len(online_candidates)} GP locaux (aucune requête uma.moe).")
+    else:
+        normalizer = OnlineRecordNormalizer(master_path)
+        try:
+            online_candidates, normalization_diag = normalizer.normalize_records(raw_payload)
+        finally:
+            normalizer.close()
+        if not online_candidates:
+            raise UmaMoeError(
+                "La réponse uma.moe ne contient aucun candidat avec costume/factors exploitables."
+                + _empty_candidates_diagnostic(_extract_record_list(raw_payload))
+            )
 
     operation_uql = str((api_operation or {}).get("effective_uql") or effective_uql or "")
     generated_meta = (api_operation or {}).get("generated_uql_metadata") or {}
@@ -1762,13 +2888,27 @@ def rank_online_grandparent_pairs(
         if not online_candidates:
             raise UmaMoeError(
                 "Aucun candidat uma.moe ne respecte les contraintes Main sélectionnées "
-                f"({filter_text}). L'API a peut-être ignoré le filtre UQL ou le pool demandé est trop petit."
+                f"({filter_text}). L'API a peut-être ignoré le filtre strict ou le pool demandé est trop petit."
             )
     else:
         normalization_diag["strict_main_factor_filters"] = []
         normalization_diag["pre_filter_count"] = unfiltered_online_count
         normalization_diag["post_filter_count"] = unfiltered_online_count
-    log(f"uma.moe : {len(online_candidates)} candidats distants normalisés.")
+    if not local_pair_mode:
+        log(f"uma.moe : {len(online_candidates)} candidats distants normalisés.")
+    online_candidates = _apply_lineage_factor_filters(
+        online_candidates, lineage_blue_filter, lineage_pink_filter, log
+    )
+    if not online_candidates:
+        raise UmaMoeError(
+            "Aucun candidat ne respecte les filtres lignée demandés. "
+            "Assouplis le minimum d'étoiles ou augmente la limite de récupération API."
+        )
+    normalization_diag["lineage_filters"] = {
+        "blue": list(lineage_blue_filter) if lineage_blue_filter else None,
+        "pink": list(lineage_pink_filter) if lineage_pink_filter else None,
+        "post_lineage_filter_count": len(online_candidates),
+    }
 
     resolver = AffinityResolver(master_path)
     try:
@@ -1800,10 +2940,73 @@ def rank_online_grandparent_pairs(
         online_cfg = config.get("uma_moe_pair") or {}
         mode_weights = _future_gp_scoring_weights(config)
         preselection_weights = _future_gp_preselection_weights(config)
+        pair_weights = _mode_weights(config, "parent_pair")
+        contextual_mode = contextual_opposing_parent is not None
+        effective_preselection_weights = dict(preselection_weights)
+        if contextual_mode:
+            contextual_settings = online_cfg.get("contextual_opponent") or {}
+            effective_preselection_weights = {
+                "candidate_affinity": float(
+                    contextual_settings.get("preselection_affinity_weight", 0.01)
+                ),
+                "g1_potential": float(
+                    contextual_settings.get("preselection_g1_weight", 0.01)
+                ),
+                "blue": float(pair_weights.get("blue", 0.0)),
+                "pink": sum(
+                    float(pair_weights.get(key, 0.0))
+                    for key in ("distance_s", "surface_aptitude", "pink_other")
+                ),
+                "white_skill": float(pair_weights.get("white_skill", 0.0)),
+                "white_generation": float(
+                    contextual_settings.get(
+                        "preselection_white_generation_weight", 0.02
+                    )
+                ),
+                "unique": float(pair_weights.get("unique", 0.0)),
+            }
+        opposing_branch: dict[str, Any] | None = None
+        if contextual_opposing_parent is not None:
+            if not _has_complete_parent_branch(contextual_opposing_parent):
+                raise UmaMoeError(
+                    "Le parent opposé doit contenir sa branche complète "
+                    "(parent + deux grands-parents)."
+                )
+            opposing_chara = int(contextual_opposing_parent.get("chara_id") or 0)
+            if opposing_chara <= 0:
+                raise UmaMoeError("Le parent opposé n'a pas pu être résolu.")
+            if opposing_chara == ace_chara:
+                raise UmaMoeError("L'Ace ne peut pas être utilisé comme parent opposé.")
+            if opposing_chara == target_parent_chara:
+                raise UmaMoeError(
+                    "Le parent opposé et le parent à produire doivent être deux Umas différentes."
+                )
+            opposing_branch = evaluate_parent_branch(
+                resolver,
+                ace,
+                contextual_opposing_parent,
+                surface=surface,
+                distance=distance,
+                style=style,
+                weight_lookup=weight_lookup,
+                race_skills=race_skills,
+                config=config,
+                g1_bonus_value=int((config.get("affinity") or {}).get("g1_common_bonus", 3)),
+            )
+            log(
+                "Contexte final activé : parent opposé "
+                f"{contextual_opposing_parent.get('card_name') or contextual_opposing_parent.get('uma_name')}. "
+                "Les paires de GP seront classées par leur contribution marginale dans la lignée à six membres."
+            )
         log(
             "Pondération future GP effective (locale / Transfer Helper / uma.moe) : "
             + ", ".join(f"{key}={value:.1%}" for key, value in mode_weights.items())
         )
+        if contextual_mode:
+            log(
+                "Pondération finale contextuelle (moteur paire de parents) : "
+                + ", ".join(f"{key}={value:.1%}" for key, value in pair_weights.items())
+            )
         affinity_cfg = config.get("affinity") or {}
         g1_bonus_value = int(affinity_cfg.get("g1_common_bonus", 3))
         final_thresholds = (
@@ -1830,6 +3033,56 @@ def rank_online_grandparent_pairs(
         final_full_score_at = full_score_threshold(final_thresholds)
         production_full_score_at = full_score_threshold(production_thresholds)
 
+        contextual_white_coverage = _opposing_white_coverage(
+            contextual_opposing_parent
+        )
+        contextual_cfg = online_cfg.get("contextual_opponent") or {}
+        contextual_white_decay = max(
+            0.0, float(contextual_cfg.get("white_preselection_coverage_decay", 0.75))
+        )
+        contextual_pink_need: dict[str, float] = {
+            "distance": 1.0,
+            "surface": 1.0,
+            "style": 1.0,
+        }
+        if contextual_opposing_parent is not None:
+            aptitude_cfg = config.get("aptitude_inheritance") or {}
+            surface_cfg = aptitude_cfg.get("surface") or {}
+            surface_rank = int((ace["target_aptitudes"].get("surface") or {}).get("rank") or 7)
+            surface_minimum = int(surface_cfg.get("minimum_initial_rank", 6))
+            surface_target = (
+                0 if surface_rank >= 7
+                else (
+                    1 if surface_rank >= surface_minimum
+                    else _initial_star_target(surface_rank, surface_minimum)
+                )
+            )
+            known_surface = _matching_factor_stars(
+                contextual_opposing_parent, SURFACE_FACTOR_NAMES[surface]
+            )
+            remaining_surface = max(0, surface_target - known_surface)
+            surface_ratio = (
+                remaining_surface / max(1.0, float(surface_target))
+                if surface_target > 0 else 0.0
+            )
+            distance_target = max(
+                1,
+                int(
+                    ((config.get("uma_moe_parent_search") or {}).get("retrieval") or {}).get(
+                        "contextual_distance_star_target", 6
+                    )
+                ),
+            )
+            known_distance = _matching_factor_stars(
+                contextual_opposing_parent, DISTANCE_FACTOR_NAMES[distance]
+            )
+            distance_ratio = max(0.0, min(1.0, (distance_target - known_distance) / distance_target))
+            contextual_pink_need = {
+                "distance": 0.65 + 0.75 * distance_ratio,
+                "surface": 0.20 + 1.20 * max(0.0, min(1.0, surface_ratio)),
+                "style": 0.55,
+            }
+
         def eligible(member: dict[str, Any]) -> bool:
             return _valid_grandparent_for_target_parent(
                 member, target_parent_chara
@@ -1839,12 +3092,30 @@ def rank_online_grandparent_pairs(
             members = [(member, "grandparent", "candidate")]
             triple_raw = resolver.triple(ace_chara, target_parent_chara, int(member.get("chara_id") or 0))
             blue, _ = _blue_score(members, distance, config)
-            pink, _ = _future_grandparent_pink_score(
+            pink, pink_detail = _future_grandparent_pink_score(
                 members, ace, surface, distance, style, config
             )
-            white, _ = _future_grandparent_white_score(
+            white, white_detail = _future_grandparent_white_score(
                 members, weight_lookup, config, race_skills
             )
+            if contextual_mode:
+                pink_raw = 0.0
+                for factor in pink_detail.get("factors") or []:
+                    dimension = factor.get("matched_dimension")
+                    pink_raw += float(factor.get("contribution") or 0.0) * float(
+                        contextual_pink_need.get(str(dimension), 0.0)
+                    )
+                pink = min(100.0, 100.0 * pink_raw)
+
+                white_raw = 0.0
+                for factor in white_detail.get("top_factors") or []:
+                    factor_name = str(factor.get("source_factor_name") or factor.get("name") or "")
+                    coverage = max(0.0, float(contextual_white_coverage.get(factor_name, 0.0)))
+                    white_raw += float(factor.get("contribution") or 0.0) / (
+                        1.0 + contextual_white_decay * coverage
+                    )
+                white_scale = max(0.000001, float(white_detail.get("scale") or 1.0))
+                white = 100.0 * (1.0 - math.exp(-white_raw / white_scale))
             white_generation, _ = _white_generation_support_score(_lineage_members(member), weight_lookup, config)
             unique, _ = _unique_score(members, config, "future_grandparent")
             g1_count = len(_member_g1(member))
@@ -1857,7 +3128,7 @@ def rank_online_grandparent_pairs(
                 "g1_potential": _affinity_score(g1_count, g1_thresholds),
                 "unique": unique,
             }
-            breakdown = _score_breakdown(components, preselection_weights)
+            breakdown = _score_breakdown(components, effective_preselection_weights)
             return {
                 "member": member,
                 "score": float(breakdown["total"]),
@@ -1877,7 +3148,8 @@ def rank_online_grandparent_pairs(
                 raise UmaMoeError(
                     "Aucun GP local valide après exclusion du parent à produire."
                 )
-            log(f"Préclassement de {len(local_eligible)} GP locaux et {len(remote_eligible)} GP distants…")
+            second_pool_label = "GP locaux (2ᵉ pool)" if local_pair_mode else "GP distants"
+            log(f"Préclassement de {len(local_eligible)} GP locaux et {len(remote_eligible)} {second_pool_label}…")
             local_pre = sorted((individual_score(member) for member in local_eligible), key=lambda row: row["score"], reverse=True)
             remote_pre = sorted((individual_score(member) for member in remote_eligible), key=lambda row: row["score"], reverse=True)
             selected_locals = [row["member"] for row in local_pre[: max(1, min(int(local_pool_size), 250))]]
@@ -1897,8 +3169,9 @@ def rank_online_grandparent_pairs(
             pair_mode = "fixed_local_gp"
 
         log(
-            f"Comparaison exhaustive : {len(selected_locals)} locaux × {len(selected_remotes)} distants "
-            f"(jusqu’à {len(selected_locals) * len(selected_remotes)} paires avant exclusions)."
+            f"Comparaison exhaustive : {len(selected_locals)} locaux × {len(selected_remotes)} "
+            + ("locaux (2ᵉ pool) " if local_pair_mode else "distants ")
+            + f"(jusqu’à {len(selected_locals) * len(selected_remotes)} paires avant exclusions)."
         )
 
         def evaluate_pair(gp1: dict[str, Any], gp2: dict[str, Any], *, detailed: bool) -> dict[str, Any]:
@@ -1964,9 +3237,56 @@ def rank_online_grandparent_pairs(
                 "blue": blue,
                 "unique": unique,
             }
+            # In contextual mode `components` below gets reassigned to the
+            # parent_pair engine's own component keys (distance_s,
+            # surface_aptitude, ...) for ranking purposes, which do not
+            # include "affinity"/"g1_potential". Keep this snapshot so the
+            # future-grandparent's own diagnostic sub-scores stay available
+            # for the component_details block further down, even though
+            # that block is fully replaced by contextual_pair's own detail
+            # a few lines later when contextual mode is active.
+            diagnostic_components = components
             breakdown = _score_breakdown(components, mode_weights)
+            contextual_pair: dict[str, Any] | None = None
+            projected_parent: dict[str, Any] | None = None
+            projected_g1_plan: dict[str, Any] | None = None
+            if contextual_opposing_parent is not None:
+                assert opposing_branch is not None
+                projected_parent, projected_g1_plan = _project_future_parent_branch(
+                    target_parent,
+                    gp1,
+                    gp2,
+                    contextual_opposing_parent,
+                    planned_g1_budget=planned_g1_budget,
+                    single_g1_weight=single_g1_weight,
+                )
+                contextual_pair = evaluate_parent_pair(
+                    resolver,
+                    ace,
+                    projected_parent,
+                    contextual_opposing_parent,
+                    surface=surface,
+                    distance=distance,
+                    style=style,
+                    weight_lookup=weight_lookup,
+                    race_skills=race_skills,
+                    config=config,
+                    parent_2_branch=opposing_branch,
+                    g1_bonus_value=g1_bonus_value,
+                    affinity_thresholds=(
+                        (config.get("affinity") or {}).get("parent_pair_thresholds")
+                        or [[0, 0], [151, 100]]
+                    ),
+                )
+                components = dict(contextual_pair["components"])
+                # Keep generation support visible as a non-scoring diagnostic.
+                components["white_generation"] = white_generation
+                breakdown = dict(contextual_pair["score_breakdown"])
             row: dict[str, Any] = {
-                "score": float(breakdown["total"]),
+                "score": float(
+                    contextual_pair["score"]
+                    if contextual_pair is not None else breakdown["total"]
+                ),
                 "local_trained_id": gp1.get("trained_chara_id"),
                 "local_card_name": gp1.get("card_name"),
                 "local_rank_score": gp1.get("rank_score"),
@@ -1980,7 +3300,22 @@ def rank_online_grandparent_pairs(
                 "components": components,
                 "score_breakdown": breakdown,
                 "candidate_g1_count": len(_member_g1(gp2)),
+                "scoring_context": (
+                    "fixed_opposing_parent_exact_pair"
+                    if contextual_pair is not None
+                    else "generic_future_grandparent"
+                ),
             }
+            if contextual_pair is not None:
+                row.update({
+                    "affinity": contextual_pair["affinity"],
+                    "distance_viability": contextual_pair["distance_viability"],
+                    "distance_s_summary": contextual_pair["distance_s_summary"],
+                    "surface_viability": contextual_pair["surface_viability"],
+                    "surface_aptitude_summary": contextual_pair["surface_aptitude_summary"],
+                    "aptitude_summaries": contextual_pair["aptitude_summaries"],
+                    "projected_g1_plan": projected_g1_plan,
+                })
             if detailed:
                 row.update({
                     "candidate": _identity(gp2),
@@ -1990,7 +3325,7 @@ def rank_online_grandparent_pairs(
                         "affinity": {
                             "raw_base": final_parent_affinity["base"],
                             "thresholds": final_thresholds,
-                            "score": components["affinity"],
+                            "score": diagnostic_components["affinity"],
                             "formula": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2)",
                         },
                         "g1_potential": {
@@ -2000,7 +3335,7 @@ def rank_online_grandparent_pairs(
                                 * 2
                                 * final_parent_affinity["g1_bonus_per_link"]
                             ),
-                            "score": components["g1_potential"],
+                            "score": diagnostic_components["g1_potential"],
                             "formula": "100 × planned G1 bonus / maximum double-link bonus for the configured race budget",
                         },
                         "blue": blue_detail,
@@ -2019,11 +3354,35 @@ def rank_online_grandparent_pairs(
                         "unique": unique_detail,
                     },
                 })
+                if contextual_pair is not None:
+                    row.update({
+                        "opposing_parent": _identity(contextual_opposing_parent),
+                        "projected_future_parent": _identity(projected_parent or {}),
+                        "contextual_final_pair": {
+                            "affinity": contextual_pair["affinity"],
+                            "components": contextual_pair["components"],
+                            "score_breakdown": contextual_pair["score_breakdown"],
+                            "distance_viability": contextual_pair["distance_viability"],
+                            "distance_s_summary": contextual_pair["distance_s_summary"],
+                            "surface_viability": contextual_pair["surface_viability"],
+                            "surface_aptitude_summary": contextual_pair["surface_aptitude_summary"],
+                            "aptitude_summaries": contextual_pair["aptitude_summaries"],
+                        },
+                        "component_details": {
+                            **contextual_pair["component_details"],
+                            "white_generation": {
+                                **white_generation_detail,
+                                "included_in_weighted_score": False,
+                                "evaluation_context": "intermediate_run_that_creates_target_parent",
+                            },
+                        },
+                    })
             return row
 
         summaries: list[dict[str, Any]] = []
         total_possible = len(selected_locals) * len(selected_remotes)
         processed = 0
+        evaluated_local_pairs: set[frozenset[int]] = set()
         for gp1 in selected_locals:
             gp1_chara = int(gp1.get("chara_id") or 0)
             for gp2 in selected_remotes:
@@ -2031,18 +3390,31 @@ def rank_online_grandparent_pairs(
                 gp2_chara = int(gp2.get("chara_id") or 0)
                 if gp1_chara <= 0 or gp2_chara <= 0 or gp1_chara == gp2_chara:
                     continue
+                if local_pair_mode:
+                    # Both pools draw from the same veterans: (A, B) and (B, A)
+                    # are the same unordered pair, evaluate it once.
+                    pair_key = frozenset((
+                        int(gp1.get("trained_chara_id") or 0),
+                        int(gp2.get("trained_chara_id") or 0),
+                    ))
+                    if len(pair_key) < 2 or pair_key in evaluated_local_pairs:
+                        continue
+                    evaluated_local_pairs.add(pair_key)
                 summaries.append(evaluate_pair(gp1, gp2, detailed=False))
             if exhaustive_pairs and (processed % max(1, len(selected_remotes) * 10) == 0 or processed == total_possible):
                 log(f"Paires évaluées : {processed}/{total_possible} — {len(summaries)} valides.")
 
-        summaries.sort(
-            key=lambda row: (
-                row["score"],
-                row["final_parent_affinity"]["potential_total"],
-                row["production_affinity"]["scored_value"],
-            ),
-            reverse=True,
-        )
+        if contextual_mode:
+            summaries.sort(key=parent_pair_sort_key, reverse=True)
+        else:
+            summaries.sort(
+                key=lambda row: (
+                    row["score"],
+                    row["final_parent_affinity"]["potential_total"],
+                    row["production_affinity"]["scored_value"],
+                ),
+                reverse=True,
+            )
         detail_count = max(1, min(int(top_n), 500))
         top: list[dict[str, Any]] = []
         for summary in summaries[:detail_count]:
@@ -2052,16 +3424,34 @@ def rank_online_grandparent_pairs(
 
     generated = datetime.now(timezone.utc).isoformat()
     raw_response_path = output_dir / "uma_moe_raw_response.json"
-    raw_response_path.write_text(json.dumps(raw_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    raw_response_path.write_text(
+        json.dumps(
+            raw_payload
+            if raw_payload is not None
+            else {"local_pair_mode": True, "note": "No uma.moe request: both pools come from local veterans."},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     rankings_json_path = output_dir / "uma_moe_grandparent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 6,
+            "schema_version": 7,
             "generated_at_utc": generated,
-            "source": "uma.moe public API or imported API response",
+            "source": (
+                "local veterans (both pools)"
+                if local_pair_mode
+                else "uma.moe public API or imported API response"
+            ),
             "api_operation": api_operation,
             "weight_source": weight_source,
-            "pair_mode": pair_mode,
+            "pair_mode": (f"local_{pair_mode}" if local_pair_mode else pair_mode),
+            "scoring_context": (
+                "fixed_opposing_parent_exact_pair"
+                if contextual_mode else "generic_future_grandparent"
+            ),
             "local_pool_count": len(selected_locals),
             "remote_pool_count": len(selected_remotes),
             "evaluated_pair_count": len(summaries),
@@ -2077,7 +3467,9 @@ def rank_online_grandparent_pairs(
             "normalization": normalization_diag,
             "condition_diagnostics": condition_diag,
             "future_grandparent_factor_model": {
-                "meaning": "Direct pink/white/blue/unique factors on selected GP1/GP2 use the simple future-grandparent quality model. No Inspiration proc probability, initial aptitude or P(S) is calculated. Their current parents contribute only to separate white-generation support for the intermediate parent-production run.",
+                "meaning": (
+                    "With a fixed opposing parent, GP1/GP2 are inserted below a projected empty-factor future parent and scored by the canonical six-member final-pair engine. Without one, direct factors keep the simple future-grandparent quality model. Current GP ancestors only contribute to separate white-generation support."
+                ),
                 "parameters": config.get("future_grandparent_heuristics") or {},
                 "saturation": config.get("white_saturation") or {},
             },
@@ -2085,15 +3477,21 @@ def rank_online_grandparent_pairs(
         },
         "ace": ace,
         "target_parent": target_parent,
+        "opposing_parent": (
+            _identity(contextual_opposing_parent)
+            if contextual_opposing_parent is not None else None
+        ),
         "fixed_grandparent": (_identity(fixed) if fixed is not None and not exhaustive_pairs else None),
         "scoring": {
-            "weights": mode_weights,
-            "preselection_weights": preselection_weights,
-            "weight_source": "mode_weights.future_grandparent",
+            "weights": pair_weights if contextual_mode else mode_weights,
+            "preselection_weights": effective_preselection_weights,
+            "generic_preselection_weights": preselection_weights,
+            "weight_source": (
+                "mode_weights.parent_pair"
+                if contextual_mode else "mode_weights.future_grandparent"
+            ),
             "logic": (
-                "The same future-grandparent profile drives individual preselection and final uma.moe pair ranking. "
-                "Base character affinity and planned G1 support are separate components; production-run compatibility "
-                "is retained as a diagnostic/tie-breaker and is not a hidden weighted component."
+                "When an opposing parent is fixed, the final ranking is the marginal value of GP1+GP2 in the projected complete lineage: exact individual proc affinities, cumulative white probabilities, aptitude viability, blues, uniques and all five visible G1 links. The future parent's own unknown Sparks stay empty. Without an opposing parent, the generic future-GP heuristic remains unchanged."
             ),
         },
         "results": top,
@@ -2109,9 +3507,16 @@ def rank_online_grandparent_pairs(
         common_races = final_aff.get("common_gp_g1") or []
         local_only_races = final_aff.get("fixed_only_g1") or []
         remote_only_races = final_aff.get("candidate_only_g1") or []
+        distance_summary = row.get("distance_s_summary") or {}
+        surface_summary = row.get("surface_aptitude_summary") or {}
         csv_rows.append({
             "rank": rank,
             "score": round(row["score"], 3),
+            "scoring_context": row.get("scoring_context"),
+            "opposing_parent": (
+                contextual_opposing_parent.get("card_name")
+                if contextual_opposing_parent is not None else ""
+            ),
             "local_id": gp1.get("trained_chara_id"),
             "local_candidate": gp1.get("card_name"),
             "local_rank_score": gp1.get("rank_score"),
@@ -2126,7 +3531,7 @@ def rank_online_grandparent_pairs(
             "single_g1_weight": final_aff["single_g1_weight"],
             "final_parent_potential": round(float(final_aff["potential_total"]), 3),
             "affinity_component": round(row["components"]["affinity"], 2),
-            "g1_potential_component": round(row["components"]["g1_potential"], 2),
+            "g1_potential_component": round(float(row["components"].get("g1_potential") or 0.0), 2),
             "production_run_affinity": row["production_affinity"]["total"],
             "production_run_scored_value": round(float(row["production_affinity"]["scored_value"]), 3),
             "common_gp_g1_count": final_aff["common_g1_count"],
@@ -2141,6 +3546,14 @@ def rank_online_grandparent_pairs(
             "white_generation": round(row["components"]["white_generation"], 2),
             "unique": round(row["components"]["unique"], 2),
             "candidate_g1": row["candidate_g1_count"],
+            "final_pair_affinity_total": (row.get("affinity") or {}).get("total"),
+            "projected_parent_g1_count": (row.get("projected_g1_plan") or {}).get("selected_count"),
+            "distance_status": (row.get("distance_viability") or {}).get("key"),
+            "distance_stars": distance_summary.get("total_stars"),
+            "distance_probability_s": round(100.0 * float(distance_summary.get("probability_reach_s") or 0.0), 3),
+            "surface_status": (row.get("surface_viability") or {}).get("key"),
+            "surface_stars": surface_summary.get("total_stars"),
+            "surface_probability_a": round(100.0 * float(surface_summary.get("probability_reach_a") or 0.0), 3),
             "updated_at": online.get("updated_at"),
             "follow_status": online.get("follow_status"),
         })
@@ -2159,11 +3572,23 @@ def rank_online_grandparent_pairs(
             "selected_remote_pool_count": len(selected_remotes),
             "evaluated_pair_count": len(summaries),
             "top_count": len(top),
-            "pair_mode": pair_mode,
+            "pair_mode": (f"local_{pair_mode}" if local_pair_mode else pair_mode),
+            "scoring_context": (
+                "fixed_opposing_parent_exact_pair"
+                if contextual_mode else "generic_future_grandparent"
+            ),
+            "opposing_parent": (
+                _identity(contextual_opposing_parent)
+                if contextual_opposing_parent is not None else None
+            ),
             "scoring": {
-                "weight_source": "mode_weights.future_grandparent",
-                "weights": mode_weights,
-                "preselection_weights": preselection_weights,
+                "weight_source": (
+                    "mode_weights.parent_pair"
+                    if contextual_mode else "mode_weights.future_grandparent"
+                ),
+                "weights": pair_weights if contextual_mode else mode_weights,
+                "preselection_weights": effective_preselection_weights,
+                "generic_preselection_weights": preselection_weights,
                 "production_run_affinity_included_in_weighted_score": False,
             },
         }, ensure_ascii=False, indent=2) + "\n",
@@ -2178,12 +3603,20 @@ def rank_online_grandparent_pairs(
         result_count=len(summaries),
         top_results=tuple(top),
         fixed_grandparent=(_identity(fixed) if fixed is not None and not exhaustive_pairs else None),
-        pair_mode=pair_mode,
+        pair_mode=(f"local_{pair_mode}" if local_pair_mode else pair_mode),
         local_pool_count=len(selected_locals),
         remote_pool_count=len(selected_remotes),
         evaluated_pair_count=len(summaries),
         ace=ace,
         target_parent=target_parent,
+        opposing_parent=(
+            _identity(contextual_opposing_parent)
+            if contextual_opposing_parent is not None else None
+        ),
+        scoring_context=(
+            "fixed_opposing_parent_exact_pair"
+            if contextual_mode else "generic_future_grandparent"
+        ),
         api_operation=api_operation,
     )
 
@@ -2217,9 +3650,10 @@ def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "distance_status", "distance_tier", "distance_stars", "distance_carriers",
         "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met",
         "distance_initial_rank", "distance_probability_a", "distance_probability_s",
+        "surface_status", "surface_tier", "surface_stars", "surface_carriers",
         "surface_initial_rank", "surface_probability_a", "surface_probability_s",
         "style_initial_rank", "style_probability_a", "style_probability_s",
-        "affinity_component", "distance_s", "pink_other", "pink", "white", "race_scenario", "blue", "unique",
+        "affinity_component", "distance_s", "surface_aptitude", "pink_other", "pink", "white", "race_scenario", "blue", "unique",
         "updated_at", "follow_status",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as stream:
@@ -2227,6 +3661,138 @@ def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow({field: row.get(field, "") for field in fields})
+
+
+def _select_diverse_parent_branch_pool(
+    rows: list[dict[str, Any]],
+    *,
+    pool_size: int,
+    ace_target_aptitudes: dict[str, Any],
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Reserve preselection space for complementary aptitude branches."""
+    limit = max(1, int(pool_size))
+    if len(rows) <= limit:
+        return list(rows), {
+            "requested": limit,
+            "available": len(rows),
+            "selected": len(rows),
+            "strategy": "all_available",
+        }
+
+    parent_cfg = config.get("uma_moe_parent_search") or {}
+    selection_cfg = parent_cfg.get("preselection") or {}
+    aptitude_cfg = config.get("aptitude_inheritance") or {}
+    surface_cfg = aptitude_cfg.get("surface") or {}
+    surface_rank = int(
+        ((ace_target_aptitudes.get("surface") or {}).get("rank")) or 7
+    )
+    minimum_surface_rank = int(surface_cfg.get("minimum_initial_rank", 6))
+    preferred_surface_rank = int(surface_cfg.get("preferred_initial_rank", 7))
+    if surface_rank < minimum_surface_rank:
+        surface_share = float(
+            selection_cfg.get("surface_share_below_minimum", 0.40)
+        )
+    elif surface_rank < preferred_surface_rank:
+        surface_share = float(
+            selection_cfg.get("surface_share_at_minimum", 0.20)
+        )
+    else:
+        surface_share = float(
+            selection_cfg.get("surface_share_at_preferred", 0.0)
+        )
+    distance_share = max(
+        0.0, float(selection_cfg.get("distance_share", 0.35))
+    )
+    surface_share = max(0.0, surface_share)
+    if distance_share + surface_share > 0.85:
+        scale = 0.85 / max(0.000001, distance_share + surface_share)
+        distance_share *= scale
+        surface_share *= scale
+    overall_share = max(0.15, 1.0 - distance_share - surface_share)
+    share_total = overall_share + distance_share + surface_share
+    quotas = {
+        "overall": max(1, int(round(limit * overall_share / share_total))),
+        "distance": int(round(limit * distance_share / share_total)),
+        "surface": int(round(limit * surface_share / share_total)),
+    }
+    while sum(quotas.values()) > limit:
+        key = max(quotas, key=lambda item: quotas[item])
+        if key == "overall" and quotas[key] <= 1:
+            break
+        quotas[key] -= 1
+    while sum(quotas.values()) < limit:
+        quotas["overall"] += 1
+
+    def dimension_key(
+        row: dict[str, Any], key: str
+    ) -> tuple[float, float, float, float]:
+        summary = (
+            row.get("distance_s_summary")
+            if key == "distance"
+            else row.get("surface_aptitude_summary")
+        ) or {}
+        component = (row.get("components") or {}).get(
+            "distance_s" if key == "distance" else "surface_aptitude"
+        ) or 0.0
+        return (
+            float(summary.get("total_stars") or 0),
+            float(summary.get("probability_any_proc") or 0),
+            float(component),
+            float(row.get("score") or 0),
+        )
+
+    rankings = {
+        "overall": sorted(
+            rows,
+            key=lambda row: (
+                float(row.get("score") or 0),
+                float((row.get("affinity") or {}).get("total") or 0),
+            ),
+            reverse=True,
+        ),
+        "distance": sorted(
+            rows, key=lambda row: dimension_key(row, "distance"), reverse=True
+        ),
+        "surface": sorted(
+            rows, key=lambda row: dimension_key(row, "surface"), reverse=True
+        ),
+    }
+    selected: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    selected_by_strategy: dict[str, int] = {}
+
+    def take(strategy: str, count: int) -> None:
+        added = 0
+        for row in rankings[strategy]:
+            identity = id(row.get("veteran") or row)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            selected.append(row)
+            added += 1
+            if added >= count or len(selected) >= limit:
+                break
+        selected_by_strategy[strategy] = (
+            selected_by_strategy.get(strategy, 0) + added
+        )
+
+    take("overall", quotas["overall"])
+    take("distance", quotas["distance"])
+    take("surface", quotas["surface"])
+    if len(selected) < limit:
+        take("overall", limit - len(selected))
+    return selected[:limit], {
+        "requested": limit,
+        "available": len(rows),
+        "selected": min(limit, len(selected)),
+        "strategy": "overall_plus_reserved_aptitude_cohorts",
+        "quotas": quotas,
+        "selected_by_strategy": selected_by_strategy,
+        "surface_base_rank": surface_rank,
+        "surface_minimum_rank": minimum_surface_rank,
+        "surface_preferred_rank": preferred_surface_rank,
+    }
 
 
 def rank_online_parent_pairs(
@@ -2257,6 +3823,8 @@ def rank_online_parent_pairs(
     allowed_parent_card_ids: Iterable[int] | None = None,
     excluded_parent_card_ids: Iterable[int] | None = None,
     effective_uql: str = "",
+    lineage_blue_filter: tuple[str, int] | None = None,
+    lineage_pink_filter: tuple[str, int] | None = None,
     logger: Callable[[str], None] | None = None,
 ) -> OnlineParentSearchResult:
     """Rank uma.moe parents paired with a local parent for the selected Ace.
@@ -2312,7 +3880,10 @@ def rank_online_parent_pairs(
     finally:
         normalizer.close()
     if not online_candidates:
-        raise UmaMoeError("La réponse uma.moe ne contient aucun parent avec Main/factors exploitables.")
+        raise UmaMoeError(
+            "La réponse uma.moe ne contient aucun parent avec Main/factors exploitables."
+            + _empty_candidates_diagnostic(_extract_record_list(raw_payload))
+        )
 
     operation_uql = str((api_operation or {}).get("effective_uql") or effective_uql or "")
     generated_meta = (api_operation or {}).get("generated_uql_metadata") or {}
@@ -2349,6 +3920,19 @@ def rank_online_parent_pairs(
         normalization_diag["pre_filter_count"] = unfiltered_online_count
         normalization_diag["post_filter_count"] = unfiltered_online_count
     log(f"uma.moe : {len(online_candidates)} branches parent distantes normalisées.")
+    online_candidates = _apply_lineage_factor_filters(
+        online_candidates, lineage_blue_filter, lineage_pink_filter, log
+    )
+    if not online_candidates:
+        raise UmaMoeError(
+            "Aucun candidat ne respecte les filtres lignée demandés. "
+            "Assouplis le minimum d'étoiles ou augmente la limite de récupération API."
+        )
+    normalization_diag["lineage_filters"] = {
+        "blue": list(lineage_blue_filter) if lineage_blue_filter else None,
+        "pink": list(lineage_pink_filter) if lineage_pink_filter else None,
+        "post_lineage_filter_count": len(online_candidates),
+    }
 
     resolver = AffinityResolver(master_path)
     try:
@@ -2471,13 +4055,25 @@ def rank_online_parent_pairs(
                 key=lambda row: (row["score"], row["affinity"]["total"]),
                 reverse=True,
             )
+            selected_local_rows, local_preselection_diag = _select_diverse_parent_branch_pool(
+                local_pre,
+                pool_size=max(1, min(int(local_pool_size), 250)),
+                ace_target_aptitudes=ace["target_aptitudes"],
+                config=config,
+            )
+            selected_remote_rows, remote_preselection_diag = _select_diverse_parent_branch_pool(
+                remote_pre,
+                pool_size=max(1, min(int(remote_pool_size), 500)),
+                ace_target_aptitudes=ace["target_aptitudes"],
+                config=config,
+            )
             selected_locals = [
                 row["veteran"]
-                for row in local_pre[: max(1, min(int(local_pool_size), 250))]
+                for row in selected_local_rows
             ]
             selected_remotes = [
                 row["veteran"]
-                for row in remote_pre[: max(1, min(int(remote_pool_size), 500))]
+                for row in selected_remote_rows
             ]
             pair_mode = "exhaustive_parent_top_pools"
         else:
@@ -2494,6 +4090,14 @@ def rank_online_parent_pairs(
             selected_locals = [fixed]
             selected_remotes = remote_eligible
             branch_score(fixed, "local")
+            local_preselection_diag = {
+                "strategy": "fixed_local_parent",
+                "selected": 1,
+            }
+            remote_preselection_diag = {
+                "strategy": "all_remote_with_fixed_parent",
+                "selected": len(selected_remotes),
+            }
             pair_mode = "fixed_local_parent"
 
         log(
@@ -2535,6 +4139,9 @@ def rank_online_parent_pairs(
                 "score_breakdown": pair["score_breakdown"],
                 "distance_viability": pair["distance_viability"],
                 "distance_s_summary": pair["distance_s_summary"],
+                "surface_viability": pair["surface_viability"],
+                "surface_aptitude_summary": pair["surface_aptitude_summary"],
+                "aptitude_summaries": pair["aptitude_summaries"],
                 "_local_parent": local_parent,
                 "_remote_parent": remote_parent,
             }
@@ -2550,6 +4157,8 @@ def rank_online_parent_pairs(
                         "score_breakdown": local_branch["score_breakdown"],
                         "distance_viability": local_branch["distance_viability"],
                         "distance_s_summary": local_branch["distance_s_summary"],
+                        "surface_viability": local_branch["surface_viability"],
+                        "surface_aptitude_summary": local_branch["surface_aptitude_summary"],
                     },
                     "remote_branch": {
                         "score": remote_branch["score"],
@@ -2558,6 +4167,8 @@ def rank_online_parent_pairs(
                         "score_breakdown": remote_branch["score_breakdown"],
                         "distance_viability": remote_branch["distance_viability"],
                         "distance_s_summary": remote_branch["distance_s_summary"],
+                        "surface_viability": remote_branch["surface_viability"],
+                        "surface_aptitude_summary": remote_branch["surface_aptitude_summary"],
                     },
                 })
                 row.pop("_local_parent", None)
@@ -2603,7 +4214,7 @@ def rank_online_parent_pairs(
     rankings_json_path = output_dir / "uma_moe_parent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 2,
+            "schema_version": 3,
             "generated_at_utc": generated,
             "source": "uma.moe public API or imported API response",
             "search_mode": "parent_for_ace",
@@ -2634,6 +4245,10 @@ def rank_online_parent_pairs(
                 "local_incomplete_excluded": incomplete_local_count,
                 "required_visible_members_per_pair": 6,
             },
+            "branch_preselection": {
+                "local": local_preselection_diag,
+                "remote": remote_preselection_diag,
+            },
             "condition_diagnostics": condition_diag,
             "scoring_engine": "parent_optimizer.evaluate_parent_pair",
             "lineage_model": (
@@ -2642,10 +4257,10 @@ def rank_online_parent_pairs(
                 "and all factors from both parents plus their four grandparents."
             ),
             "ranking_order": (
-                "Distance-S viability tier first, then weighted pair score, white score, blue score "
-                "and raw Distance-S probability as a tie-breaker. P(S) is already converted through "
-                "the configurable saturating utility curve. Surface/style pinks cannot compensate "
-                "for a lower viability tier."
+                "Distance-S viability tier first, then the configured target-surface minimum gate, "
+                "then weighted pair score, white score, blue score, preferred-surface probability "
+                "and raw Distance-S probability as tie-breakers. Surface A remains a weighted soft "
+                "preference; target-surface or style Sparks cannot compensate a lower distance tier."
             ),
             "important": (
                 "Online records can become stale; verify follow availability and the profile "
@@ -2661,8 +4276,10 @@ def rank_online_parent_pairs(
             "logic": (
                 "Remote Main records are normalized as complete parent branches, then passed "
                 "unchanged to the same scorer as local parent pairs. Final ranking is lexicographic: "
-                "Distance-S viability before weighted quality; raw P(S) no longer overrides better "
-                "white/blue lineages inside the same viability tier."
+                "Distance-S viability before weighted quality. Target-surface aptitude is a separate "
+                "secondary minimum gate plus weighted component (B minimum, A preferred), so strong "
+                "surrounding Sparks can compensate B versus A while surface never outranks distance. Raw P(S) no longer "
+                "overrides better white/blue lineages inside the same distance tier."
             ),
         },
         "results": top,
@@ -2684,6 +4301,8 @@ def rank_online_parent_pairs(
         components = row["components"]
         distance_summary = row.get("distance_s_summary") or {}
         viability = row.get("distance_viability") or {}
+        surface_summary = row.get("surface_aptitude_summary") or {}
+        surface_viability = row.get("surface_viability") or {}
         csv_rows.append({
             "rank": rank,
             "score": round(float(row["score"]), 3),
@@ -2717,14 +4336,19 @@ def rank_online_parent_pairs(
             "distance_initial_rank": distance_summary.get("initial_rank_label"),
             "distance_probability_a": round(100.0 * float(distance_summary.get("probability_reach_a") or 0), 3),
             "distance_probability_s": round(100.0 * float(distance_summary.get("probability_reach_s") or 0), 3),
-            "surface_initial_rank": ((row.get("aptitude_summaries") or {}).get("surface") or {}).get("initial_rank_label"),
-            "surface_probability_a": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("surface") or {}).get("probability_reach_a") or 0)), 3),
-            "surface_probability_s": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("surface") or {}).get("probability_reach_s") or 0)), 3),
+            "surface_status": surface_viability.get("key"),
+            "surface_tier": surface_viability.get("tier"),
+            "surface_stars": surface_summary.get("total_stars"),
+            "surface_carriers": surface_summary.get("carrier_count"),
+            "surface_initial_rank": surface_summary.get("initial_rank_label"),
+            "surface_probability_a": round(100.0 * float(surface_summary.get("probability_reach_a") or 0), 3),
+            "surface_probability_s": round(100.0 * float(surface_summary.get("probability_reach_s") or 0), 3),
             "style_initial_rank": ((row.get("aptitude_summaries") or {}).get("style") or {}).get("initial_rank_label"),
             "style_probability_a": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("style") or {}).get("probability_reach_a") or 0)), 3),
             "style_probability_s": round(100.0 * float((((row.get("aptitude_summaries") or {}).get("style") or {}).get("probability_reach_s") or 0)), 3),
             "affinity_component": round(float(components.get("affinity") or 0), 2),
             "distance_s": round(float(components.get("distance_s") or 0), 2),
+            "surface_aptitude": round(float(components.get("surface_aptitude") or 0), 2),
             "pink_other": round(float(components.get("pink_other") or 0), 2),
             "pink": round(float(components.get("pink") or 0), 2),
             "white": round(float(components.get("white_skill") or 0), 2),
@@ -2748,6 +4372,10 @@ def rank_online_parent_pairs(
                 "remote_incomplete_excluded": incomplete_remote_count,
                 "local_incomplete_excluded": incomplete_local_count,
                 "required_visible_members_per_pair": 6,
+            },
+            "branch_preselection": {
+                "local": local_preselection_diag,
+                "remote": remote_preselection_diag,
             },
             "input_remote_candidate_count": len(online_candidates),
             "eligible_remote_candidate_count": len(remote_eligible),

@@ -19,9 +19,11 @@ from scoring_config import (
 from uma_moe import (
     MAX_FETCH_CANDIDATES,
     UmaMoeApiClient,
+    _select_diverse_parent_branch_pool,
     _future_gp_pair_g1_score,
     _future_gp_preselection_weights,
     _future_gp_scoring_weights,
+    build_parent_retrieval_plan,
 )
 
 
@@ -37,13 +39,23 @@ class ScoringConfigTests(unittest.TestCase):
         self.assertEqual(default, effective)
         validate_scoring_config(effective)
 
+    def test_surface_cohort_toggle_is_a_boolean_setting(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["uma_moe_parent_search"]["retrieval"]["surface_cohort_enabled"] = False
+        validate_scoring_config(config)
+
+        config["uma_moe_parent_search"]["retrieval"]["surface_cohort_enabled"] = 0
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
     def test_default_parent_pair_weights_match_high_roll_profile(self) -> None:
         config = read_json_object(DEFAULT_SCORING)
         self.assertEqual(
             config["mode_weights"]["parent_pair"],
             {
                 "distance_s": 0.29,
-                "pink_other": 0.07,
+                "surface_aptitude": 0.05,
+                "pink_other": 0.02,
                 "white_skill": 0.35,
                 "race_scenario": 0.04,
                 "blue": 0.20,
@@ -146,14 +158,41 @@ class ScoringConfigTests(unittest.TestCase):
         self.assertEqual(migrated["mode_weights"]["parent_pair"]["white_skill"], 0.50)
         self.assertAlmostEqual(
             migrated["mode_weights"]["parent_branch"]["distance_s"]
+            + migrated["mode_weights"]["parent_branch"]["surface_aptitude"]
             + migrated["mode_weights"]["parent_branch"]["pink_other"],
             0.40,
         )
         self.assertAlmostEqual(
             migrated["mode_weights"]["parent_pair"]["distance_s"]
+            + migrated["mode_weights"]["parent_pair"]["surface_aptitude"]
             + migrated["mode_weights"]["parent_pair"]["pink_other"],
             0.40,
         )
+
+    def test_pre_v17_other_pink_override_is_split_without_changing_its_total(self) -> None:
+        default = read_json_object(DEFAULT_SCORING)
+        migrated = migrate_scoring_overrides(
+            default,
+            {
+                "schema_version": 16,
+                "mode_weights": {
+                    "parent_pair": {"pink_other": 0.14},
+                    "parent_branch": {"pink_other": 0.20},
+                },
+            },
+        )
+
+        pair = migrated["mode_weights"]["parent_pair"]
+        branch = migrated["mode_weights"]["parent_branch"]
+        self.assertAlmostEqual(pair["surface_aptitude"] + pair["pink_other"], 0.14)
+        self.assertAlmostEqual(branch["surface_aptitude"] + branch["pink_other"], 0.20)
+
+    def test_surface_rank_policy_is_validated(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["aptitude_inheritance"]["surface"]["minimum_initial_rank"] = 7
+        config["aptitude_inheritance"]["surface"]["preferred_initial_rank"] = 6
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
 
     def test_v35_future_gp_probability_weights_migrate_back_to_single_pink(self) -> None:
         default = read_json_object(DEFAULT_SCORING)
@@ -306,6 +345,101 @@ class UmaMoeFetchLimitTests(unittest.TestCase):
         self.assertEqual(len(payload["items"]), MAX_FETCH_CANDIDATES)
         self.assertEqual(operation["requested_candidates"], MAX_FETCH_CANDIDATES)
         self.assertEqual(len(client.requested_pages), 20)
+
+    def test_planned_parent_search_shares_the_same_global_2000_cap(self) -> None:
+        class PlannedClient(UmaMoeApiClient):
+            def __init__(self) -> None:
+                super().__init__("https://example.invalid/api")
+                self.budgets: list[int] = []
+
+            def search_many(  # type: ignore[override]
+                self, *, filters=None, desired_candidates=250, page_size=100, logger=None
+            ):
+                budget = int(desired_candidates)
+                self.budgets.append(budget)
+                marker = len(self.budgets) * 10000
+                items = [
+                    {"inheritance": {"inheritance_id": marker + index}}
+                    for index in range(budget)
+                ]
+                return {"items": items}, {
+                    "method": "GET",
+                    "path": "/api/v3/search",
+                    "requested_candidates": budget,
+                    "filters": filters or {},
+                }
+
+        client = PlannedClient()
+        plan = {
+            "enabled": True,
+            "cohorts": [
+                {"name": "distance", "kind": "distance", "share": 0.45, "filters": {"pink_sparks": [3201]}},
+                {"name": "surface", "kind": "surface", "share": 0.40, "filters": {"pink_sparks": [1105]}},
+                {"name": "broad", "kind": "broad", "share": 0.15, "filters": {}},
+            ],
+        }
+        payload, operation = client.search_many_planned(
+            retrieval_plan=plan,
+            desired_candidates=5000,
+            page_size=100,
+        )
+
+        self.assertEqual(client.budgets, [900, 800, 300])
+        self.assertEqual(sum(client.budgets), MAX_FETCH_CANDIDATES)
+        self.assertEqual(len(payload["items"]), MAX_FETCH_CANDIDATES)
+        self.assertTrue(operation["retrieval_plan_applied"])
+
+    def test_parent_retrieval_plan_targets_balanced_turf_f_branches(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        plan = build_parent_retrieval_plan(
+            ace_target_aptitudes={
+                "surface": {"rank": 2, "label": "F"},
+                "distance": {"rank": 7, "label": "A"},
+            },
+            surface="turf",
+            distance="mile",
+            config=config,
+            pink_group_ids={"Turf": 110, "Mile": 320},
+        )
+
+        cohorts = {row["kind"]: row for row in plan["cohorts"]}
+        self.assertEqual(plan["surface"]["final_pair_star_target"], 10)
+        self.assertEqual(plan["surface"]["balanced_remote_branch_minimum"], 5)
+        self.assertEqual(cohorts["surface"]["filters"]["pink_sparks"], [1105, 1106, 1107, 1108, 1109])
+        self.assertEqual(cohorts["distance"]["filters"]["pink_sparks"][0], 3201)
+        self.assertAlmostEqual(cohorts["distance"]["share"], 0.45)
+        self.assertAlmostEqual(cohorts["surface"]["share"], 0.40)
+        self.assertAlmostEqual(cohorts["broad"]["share"], 0.15)
+
+    def test_diverse_branch_pool_keeps_surface_rich_candidates(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        rows = []
+        for index in range(100):
+            surface_stars = index // 10
+            rows.append({
+                "veteran": {"trained_chara_id": index + 1},
+                "score": 100.0 - index,
+                "affinity": {"total": 100 - index},
+                "components": {"distance_s": 50, "surface_aptitude": surface_stars * 5},
+                "distance_s_summary": {"total_stars": 1, "probability_any_proc": 0.1},
+                "surface_aptitude_summary": {
+                    "total_stars": surface_stars,
+                    "probability_any_proc": surface_stars / 10,
+                },
+            })
+        selected, diagnostics = _select_diverse_parent_branch_pool(
+            rows,
+            pool_size=10,
+            ace_target_aptitudes={"surface": {"rank": 2}},
+            config=config,
+        )
+
+        self.assertEqual(len(selected), 10)
+        self.assertEqual(diagnostics["quotas"]["surface"], 4)
+        self.assertGreaterEqual(
+            max(row["surface_aptitude_summary"]["total_stars"] for row in selected),
+            9,
+        )
 
 
 if __name__ == "__main__":

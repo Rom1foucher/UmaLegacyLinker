@@ -1,4 +1,9 @@
-# White skill weights format
+# Generated White Skill weights format
+
+This document describes generated catalogue/diagnostic weights, not the custom
+JSON selected in the application. See
+[`SKILL_PRIORITIES.md`](SKILL_PRIORITIES.md) for the accepted full or partial
+`default_skill_priorities.json` override format.
 
 `white_skill_weights_template.json` is regenerated from the selected `master.mdb`.
 It contains one entry per white skill Spark group.

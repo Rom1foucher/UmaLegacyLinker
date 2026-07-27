@@ -25,7 +25,8 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - Transfer Helper with verdict/search filters and an embedded replacement diagnostic;
 - a two-pane scoring-profile editor with search, 51 gameplay subcategories, plain-language help for every setting, hover summaries and visible draft/default states;
 - unambiguous probability, threshold, multiplier and 100%-budget controls, including live donut charts for all nine genuinely normalised scoring groups;
-- individual White Skill priority-file management and the diagnostic Umalator importer;
+- live shared White Skill priority-file management across Lineage Optimisation,
+  uma.moe and Weights, plus the diagnostic Umalator importer;
 - live French/English switching;
 - cooperative cancellation of long-running tasks from the status bar;
 - a fixed opposing-parent context and offline local GP-pair ranking in the uma.moe search.

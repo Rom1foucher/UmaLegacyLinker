@@ -54,7 +54,7 @@ from ui_qt.components import (
     muted_label,
     section_label,
 )
-from ui_qt.context import AppContext
+from ui_qt.context import AppContext, LineageContextState
 from ui_qt.distribution_chart import DistributionDonut
 from ui_qt.curve_editor import CurveEditor
 from ui_qt.core import (
@@ -157,7 +157,9 @@ class WeightsPage(QWidget):
         active_layout.setContentsMargins(16, 11, 16, 11)
         active_copy = QVBoxLayout()
         self.active_check = QCheckBox("")
-        self.active_check.setChecked(context.store.get("use_custom_scoring", "0") in {"1", "true", "True"})
+        self.active_check.setChecked(
+            context.lineage_state().use_custom_scoring
+        )
         self.status = muted_label("")
         active_copy.addWidget(self.active_check)
         active_copy.addWidget(self.status)
@@ -442,9 +444,12 @@ class WeightsPage(QWidget):
         self.priorities = CollapsibleSection("")
         self.priority_status = muted_label("")
         self.priorities.content_layout.addWidget(self.priority_status)
+        self.priority_help = muted_label("")
+        self.priority_help.setWordWrap(True)
+        self.priorities.content_layout.addWidget(self.priority_help)
         priority_row = QHBoxLayout()
         self.priority_picker = PathPicker(
-            context.store.get("skill_priorities_path"),
+            context.lineage_state().skill_priorities_path,
             title="Choisir un profil de priorités white",
             file_filter="JSON (*.json);;Tous les fichiers (*)",
         )
@@ -488,6 +493,7 @@ class WeightsPage(QWidget):
         self.text_edit.textEdited.connect(self._editor_value_changed)
         self.structured_edit.textChanged.connect(self._editor_value_changed)
         self.curve_edit.valueChanged.connect(self._editor_value_changed)
+        self.context.lineage_changed.connect(self._sync_shared_settings)
         self.context.language_changed.connect(lambda _language: self.retranslate())
         self.reload()
         self.retranslate()
@@ -1486,8 +1492,7 @@ class WeightsPage(QWidget):
         self.active_check.blockSignals(True)
         self.active_check.setChecked(True)
         self.active_check.blockSignals(False)
-        self.context.store.update({"use_custom_scoring": "1"})
-        self.context.configuration_changed.emit()
+        self.context.update_lineage(use_custom_scoring=True)
         self._rebuild_rows()
         self._refresh_status()
         QMessageBox.information(self, self.context.t("Pondérations"), self.context.t("Profil enregistré et activé."))
@@ -1510,8 +1515,7 @@ class WeightsPage(QWidget):
                 self.active_check.blockSignals(False)
                 QMessageBox.warning(self, self.context.t("Profil de pondération invalide"), self.context.t(str(exc)))
                 return
-        self.context.store.update({"use_custom_scoring": "1" if active else "0"})
-        self.context.configuration_changed.emit()
+        self.context.update_lineage(use_custom_scoring=active)
         if committed_pending:
             self._rebuild_rows()
         self._refresh_status()
@@ -1571,9 +1575,20 @@ class WeightsPage(QWidget):
             return
 
     def _priority_changed(self, value: str) -> None:
-        self.context.store.update({"skill_priorities_path": value})
-        self.context.configuration_changed.emit()
+        self.context.update_lineage(skill_priorities_path=value)
         self._refresh_priority_status()
+
+    def _sync_shared_settings(
+        self, _state: LineageContextState | None = None
+    ) -> None:
+        # lineage_changed can be emitted recursively while a dependent choice
+        # is corrected, so always read the latest persisted source of truth.
+        state = self.context.lineage_state()
+        self.active_check.blockSignals(True)
+        self.active_check.setChecked(state.use_custom_scoring)
+        self.active_check.blockSignals(False)
+        self.priority_picker.set_text(state.skill_priorities_path)
+        self._refresh_status()
 
     def _refresh_priority_status(self) -> None:
         text = self.priority_picker.text()
@@ -1651,9 +1666,19 @@ class WeightsPage(QWidget):
             t("Le brouillon reste local jusqu’à « Enregistrer et activer ».")
         )
         self.priorities.set_title(t("Priorités individuelles des White Skills · avancé"))
+        self.priority_help.setText(
+            t(
+                "Même source que dans Optimisation de lignée et uma.moe. Un JSON partiel est fusionné avec default_skill_priorities.json avant chaque calcul."
+            )
+        )
         self.priority_picker.dialog_title = t("Choisir un profil de priorités white")
         self.priority_picker.file_filter = f"JSON (*.json);;{t('Tous les fichiers')} (*)"
         self.priority_picker.set_button_text(t("Parcourir…"))
+        self.priority_picker.setToolTip(
+            t(
+                "Ce fichier règle la valeur de chaque white skill par surface, distance et style. Un profil partiel est accepté : il est fusionné avec default_skill_priorities.json avant chaque calcul."
+            )
+        )
         self.create_priority_button.setText(t("Créer une copie modifiable"))
         self.open_priority_button.setText(t("Ouvrir"))
         self.reset_priority_button.setText(t("Revenir au défaut"))

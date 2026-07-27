@@ -20,6 +20,7 @@ from ui_qt.core import (
     VeteranOption,
     collection_size,
     load_rankings_payload,
+    materialize_skill_priorities,
     run_online_search,
     run_optimization,
     run_transfer_analysis,
@@ -54,6 +55,31 @@ from uma_moe import UmaMoeError
 
 
 class QtUiCoreTests(unittest.TestCase):
+    def test_partial_white_skill_priorities_merge_recursively(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            custom = root / "lucky_pace.json"
+            custom.write_text(
+                json.dumps(
+                    {
+                        "skills": {
+                            "groundwork": {
+                                "style": {"pace_chaser": 1.28}
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            active = materialize_skill_priorities(root, custom)
+            payload = read_json_object(active)
+
+        groundwork = payload["skills"]["groundwork"]
+        self.assertEqual(groundwork["style"]["pace_chaser"], 1.28)
+        self.assertEqual(groundwork["style"]["front_runner"], 1.25)
+        self.assertEqual(groundwork["base"], 0.1)
+        self.assertIn("tail_held_high", payload["skills"])
+
     def test_weight_editor_groups_settings_by_user_facing_role(self) -> None:
         cases = {
             ("mode_weights", "parent_pair", "blue"): "global",

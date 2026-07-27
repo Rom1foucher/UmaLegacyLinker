@@ -798,6 +798,53 @@ def validate_skill_priorities_config(config: dict[str, Any]) -> None:
                     raise ScoringConfigError(
                         f"skills.{skill_key}.{dimension}.{key} doit être positif ou nul."
                     )
+        profiles = skill.get("profiles")
+        if profiles is None:
+            continue
+        if not isinstance(profiles, list):
+            raise ScoringConfigError(
+                f"skills.{skill_key}.profiles doit être une liste JSON."
+            )
+        for index, rule in enumerate(profiles):
+            path = f"skills.{skill_key}.profiles[{index}]"
+            if not isinstance(rule, dict):
+                raise ScoringConfigError(f"{path} doit être un objet JSON.")
+            match = rule.get("match", {})
+            if not isinstance(match, dict):
+                raise ScoringConfigError(f"{path}.match doit être un objet JSON.")
+            unknown_dimensions = sorted(set(match) - set(allowed_dimensions))
+            if unknown_dimensions:
+                raise ScoringConfigError(
+                    f"{path}.match contient des dimensions inconnues : "
+                    + ", ".join(unknown_dimensions)
+                    + "."
+                )
+            for dimension, expected in match.items():
+                candidates = expected if isinstance(expected, list) else [expected]
+                if not candidates or any(
+                    not isinstance(candidate, str)
+                    or candidate not in allowed_dimensions[dimension]
+                    for candidate in candidates
+                ):
+                    allowed = ", ".join(sorted(allowed_dimensions[dimension]))
+                    raise ScoringConfigError(
+                        f"{path}.match.{dimension} doit utiliser : {allowed}."
+                    )
+            operation = str(rule.get("operation", "override")).lower()
+            if operation not in {"override", "floor", "cap", "multiplier", "bonus"}:
+                raise ScoringConfigError(
+                    f"{path}.operation doit être override, floor, cap, multiplier ou bonus."
+                )
+            value = rule.get("value", 0.0)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ScoringConfigError(f"{path}.value doit être numérique.")
+            if not math.isfinite(float(value)) or float(value) < 0:
+                raise ScoringConfigError(
+                    f"{path}.value doit être positif ou nul."
+                )
+            reason = rule.get("reason")
+            if reason is not None and not isinstance(reason, str):
+                raise ScoringConfigError(f"{path}.reason doit être une chaîne.")
 
 
 def load_effective_scoring_config(

@@ -28,10 +28,10 @@ def _stored_boolean(value: object) -> bool:
 
 @dataclass(frozen=True)
 class LineageContextState:
-    """Configuration shared by the local optimiser and uma.moe pages.
+    """Configuration shared by the lineage, uma.moe and Weights pages.
 
     The persisted key names predate the Qt interface and are intentionally kept
-    compatible.  Giving both pages one typed view of those keys prevents either
+    compatible. Giving every consumer one typed view of those keys prevents a
     page from silently keeping a stale copy until a calculation starts.
     """
 

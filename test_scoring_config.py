@@ -339,6 +339,30 @@ class ScoringConfigTests(unittest.TestCase):
     def test_default_white_skill_priorities_are_valid(self) -> None:
         validate_skill_priorities_config(read_json_object(DEFAULT_SKILL_PRIORITIES))
 
+    def test_white_skill_profile_rules_reject_silent_schema_typos(self) -> None:
+        config = {
+            "default_weight": 0.02,
+            "skills": {
+                "groundwork": {
+                    "base": 0.1,
+                    "profiles": [
+                        {
+                            "match": {"style": ["front_runner", "pace_chaser"]},
+                            "operation": "cap",
+                            "value": 0.5,
+                            "reason": "Valid example",
+                        }
+                    ],
+                }
+            },
+        }
+        validate_skill_priorities_config(config)
+        config["skills"]["groundwork"]["profiles"][0][
+            "operation"
+        ] = "multiply"
+        with self.assertRaises(ScoringConfigError):
+            validate_skill_priorities_config(config)
+
 
 class FakeUmaMoeClient(UmaMoeApiClient):
     def __init__(self) -> None:

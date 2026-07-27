@@ -295,7 +295,7 @@ class LineageRaceEditor(QWidget):
         t = self.context.t
         self.shared_hint.setText(
             t(
-                "Ces réglages sont partagés en temps réel entre Optimisation de lignée et uma.moe."
+                "Ces réglages sont partagés en temps réel entre Optimisation de lignée et uma.moe. Les options de scoring sont aussi synchronisées avec Pondérations."
             )
         )
         self.surface_label.setText(t("Surface"))
@@ -325,6 +325,11 @@ class LineageRaceEditor(QWidget):
         )
         self.course_picker.set_button_text(t("Parcourir…"))
         self.priority_picker.set_button_text(t("Parcourir…"))
+        self.priority_picker.setToolTip(
+            t(
+                "Ce fichier règle la valeur de chaque white skill par surface, distance et style. Un profil partiel est accepté : il est fusionné avec default_skill_priorities.json avant chaque calcul."
+            )
+        )
         self.sync_from_context()
 
     def sync_from_context(

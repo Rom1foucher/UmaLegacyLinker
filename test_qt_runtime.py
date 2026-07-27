@@ -269,6 +269,47 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             _dispose_widget(optimizer, self.application)
             _dispose_widget(online, self.application)
 
+    def test_weights_and_lineage_share_scoring_sources_bidirectionally(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.lineage_settings import LineageRaceEditor
+        from ui_qt.pages_weights import WeightsPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first_profile = root / "first-priorities.json"
+            second_profile = root / "second-priorities.json"
+            first_profile.write_text("{}\n", encoding="utf-8")
+            second_profile.write_text("{}\n", encoding="utf-8")
+            context = AppContext(SettingsStore(root / "config.json"))
+            lineage = LineageRaceEditor(context)
+            weights = WeightsPage(context)
+
+            weights.priority_picker.set_text(str(first_profile))
+            weights.priority_picker.path_changed.emit(str(first_profile))
+            self.assertEqual(
+                lineage.priority_picker.text(), str(first_profile)
+            )
+
+            lineage.priority_picker.set_text(str(second_profile))
+            lineage.priority_picker.path_changed.emit(str(second_profile))
+            self.assertEqual(
+                weights.priority_picker.text(), str(second_profile)
+            )
+            self.assertEqual(
+                context.lineage_state().skill_priorities_path,
+                str(second_profile),
+            )
+
+            weights.active_check.setChecked(True)
+            self.assertTrue(lineage.custom_scoring.isChecked())
+            lineage.custom_scoring.setChecked(False)
+            self.assertFalse(weights.active_check.isChecked())
+
+            _dispose_widget(lineage, self.application)
+            _dispose_widget(weights, self.application)
+
     def test_combo_popups_keep_dark_readable_palettes(self) -> None:
         from PySide6.QtGui import QPalette
 

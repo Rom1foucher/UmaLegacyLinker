@@ -210,6 +210,14 @@ The effective profiles used by a run are exported as:
 - `active_parent_scoring.json`;
 - `active_skill_priorities.json`.
 
+The White Skill priority selector shown in **Lineage Optimisation**, **uma.moe**
+and the advanced section of **Weights** is one live shared setting. Its input
+may be a complete profile or a minimal recursive override of
+`default_skill_priorities.json`; see
+[`docs/SKILL_PRIORITIES.md`](docs/SKILL_PRIORITIES.md) for the exact schema,
+merge rules and examples. These per-skill priorities remain distinct from the
+structural scoring settings stored in `parent_scoring_overrides.json`.
+
 ## Main files
 
 | File | Purpose |

@@ -3,7 +3,9 @@
 La source de vérité est `default_parent_scoring.json` pour les pondérations et les courbes,
 et `default_skill_priorities.json` pour la valeur des white skills par profil. Ce document
 décrit le modèle fourni par défaut ; toutes les valeurs restent modifiables sans toucher au
-code. L'historique des évolutions est dans `CHANGELOG.md`.
+code. Le schéma complet et les règles de fusion des overrides individuels sont documentés
+dans [`SKILL_PRIORITIES.md`](SKILL_PRIORITIES.md). L'historique des évolutions est dans
+`CHANGELOG.md`.
 
 ## Personnalisation dans l'application
 

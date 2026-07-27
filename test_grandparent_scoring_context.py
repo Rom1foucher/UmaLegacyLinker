@@ -1,4 +1,5 @@
 import json
+import unittest
 from pathlib import Path
 
 from parent_optimizer import (
@@ -128,6 +129,10 @@ def test_projected_final_and_production_affinity_remain_distinct_gp_diagnostics(
     # simple future-GP factor score no longer converts either one into proc odds.
     assert gp1_final == 11.0
     assert gp2_final == 11.0
+    assert final["race_affinity_plan"]["common_g1_names"] == ["B"]
+    assert final["race_affinity_plan"]["left_only_g1_names"] == ["A", "C"]
+    assert final["race_affinity_plan"]["right_only_g1_names"] == ["D"]
+    assert final["race_affinity_plan"]["exact_bonus_if_all_won"] == 15
     assert gp1_production > gp1_final
     assert gp2_production > gp2_final
 
@@ -377,3 +382,8 @@ def test_external_parent_pair_output_exposes_complete_selectable_branches():
     payload = {"results": [{"fixed_parent": fixed, "candidate": candidate}]}
     extracted = extract_opposing_parent_candidates("unused.mdb", payload)
     assert {row["chara_id"] for row in extracted} == {60, 70}
+
+
+class GrandparentG1DiagnosticTests(unittest.TestCase):
+    def test_shared_and_one_sided_g1_diagnostic(self):
+        test_projected_final_and_production_affinity_remain_distinct_gp_diagnostics()

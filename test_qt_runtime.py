@@ -618,6 +618,84 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             self.assertIn("GameTora", dialog.attribution.text())
             dialog.close()
 
+    def test_lineage_dialog_adds_the_g1_affinity_calendar(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.lineage_view import LineageDialog
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SettingsStore(Path(temp_dir) / "config.json")
+            store.update({"online_images": "0", "ui_language": "en"})
+            dialog = LineageDialog(
+                AppContext(store),
+                {"card_id": 103101, "card_name": "Ace costume"},
+                {
+                    "score": 91.0,
+                    "parent_1": {"card_name": "Parent 1", "sparks": []},
+                    "parent_2": {"card_name": "Parent 2", "sparks": []},
+                    "race_affinity_plan": {
+                        "shared_race_bonus": 6,
+                        "one_side_race_bonus": 3,
+                        "races": [
+                            {
+                                "race_id": 1022,
+                                "name": "Kawasaki Kinen",
+                                "shared": True,
+                                "affinity_bonus": 6,
+                                "sources": ["Parent 1", "Parent 2"],
+                                "schedule_slots": [
+                                    {"year": 2, "month": 2, "half": 1},
+                                    {"year": 3, "month": 2, "half": 1}
+                                ],
+                            },
+                            {
+                                "race_id": 1033,
+                                "name": "Oka Sho",
+                                "shared": False,
+                                "affinity_bonus": 3,
+                                "sources": ["Parent 1"],
+                                "schedule_slots": [
+                                    {"year": 2, "month": 4, "half": 1}
+                                ],
+                            },
+                        ],
+                    },
+                    "affinity": {"total": 160},
+                    "distance_s_summary": {"probability_reach_s": 0.55},
+                },
+            )
+            dialog.resize(1120, 720)
+            dialog.show()
+            self.application.processEvents()
+            self.assertEqual(dialog.tabs.count(), 3)
+            self.assertIsNotNone(dialog.calendar)
+            self.assertEqual(dialog.calendar.width(), dialog.calendar.BASE_WIDTH)
+            self.assertEqual(
+                dialog.calendar.minimumSize(),
+                dialog.calendar.maximumSize(),
+            )
+            first_hint = dialog.calendar.sizeHint()
+            for width in (900, 1800, 1120, 1360):
+                dialog.calendar.resize(width, dialog.calendar.height())
+                self.application.processEvents()
+                self.assertEqual(dialog.calendar.sizeHint(), first_hint)
+            self.assertIn("+6", dialog.planning_legend.text())
+            self.assertIn("+3", dialog.planning_legend.text())
+            self.assertEqual(
+                dialog.calendar._race_urls[0],
+                "https://media.gametora.com/umamusume/races/banners/en/1022.png",
+            )
+            scheduled, unscheduled = dialog.calendar._calendar_entries()
+            self.assertEqual(scheduled[(2, 2, 1)][0][1]["affinity_bonus"], 6)
+            self.assertNotIn((3, 2, 1), scheduled)
+            self.assertEqual(
+                sum(len(items) for items in scheduled.values()),
+                2,
+            )
+            self.assertFalse(unscheduled)
+            self.assertFalse(dialog.calendar.grab().toImage().isNull())
+            dialog.close()
+
     def test_grandparent_dialog_uses_target_parent_as_root(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore

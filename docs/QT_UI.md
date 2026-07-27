@@ -18,6 +18,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - two-column Spark cards that explicitly fill the Qt rich-text viewport, keeping stars, names and engine probabilities readable even in the narrow result pane;
 - branch summaries that total each final parent with its two grandparents, condense duplicate Blue/Pink/White Sparks, keep Green sources distinct and mark Sparks carried by the direct parent;
 - costume-aware trainee artwork and White Skill icons loaded asynchronously through a persistent, optional local cache;
+- explicit shared/one-sided G1 diagnostics and a three-year half-month planning calendar for both parent and grandparent pairs, with `+6`/`+3` link values and cached GameTora race banners;
 - rich, colour-coded Spark chips ordered Blue → Pink → Green → White, with resolved skill icons, the existing full-run White inheritance probability and gold emphasis for the three strongest White score contributions;
 - loading the latest generated ranking;
 - export of a selected final pair to the uma.moe Lineage Planner format;
@@ -31,7 +32,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - cooperative cancellation of long-running tasks from the status bar;
 - a fixed opposing-parent context and offline local GP-pair ranking in the uma.moe search.
 
-Pair ranking and every scoring formula remain unchanged. The lineage view retains the compact identities, Sparks and skill IDs required for rendering, then displays the White full-run probability already emitted by the scoring engine for its configured Inspiration Events. It neither substitutes the separate future-GP generation mechanic nor calculates a second rate in the UI.
+Pair ranking and every scoring formula remain unchanged. The lineage view retains the compact identities, Sparks and skill IDs required for rendering, then displays the White full-run probability already emitted by the scoring engine for its configured Inspiration Events. G1 planning likewise renders the engine's pair comparison: a race carried by both selected legacies is worth two future `+3` links, while a one-sided race is worth one. It neither substitutes the separate future-GP generation mechanic nor calculates a second rate in the UI.
 
 ## Visual QA
 
@@ -39,7 +40,7 @@ The Windows workflow renders every page, the embedded local and uma.moe result p
 
 ## Artwork and offline behaviour
 
-The application does not bundle or redistribute game artwork. The lineage inspector derives costume-aware trainee and resolved White Skill icon URLs from current MDB IDs, downloads only assets needed by the opened view and caches them under Qt's per-user application cache directory. The exact directory is shown as a tooltip on the cache status. Cached artwork remains usable offline; online loading can be disabled and the cache can be cleared from the inspector.
+The application does not bundle or redistribute game artwork. The lineage inspector derives costume-aware trainee, resolved White Skill icon and G1 banner URLs from current MDB IDs, downloads only assets needed by the opened view and caches them under Qt's per-user application cache directory. The exact directory is shown as a tooltip on the cache status. Cached artwork remains usable offline; online loading can be disabled and the cache can be cleared from the inspector. The G1 planning is a fixed-size canvas inside a scroll area: resizing the dialog does not stretch the calendar or upscale low-resolution banners.
 
 The asset catalogue contains validated URL builders for trainee artwork, support-card artwork and skill icons. Trainee and skill assets are now used by the lineage inspector; support-card integration remains deliberately outside this project step. The shared asynchronous loader, strict HTTPS host allowlist, placeholders and cache are reusable by later views.
 
@@ -76,10 +77,10 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/pages_tools.py` | diagnostic Umalator import |
 | `ui_qt/models.py` | sortable Qt table model |
 | `ui_qt/presentation.py` | safe HTML diagnostics rendering |
-| `ui_qt/asset_catalog.py` | validated GameTora trainee, support and skill asset URLs |
+| `ui_qt/asset_catalog.py` | validated GameTora trainee, support, skill and race-banner asset URLs |
 | `ui_qt/image_assets.py` | asynchronous loading, allowlist and persistent disk cache |
 | `ui_qt/lineage_nodes.py` | compatibility layer for current and older pair, branch and grandparent-result schemas |
-| `ui_qt/lineage_view.py` | top-down lineage inspector, rich Spark cards and artwork controls |
+| `ui_qt/lineage_view.py` | top-down lineage inspector, G1 planning calendar, rich Spark cards and artwork controls |
 | `ui_qt/weight_controls.py` | scoring taxonomy, normalised groups and slider semantics |
 | `ui_qt/weight_help.py` | bilingual purpose, impact, scope and scale guidance for every weight |
 | `ui_qt/distribution_chart.py` | dependency-free live donut chart for normalised weight groups |

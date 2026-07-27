@@ -954,7 +954,7 @@ class OnlinePage(QWidget):
         self.lineage_blue_label.setText(t("Stat Blue"))
         self.lineage_pink_label.setText(t("Aptitude Pink"))
         self.lineage_hint.setText(
-            t("Comme les curseurs du site uma.moe. Appliqué après téléchargement : augmente le fetch API si trop de candidats sont éliminés.")
+            t("Comme les curseurs du site uma.moe. Envoyé à l’API avant pagination, puis revalidé localement.")
         )
         for spin in (self.lineage_blue_stars, self.lineage_pink_stars):
             spin.setSpecialValueText(t("désactivé"))

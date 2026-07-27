@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from check_i18n import FRENCH_MARKERS
 from i18n import scoring_label, translate_text
@@ -313,6 +313,36 @@ class QtUiCoreTests(unittest.TestCase):
         self.assertIn("A &lt; B", rendered)
         self.assertNotIn("A < B", rendered)
         self.assertIn("Ready for S", rendered)
+
+    def test_pair_diagnostic_lists_shared_and_one_sided_g1_races(self) -> None:
+        row = {
+            "score": 82.25,
+            "parent_1": {"card_name": "Local < Parent"},
+            "parent_2": {"card_name": "Remote Parent"},
+            "affinity": {"total": 151, "base": 142, "g1_bonus": 9},
+            "race_affinity_plan": {
+                "races": [{"name": "Shared & Cup"}],
+                "shared_race_bonus": 6,
+                "one_side_race_bonus": 3,
+                "common_g1_names": ["Shared & Cup"],
+                "left_only_g1_names": ["Local Stakes"],
+                "right_only_g1_names": ["Remote Sho"],
+                "race_count": 3,
+                "exact_bonus_if_all_won": 12,
+            },
+            "components": {"blue": 75},
+            "distance_viability": {"key": "ready_for_s", "tier": 4},
+            "distance_s_summary": {"probability_reach_s": 0.52},
+        }
+
+        rendered = result_detail_html(row, "pair", "en")
+
+        self.assertIn("G1 affinity planning", rendered)
+        self.assertIn("Shared G1 races (+6)", rendered)
+        self.assertIn("Local &lt; Parent only (+3)", rendered)
+        self.assertIn("Shared &amp; Cup", rendered)
+        self.assertIn("Local Stakes", rendered)
+        self.assertIn("Remote Sho", rendered)
 
     def test_result_summary_uses_game_style_aptitudes_and_aggregates_parent_branches(self) -> None:
         row = {
@@ -761,6 +791,125 @@ class QtUiCoreTests(unittest.TestCase):
             self.assertEqual(ranker.call_args.kwargs["ace_card_id"], 1001)
             self.assertEqual(ranker.call_args.kwargs["local_pool_size"], 50)
             self.assertEqual(ranker.call_args.kwargs["remote_pool_size"], 60)
+
+    def test_live_online_search_pushes_all_filters_before_planned_fetch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            master = root / "master.mdb"
+            veterans = root / "data.json"
+            master.touch()
+            veterans.write_text("[]", encoding="utf-8")
+            linked_path = root / "linked.json"
+            linked_path.write_text(
+                json.dumps({"veterans": []}),
+                encoding="utf-8",
+            )
+            linked = SimpleNamespace(
+                json_path=linked_path,
+                skills_catalog_path=root / "skills.json",
+                race_factor_skills_path=root / "race.json",
+            )
+            manual = SimpleNamespace(
+                weights_path=root / "weights.json",
+                course_weights_path=root / "courses.json",
+            )
+            client = SimpleNamespace(
+                documented_parent_card_filter_keys=lambda: {},
+                search_many_planned=Mock(
+                    return_value=(
+                        {"items": []},
+                        {"method": "GET", "path": "/api/v3/search"},
+                    )
+                ),
+            )
+            generated = {
+                "search_filters": {
+                    "optional_main_white_factors": [201900],
+                    "min_white_count": 12,
+                },
+                "retrieval_plan": {
+                    "cohorts": [
+                        {
+                            "name": "large",
+                            "kind": "broad",
+                            "share": 1.0,
+                            "filters": {},
+                        }
+                    ]
+                },
+            }
+            request = OnlineSearchRequest(
+                search_mode="parent",
+                master_path=master,
+                veterans_json_path=veterans,
+                output_dir=root,
+                ace_card_id=1001,
+                target_parent_card_id=None,
+                fixed_local_id=None,
+                automatic_pairs=True,
+                local_pool_size=50,
+                remote_pool_size=100,
+                surface="turf",
+                distance="medium",
+                style="pace_chaser",
+                lineage_blue_filter=("Stamina", 5),
+                limit=2000,
+            )
+            expected = object()
+            with (
+                patch("ui_qt.core.link_veterans", return_value=linked),
+                patch(
+                    "ui_qt.core.generate_manual_skill_weights",
+                    return_value=manual,
+                ),
+                patch(
+                    "ui_qt.core.generate_auto_uql",
+                    return_value=("", generated),
+                ) as generate,
+                patch(
+                    "ui_qt.core.build_lineage_factor_api_filters",
+                    return_value=(
+                        {"blue_sparks": [205, 206, 207, 208, 209]},
+                        {
+                            "blue_sparks": {
+                                "factor": "Stamina",
+                                "minimum_stars": 5,
+                            }
+                        },
+                    ),
+                ),
+                patch(
+                    "ui_qt.core.UmaMoeApiClient",
+                    return_value=client,
+                ),
+                patch(
+                    "ui_qt.core.rank_online_parent_pairs",
+                    return_value=expected,
+                ),
+            ):
+                result = run_online_search(
+                    request,
+                    logger=lambda _message: None,
+                    progress=lambda _value, _message: None,
+                )
+
+            self.assertIs(result, expected)
+            self.assertEqual(generate.call_args.kwargs["ace_card_id"], 1001)
+            self.assertEqual(generate.call_args.kwargs["search_mode"], "parent")
+            call = client.search_many_planned.call_args
+            self.assertEqual(call.kwargs["desired_candidates"], 2000)
+            self.assertEqual(
+                call.kwargs["base_filters"],
+                {
+                    "optional_main_white_factors": [201900],
+                    "min_white_count": 12,
+                    "blue_sparks": [205, 206, 207, 208, 209],
+                },
+            )
+            self.assertEqual(
+                call.kwargs["retrieval_plan"],
+                generated["retrieval_plan"],
+            )
 
     def test_fixed_gp_cannot_match_target_parent_character(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

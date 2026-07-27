@@ -327,6 +327,86 @@ def _facts_table(items: list[tuple[str, object]]) -> str:
     )
 
 
+def _g1_plan(row: dict[str, Any]) -> dict[str, Any]:
+    plan = (
+        row.get("race_affinity_plan")
+        or (row.get("affinity") or {}).get("race_affinity_plan")
+        or (row.get("final_parent_affinity") or {}).get("race_affinity_plan")
+        or (row.get("final_branch_affinity") or {}).get("race_affinity_plan")
+        or {}
+    )
+    return plan if isinstance(plan, dict) else {}
+
+
+def _g1_plan_block(
+    row: dict[str, Any],
+    language: str,
+    *,
+    left_name: str,
+    right_name: str,
+) -> str:
+    plan = _g1_plan(row)
+    if not plan or not plan.get("races"):
+        return ""
+
+    shared_bonus = int(plan.get("shared_race_bonus") or 6)
+    one_side_bonus = int(plan.get("one_side_race_bonus") or 3)
+
+    def names(key: str) -> str:
+        values = [str(value) for value in plan.get(key) or [] if str(value).strip()]
+        return " · ".join(values) if values else _t("Aucune", language)
+
+    rows = (
+        (
+            _t("G1 communes (+{bonus})", language).replace(
+                "{bonus}", str(shared_bonus)
+            ),
+            names("common_g1_names"),
+        ),
+        (
+            _t("{name} uniquement (+{bonus})", language)
+            .replace("{name}", left_name)
+            .replace("{bonus}", str(one_side_bonus)),
+            names("left_only_g1_names"),
+        ),
+        (
+            _t("{name} uniquement (+{bonus})", language)
+            .replace("{name}", right_name)
+            .replace("{bonus}", str(one_side_bonus)),
+            names("right_only_g1_names"),
+        ),
+    )
+    body = "".join(
+        "<tr>"
+        f"<th>{escape(label)}</th>"
+        f"<td>{escape(value)}</td>"
+        "</tr>"
+        for label, value in rows
+    )
+    summary = _facts_table(
+        [
+            (
+                _t("Bonus du planning optimal", language),
+                f"+{int(plan.get('optimal_bonus') or plan.get('exact_bonus_if_all_won') or 0)}",
+            ),
+            (
+                _t("Courses planifiées", language),
+                int(plan.get("optimal_race_count") or plan.get("race_count") or 0),
+            ),
+            (
+                _t("Série maximale", language),
+                int((plan.get("streaks") or {}).get("max_consecutive") or 0),
+            ),
+        ]
+    )
+    return (
+        summary
+        + "<table class='factor-table' width='100%' cellspacing='0' cellpadding='0'>"
+        + body
+        + "</table>"
+    )
+
+
 def _distance_block(row: dict[str, Any], language: str) -> str:
     detail = row.get("distance_s_summary") or {}
     if not detail:
@@ -888,6 +968,16 @@ def result_detail_html(
         if affinity_items:
             html += f"{_section(_t('Affinité moderne', language))}"
             html += _facts_table(affinity_items)
+        if kind == "pair":
+            g1_html = _g1_plan_block(
+                row,
+                language,
+                left_name=_identity_name(row.get("parent_1")),
+                right_name=_identity_name(row.get("parent_2")),
+            )
+            if g1_html:
+                html += _section(_t("Planning G1 d’affinité", language))
+                html += g1_html
     elif kind == "future":
         html += _facts_table(
             [
@@ -965,6 +1055,15 @@ def online_detail_html(
         if affinity_items:
             html += _section(_t("Affinité moderne", language))
             html += _facts_table(affinity_items)
+        g1_html = _g1_plan_block(
+            row,
+            language,
+            left_name=_identity_name(local),
+            right_name=_identity_name(remote),
+        )
+        if g1_html:
+            html += _section(_t("Planning G1 d’affinité", language))
+            html += g1_html
     else:
         affinity = row.get("final_parent_affinity") or row.get("final_branch_affinity") or {}
         html += _section(_t("Potentiel du parent final", language))
@@ -979,6 +1078,15 @@ def online_detail_html(
                 )
             ]
         )
+        g1_html = _g1_plan_block(
+            row,
+            language,
+            left_name=_identity_name(local),
+            right_name=_identity_name(remote),
+        )
+        if g1_html:
+            html += _section(_t("Planning G1 d’affinité", language))
+            html += g1_html
     html += _spark_recap(row, visual_mode, language)
     html += f"{_section(_t('Calcul du score global', language))}{_component_table(row, language)}"
     factors = _top_factors(row, language)

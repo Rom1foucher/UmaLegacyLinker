@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from g1_race_planning import calendar_slots, years_for_race_permissions
+
 from skill_catalog import generate_skill_catalogs
 
 
@@ -236,6 +238,19 @@ class MasterResolver:
 
     def _load_g1_saddles(self) -> dict[int, dict[str, Any]]:
         result: dict[int, dict[str, Any]] = {}
+        race_instance_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(race_instance)")
+        }
+        program_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(single_mode_program)")
+        }
+        date_selection = (
+            "ri.date AS race_date"
+            if "date" in race_instance_columns
+            else "NULL AS race_date"
+        )
         query = """
             SELECT id, race_instance_id_1, race_instance_id_2,
                    race_instance_id_3, race_instance_id_4,
@@ -254,8 +269,9 @@ class MasterResolver:
             selected = None
             for instance_id in instance_ids:
                 race = self.connection.execute(
-                    """
-                    SELECT ri.id AS race_instance_id, r.id AS race_id, r.grade, r."group" AS race_group
+                    f"""
+                    SELECT ri.id AS race_instance_id, r.id AS race_id,
+                           r.grade, r."group" AS race_group, {date_selection}
                     FROM race_instance ri
                     JOIN race r ON r.id = ri.race_id
                     WHERE ri.id = ?
@@ -267,6 +283,27 @@ class MasterResolver:
                     and int(race["grade"]) == 100
                     and int(race["race_group"]) == 1
                 ):
+                    race_permissions: list[int] = []
+                    if "race_permission" in program_columns:
+                        race_permissions = sorted(
+                            {
+                                int(permission_row["race_permission"])
+                                for permission_row in self.connection.execute(
+                                    """
+                                    SELECT DISTINCT race_permission
+                                    FROM single_mode_program
+                                    WHERE race_instance_id = ?
+                                    """,
+                                    (instance_id,),
+                                )
+                                if permission_row["race_permission"] is not None
+                            }
+                        )
+                    race_date = (
+                        int(race["race_date"])
+                        if race["race_date"] is not None
+                        else None
+                    )
                     selected = {
                         "saddle_id": saddle_id,
                         "race_instance_id": instance_id,
@@ -274,6 +311,13 @@ class MasterResolver:
                         "name": self.race_names.get(
                             instance_id,
                             self.race_short_names.get(instance_id, f"G1 {instance_id}"),
+                        ),
+                        "date": race_date,
+                        "race_permissions": race_permissions,
+                        "years": years_for_race_permissions(race_permissions),
+                        "schedule_slots": calendar_slots(
+                            race_date=race_date,
+                            race_permissions=race_permissions,
                         ),
                     }
                     break

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from g1_race_planning import build_pair_g1_diagnostic
 from legacy_linker import MasterResolver, grouped_factors
 from parent_optimizer import (
     AffinityResolver,
@@ -156,12 +157,11 @@ def _apply_lineage_factor_filters(
     lineage_pink_filter: tuple[str, int] | None,
     log: Callable[[str], None],
 ) -> list[dict[str, Any]]:
-    """Post-fetch hard filter on lineage per-factor star sums (Main + parents).
+    """Re-validate lineage per-factor star sums after API retrieval.
 
-    Applied locally on normalized candidates rather than pushed to the API:
-    the only empirically confirmed per-factor parameter on /api/v3/search is
-    main_parent_pink_sparks (Main only), and unknown parameters are unsafe to
-    guess (see UmaMoeApiClient.search). Over-fetching compensates."""
+    Live searches push the same requirement to ``blue_sparks``/``pink_sparks``
+    before pagination.  This local pass remains authoritative for imported
+    responses and protects against a backend silently ignoring a parameter."""
     for label, ftype, spec in (
         ("Blue", "blue_stat", lineage_blue_filter),
         ("Pink", "red_aptitude", lineage_pink_filter),
@@ -182,6 +182,161 @@ def _apply_lineage_factor_filters(
                 f"{len(candidates)} candidats restants."
             )
     return candidates
+
+
+def resolve_lineage_factor_api_ids(
+    master_path: str | Path,
+    factor_filter: tuple[str, int] | None,
+    *,
+    factor_type: str,
+) -> list[int]:
+    """Resolve ``<factor> >= N★`` to uma.moe lineage aggregate IDs.
+
+    ``blue_sparks`` and ``pink_sparks`` contain one aggregate ID per factor
+    across Main + left parent + right parent.  The last digit is the total star
+    count, so Stamina 5★ is 205 and Turf 5★ is 1105.  A minimum is represented
+    by the OR range N..9, matching uma.moe's own grouped-filter request shape.
+    """
+    if not factor_filter:
+        return []
+    name, raw_minimum = factor_filter
+    name = str(name).strip()
+    try:
+        minimum = max(1, min(int(raw_minimum), 9))
+    except (TypeError, ValueError):
+        return []
+    if not name:
+        return []
+
+    resolver = MasterResolver(Path(master_path))
+    try:
+        prefixes = {
+            int(factor["factor_id"]) // 10
+            for factor in resolver.factors.values()
+            if factor.get("type") == factor_type
+            and str(factor.get("name") or "").casefold() == name.casefold()
+        }
+    finally:
+        resolver.close()
+    if not prefixes:
+        raise UmaMoeError(
+            f"Facteur {name!r} introuvable dans le master.mdb "
+            f"pour le filtre uma.moe ({factor_type})."
+        )
+    return sorted(
+        prefix * 10 + stars
+        for prefix in prefixes
+        for stars in range(minimum, 10)
+    )
+
+
+def build_lineage_factor_api_filters(
+    master_path: str | Path,
+    lineage_blue_filter: tuple[str, int] | None,
+    lineage_pink_filter: tuple[str, int] | None,
+) -> tuple[dict[str, list[int]], dict[str, Any]]:
+    """Build documented server-side filters plus audit metadata."""
+    filters: dict[str, list[int]] = {}
+    diagnostics: dict[str, Any] = {}
+    for key, factor_type, spec in (
+        ("blue_sparks", "blue_stat", lineage_blue_filter),
+        ("pink_sparks", "red_aptitude", lineage_pink_filter),
+    ):
+        ids = resolve_lineage_factor_api_ids(
+            master_path,
+            spec,
+            factor_type=factor_type,
+        )
+        if not ids or spec is None:
+            continue
+        name, minimum = spec
+        filters[key] = ids
+        diagnostics[key] = {
+            "factor": str(name),
+            "minimum_stars": max(1, min(int(minimum), 9)),
+            "aggregate_ids": ids,
+            "scope": "Main + left parent + right parent",
+            "server_side": True,
+            "locally_revalidated": True,
+        }
+    return filters, diagnostics
+
+
+def prune_retrieval_plan_conflicts(
+    retrieval_plan: dict[str, Any] | None,
+    base_filters: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Drop soft sampling cohorts that cannot be ANDed with a hard API filter.
+
+    uma.moe accepts repeated spark groups for AND semantics in its frontend, but
+    this client deliberately serializes one comma-joined value per documented
+    parameter because repeated keys have returned empty results on the public
+    endpoint.  When a hard lineage filter and a cohort both need the same key,
+    keeping the hard filter is the only recall-safe choice.  The cohort's share
+    is transferred to the broad query.
+    """
+    plan = copy.deepcopy(retrieval_plan or {})
+    cohorts = list(plan.get("cohorts") or [])
+    if not cohorts:
+        return plan
+    active_base = {
+        str(key): value
+        for key, value in (base_filters or {}).items()
+        if value not in (None, "", [], (), {})
+    }
+    if not active_base:
+        return plan
+
+    kept: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    released_share = 0.0
+    broad: dict[str, Any] | None = None
+    for cohort in cohorts:
+        item = copy.deepcopy(cohort)
+        if item.get("kind") == "broad":
+            broad = item
+            kept.append(item)
+            continue
+        cohort_filters = dict(item.get("filters") or {})
+        conflicts = sorted(
+            key
+            for key, value in cohort_filters.items()
+            if key in active_base and active_base[key] != value
+        )
+        if not conflicts:
+            kept.append(item)
+            continue
+        released_share += max(0.0, float(item.get("share") or 0.0))
+        suppressed.append({
+            "name": item.get("name"),
+            "kind": item.get("kind"),
+            "conflicting_keys": conflicts,
+            "released_share": max(0.0, float(item.get("share") or 0.0)),
+        })
+
+    if suppressed:
+        if broad is None:
+            broad = {
+                "name": "recherche large / filtres durs",
+                "kind": "broad",
+                "share": 0.0,
+                "filters": {},
+            }
+            kept.append(broad)
+        broad["share"] = max(0.0, float(broad.get("share") or 0.0)) + released_share
+        total = sum(max(0.0, float(item.get("share") or 0.0)) for item in kept) or 1.0
+        for item in kept:
+            item["share"] = round(
+                max(0.0, float(item.get("share") or 0.0)) / total,
+                8,
+            )
+        plan["cohorts"] = kept
+        plan["suppressed_conflicting_cohorts"] = suppressed
+        plan["conflict_policy"] = (
+            "Explicit API lineage filters are hard; conflicting aptitude "
+            "sampling cohorts yield their budget to the broad cohort."
+        )
+    return plan
 
 
 def _opposing_white_coverage(member: dict[str, Any] | None) -> dict[str, float]:
@@ -928,6 +1083,10 @@ class UmaMoeApiClient:
         logger = logger or (lambda _message: None)
         desired = max(1, min(int(desired_candidates), MAX_FETCH_CANDIDATES))
         page_size = max(1, min(int(page_size), 100))
+        retrieval_plan = prune_retrieval_plan_conflicts(
+            retrieval_plan,
+            base_filters,
+        )
         cohorts = list((retrieval_plan or {}).get("cohorts") or [])
         if not cohorts:
             return self.search_many(
@@ -2629,9 +2788,16 @@ def _final_parent_affinity_potential(
 
     fixed_g1 = _member_g1(gp1)
     candidate_g1 = _member_g1(gp2)
-    common = sorted(fixed_g1 & candidate_g1)
-    fixed_only = sorted(fixed_g1 - candidate_g1)
-    candidate_only = sorted(candidate_g1 - fixed_g1)
+    race_affinity_plan = build_pair_g1_diagnostic(
+        gp1,
+        gp2,
+        left_label="gp_1",
+        right_label="gp_2",
+        bonus_per_link=g1_bonus_value,
+    )
+    common = list(race_affinity_plan["common_g1_names"])
+    fixed_only = list(race_affinity_plan["left_only_g1_names"])
+    candidate_only = list(race_affinity_plan["right_only_g1_names"])
 
     double_count = min(len(common), budget)
     remaining = max(0, budget - double_count)
@@ -2678,6 +2844,7 @@ def _final_parent_affinity_potential(
         "common_g1_count": len(common),
         "fixed_only_g1_count": len(fixed_only),
         "candidate_only_g1_count": len(candidate_only),
+        "race_affinity_plan": race_affinity_plan,
         "planned_double_overlap_races": double_count,
         "planned_single_overlap_races": single_count,
         "single_g1_weight": single_weight,
@@ -2741,7 +2908,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "affinity_component", "g1_potential_component", "production_run_affinity",
         "production_run_scored_value", "common_gp_g1_count", "local_only_g1_count",
         "remote_only_g1_count", "common_gp_g1_races", "local_only_g1_races",
-        "remote_only_g1_races", "blue", "pink", "white", "white_generation",
+        "remote_only_g1_races", "optimal_g1_plan_bonus",
+        "blue", "pink", "white", "white_generation",
         "unique", "candidate_g1",
         "final_pair_affinity_total", "projected_parent_g1_count",
         "distance_status", "distance_stars", "distance_probability_s",
@@ -2902,7 +3070,7 @@ def rank_online_grandparent_pairs(
     if not online_candidates:
         raise UmaMoeError(
             "Aucun candidat ne respecte les filtres lignée demandés. "
-            "Assouplis le minimum d'étoiles ou augmente la limite de récupération API."
+            "Assouplis le minimum d'étoiles ou vérifie les paramètres envoyés à l'API."
         )
     normalization_diag["lineage_filters"] = {
         "blue": list(lineage_blue_filter) if lineage_blue_filter else None,
@@ -3142,6 +3310,21 @@ def rank_online_grandparent_pairs(
             raise UmaMoeError(
                 "Aucun GP distant valide après exclusion du parent à produire."
             )
+        requested_remote_limit = max(1, min(int(remote_pool_size), 500))
+        hard_filter_recall_guard = bool(
+            strict_main_filters or lineage_blue_filter or lineage_pink_filter
+        )
+        effective_remote_limit = _recall_guard_remote_pool_size(
+            requested_remote_limit,
+            len(remote_eligible),
+            hard_filter_active=hard_filter_recall_guard,
+        )
+        if exhaustive_pairs and effective_remote_limit > requested_remote_limit:
+            log(
+                "Garde-fou de rappel : le filtre dur a réduit le pool ; "
+                f"{effective_remote_limit} GP distants seront conservés au lieu de "
+                f"{requested_remote_limit} avant le calcul exact."
+            )
         if exhaustive_pairs:
             local_eligible = [member for member in veterans if eligible(member)]
             if not local_eligible:
@@ -3153,7 +3336,9 @@ def rank_online_grandparent_pairs(
             local_pre = sorted((individual_score(member) for member in local_eligible), key=lambda row: row["score"], reverse=True)
             remote_pre = sorted((individual_score(member) for member in remote_eligible), key=lambda row: row["score"], reverse=True)
             selected_locals = [row["member"] for row in local_pre[: max(1, min(int(local_pool_size), 250))]]
-            selected_remotes = [row["member"] for row in remote_pre[: max(1, min(int(remote_pool_size), 500))]]
+            selected_remotes = [
+                row["member"] for row in remote_pre[:effective_remote_limit]
+            ]
             pair_mode = "exhaustive_top_pools"
         else:
             if fixed is None:
@@ -3167,6 +3352,24 @@ def rank_online_grandparent_pairs(
             local_pre = [individual_score(fixed)]
             remote_pre = []
             pair_mode = "fixed_local_gp"
+        remote_preselection_diag = {
+            "requested": requested_remote_limit,
+            "effective": (
+                len(selected_remotes)
+                if not exhaustive_pairs
+                else effective_remote_limit
+            ),
+            "available": len(remote_eligible),
+            "hard_filter_recall_guard": (
+                hard_filter_recall_guard and exhaustive_pairs
+            ),
+            "maximum_guarded_pool": 500,
+            "strategy": (
+                "all_remote_with_fixed_local_gp"
+                if not exhaustive_pairs
+                else "individual_score_with_filtered_pool_recall_guard"
+            ),
+        }
 
         log(
             f"Comparaison exhaustive : {len(selected_locals)} locaux × {len(selected_remotes)} "
@@ -3296,6 +3499,7 @@ def rank_online_grandparent_pairs(
                 "_gp1": gp1,
                 "_gp2": gp2,
                 "final_parent_affinity": final_parent_affinity,
+                "race_affinity_plan": final_parent_affinity["race_affinity_plan"],
                 "production_affinity": production_affinity,
                 "components": components,
                 "score_breakdown": breakdown,
@@ -3335,6 +3539,7 @@ def rank_online_grandparent_pairs(
                                 * 2
                                 * final_parent_affinity["g1_bonus_per_link"]
                             ),
+                            "g1_race_plan": final_parent_affinity["race_affinity_plan"],
                             "score": diagnostic_components["g1_potential"],
                             "formula": "100 × planned G1 bonus / maximum double-link bonus for the configured race budget",
                         },
@@ -3454,6 +3659,7 @@ def rank_online_grandparent_pairs(
             ),
             "local_pool_count": len(selected_locals),
             "remote_pool_count": len(selected_remotes),
+            "remote_preselection": remote_preselection_diag,
             "evaluated_pair_count": len(summaries),
             "profile": {
                 "surface": surface,
@@ -3504,6 +3710,7 @@ def rank_online_grandparent_pairs(
         gp2 = row["_gp2"]
         online = gp2.get("online") or {}
         final_aff = row["final_parent_affinity"]
+        g1_plan = row.get("race_affinity_plan") or {}
         common_races = final_aff.get("common_gp_g1") or []
         local_only_races = final_aff.get("fixed_only_g1") or []
         remote_only_races = final_aff.get("candidate_only_g1") or []
@@ -3540,6 +3747,7 @@ def rank_online_grandparent_pairs(
             "common_gp_g1_races": "; ".join(common_races),
             "local_only_g1_races": "; ".join(local_only_races),
             "remote_only_g1_races": "; ".join(remote_only_races),
+            "optimal_g1_plan_bonus": g1_plan.get("exact_bonus_if_all_won"),
             "blue": round(row["components"]["blue"], 2),
             "pink": round(row["components"]["pink"], 2),
             "white": round(row["components"]["white_skill"], 2),
@@ -3570,6 +3778,7 @@ def rank_online_grandparent_pairs(
             "eligible_remote_candidate_count": len(remote_eligible),
             "selected_local_pool_count": len(selected_locals),
             "selected_remote_pool_count": len(selected_remotes),
+            "remote_preselection": remote_preselection_diag,
             "evaluated_pair_count": len(summaries),
             "top_count": len(top),
             "pair_mode": (f"local_{pair_mode}" if local_pair_mode else pair_mode),
@@ -3581,6 +3790,25 @@ def rank_online_grandparent_pairs(
                 _identity(contextual_opposing_parent)
                 if contextual_opposing_parent is not None else None
             ),
+            "top_result_g1_plans": [
+                {
+                    "gp_1": (row.get("fixed_grandparent") or {}).get("card_name"),
+                    "gp_2": (row.get("candidate") or {}).get("card_name"),
+                    "common_g1": (
+                        (row.get("race_affinity_plan") or {}).get("common_g1_names") or []
+                    ),
+                    "gp_1_only_g1": (
+                        (row.get("race_affinity_plan") or {}).get("left_only_g1_names") or []
+                    ),
+                    "gp_2_only_g1": (
+                        (row.get("race_affinity_plan") or {}).get("right_only_g1_names") or []
+                    ),
+                    "exact_bonus_if_all_won": (
+                        (row.get("race_affinity_plan") or {}).get("exact_bonus_if_all_won")
+                    ),
+                }
+                for row in top
+            ],
             "scoring": {
                 "weight_source": (
                     "mode_weights.parent_pair"
@@ -3647,6 +3875,9 @@ def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "remote_gp1", "remote_gp2",
         "affinity_total", "affinity_base", "affinity_g1_bonus",
         "parent_parent_base", "parent_parent_common_g1_count", "parent_parent_common_g1",
+        "local_parent_only_g1_count", "local_parent_only_g1",
+        "remote_parent_only_g1_count", "remote_parent_only_g1",
+        "optimal_g1_plan_bonus",
         "distance_status", "distance_tier", "distance_stars", "distance_carriers",
         "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met",
         "distance_initial_rank", "distance_probability_a", "distance_probability_s",
@@ -3661,6 +3892,19 @@ def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow({field: row.get(field, "") for field in fields})
+
+
+def _recall_guard_remote_pool_size(
+    requested: int,
+    available: int,
+    *,
+    hard_filter_active: bool,
+) -> int:
+    """Keep a filtered remote set intact whenever the exact scorer can handle it."""
+    requested_limit = max(1, min(int(requested), 500))
+    if not hard_filter_active:
+        return min(max(0, int(available)), requested_limit)
+    return min(max(0, int(available)), max(requested_limit, 500))
 
 
 def _select_diverse_parent_branch_pool(
@@ -3926,7 +4170,7 @@ def rank_online_parent_pairs(
     if not online_candidates:
         raise UmaMoeError(
             "Aucun candidat ne respecte les filtres lignée demandés. "
-            "Assouplis le minimum d'étoiles ou augmente la limite de récupération API."
+            "Assouplis le minimum d'étoiles ou vérifie les paramètres envoyés à l'API."
         )
     normalization_diag["lineage_filters"] = {
         "blue": list(lineage_blue_filter) if lineage_blue_filter else None,
@@ -4026,6 +4270,21 @@ def rank_online_parent_pairs(
                 "Aucun parent distant compatible avec une branche complète "
                 "(Main + deux grands-parents)."
             )
+        requested_remote_limit = max(1, min(int(remote_pool_size), 500))
+        hard_filter_recall_guard = bool(
+            strict_main_filters or lineage_blue_filter or lineage_pink_filter
+        )
+        effective_remote_limit = _recall_guard_remote_pool_size(
+            requested_remote_limit,
+            len(remote_eligible),
+            hard_filter_active=hard_filter_recall_guard,
+        )
+        if exhaustive_pairs and effective_remote_limit > requested_remote_limit:
+            log(
+                "Garde-fou de rappel : le filtre dur a réduit le pool ; "
+                f"{effective_remote_limit} parents distants seront conservés au lieu "
+                f"de {requested_remote_limit} avant le calcul exact."
+            )
 
         if exhaustive_pairs:
             local_compatible = [member for member in veterans if eligible(member)]
@@ -4063,10 +4322,16 @@ def rank_online_parent_pairs(
             )
             selected_remote_rows, remote_preselection_diag = _select_diverse_parent_branch_pool(
                 remote_pre,
-                pool_size=max(1, min(int(remote_pool_size), 500)),
+                pool_size=effective_remote_limit,
                 ace_target_aptitudes=ace["target_aptitudes"],
                 config=config,
             )
+            remote_preselection_diag.update({
+                "requested_before_recall_guard": requested_remote_limit,
+                "effective_after_recall_guard": effective_remote_limit,
+                "hard_filter_recall_guard": hard_filter_recall_guard,
+                "maximum_guarded_pool": 500,
+            })
             selected_locals = [
                 row["veteran"]
                 for row in selected_local_rows
@@ -4135,6 +4400,7 @@ def rank_online_parent_pairs(
                 "remote_rank_score": remote_parent.get("rank_score"),
                 "remote_branch_score": float(remote_branch["score"]),
                 "affinity": pair["affinity"],
+                "race_affinity_plan": pair["race_affinity_plan"],
                 "components": pair["components"],
                 "score_breakdown": pair["score_breakdown"],
                 "distance_viability": pair["distance_viability"],
@@ -4298,6 +4564,7 @@ def rank_online_parent_pairs(
         remote_lineage = remote_parent.get("when_used_as_parent") or {}
         affinity = row["affinity"]
         common = affinity.get("parent_parent_common_g1") or []
+        g1_plan = row.get("race_affinity_plan") or {}
         components = row["components"]
         distance_summary = row.get("distance_s_summary") or {}
         viability = row.get("distance_viability") or {}
@@ -4325,6 +4592,11 @@ def rank_online_parent_pairs(
             "parent_parent_base": affinity.get("parent_parent_base"),
             "parent_parent_common_g1_count": len(common),
             "parent_parent_common_g1": "; ".join(common),
+            "local_parent_only_g1_count": g1_plan.get("left_only_g1_count"),
+            "local_parent_only_g1": "; ".join(g1_plan.get("left_only_g1_names") or []),
+            "remote_parent_only_g1_count": g1_plan.get("right_only_g1_count"),
+            "remote_parent_only_g1": "; ".join(g1_plan.get("right_only_g1_names") or []),
+            "optimal_g1_plan_bonus": g1_plan.get("exact_bonus_if_all_won"),
             "distance_status": viability.get("key"),
             "distance_tier": viability.get("tier"),
             "distance_stars": distance_summary.get("total_stars"),
@@ -4385,6 +4657,25 @@ def rank_online_parent_pairs(
             "top_count": len(top),
             "pair_mode": pair_mode,
             "scoring_engine": "parent_optimizer.evaluate_parent_pair",
+            "top_result_g1_plans": [
+                {
+                    "parent_1": (row.get("fixed_parent") or {}).get("card_name"),
+                    "parent_2": (row.get("candidate") or {}).get("card_name"),
+                    "common_g1": (
+                        (row.get("race_affinity_plan") or {}).get("common_g1_names") or []
+                    ),
+                    "parent_1_only_g1": (
+                        (row.get("race_affinity_plan") or {}).get("left_only_g1_names") or []
+                    ),
+                    "parent_2_only_g1": (
+                        (row.get("race_affinity_plan") or {}).get("right_only_g1_names") or []
+                    ),
+                    "exact_bonus_if_all_won": (
+                        (row.get("race_affinity_plan") or {}).get("exact_bonus_if_all_won")
+                    ),
+                }
+                for row in top
+            ],
         }, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )

@@ -103,8 +103,21 @@ still combines duplicate copies through cumulative probability.
 
 The search panel only exposes filters supported by `/api/v3/search`: soft White preferences,
 optional target-surface/distance/style constraints on the remote Main, and optional minimum
-Blue/White quality for the full remote lineage. The generated UQL text is kept only as an audit
-and manual-copy representation because the public endpoint has no free-text UQL parameter.
+Blue/White quality for the full remote lineage. Per-factor Blue/Pink lineage minima use the
+same aggregate IDs as the uma.moe sliders (for example, Stamina `>=5★` is sent as
+`blue_sparks=205,206,207,208,209`) before the 2,000-result pagination cap, then revalidated
+locally after normalisation. Explicit hard filters are copied into every retrieval cohort.
+If a hard lineage filter conflicts with a soft aptitude cohort on the same API parameter, the
+hard filter wins and that cohort's budget returns to the broad search.
+
+Automatic-pair preselection still uses the canonical local scorer and keeps dedicated
+Distance/Surface coverage. As a recall guard, a hard-filtered remote pool is kept in full up
+to 500 candidates before exact pair scoring, even when the configured remote preselection
+pool is smaller. Fixed-local searches already score every valid remote candidate without a
+remote preselection cut.
+
+The generated UQL text is kept only as an audit and manual-copy representation because the
+public endpoint has no free-text UQL parameter.
 
 Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format used by the current uma.moe frontend. In the planner, use **Save / Load** to import the generated file. Local branches retain every veteran and succession record available in the source export; normalized and remote branches retain every available Spark, lineage member and race-saddle ID.
 
@@ -189,7 +202,11 @@ The PySide6 interface covers the full workflow: dashboard, extraction and linkin
 
 Preferences live in `%APPDATA%\UmaLegacyLinker\config.json` and the interface renders in French and English. The Windows workflow also renders every page at three viewport sizes in both languages and rejects detected text overflow. See [`docs/QT_UI.md`](docs/QT_UI.md) for the UI architecture and build instructions.
 
-The Qt lineage inspector loads costume-aware trainee artwork and resolved White Skill icons on demand from GameTora. Images are never bundled with the source or executable: they are kept in a bounded per-user cache, remain available offline once cached, and can be disabled or cleared directly in the inspector. Missing or unavailable artwork falls back to a generated initial card. White Sparks show the inheritance probability already calculated by the scoring engine across the run's configured Inspiration Events, and the three strongest White contributions receive a gold outline. Result diagnostics also show game-inspired aptitude rows, score/P(S) cards and a compact direct-Spark recap. The view does not introduce a second probability formula.
+The Qt lineage inspector loads costume-aware trainee artwork, resolved White Skill icons and G1 race banners on demand from GameTora. Images are never bundled with the source or executable: they are kept in a bounded per-user cache, remain available offline once cached, and can be disabled or cleared directly in the inspector. Missing or unavailable artwork falls back to a generated card.
+
+Parent and grandparent pair diagnostics distinguish shared G1 wins from races won on only one side. A dedicated three-year planning tab places those races in their Junior/Classic/Senior half-month slots like the in-game calendar: winning a shared race with the new trainee creates two `+3` links (`+6`), while a one-sided race creates one `+3` link. The JSON diagnostics retain the race names, ownership, MDB IDs, dates and every available calendar slot.
+
+White Sparks show the inheritance probability already calculated by the scoring engine across the run's configured Inspiration Events, and the three strongest White contributions receive a gold outline. Result diagnostics also show game-inspired aptitude rows, score/P(S) cards and a compact direct-Spark recap. The view does not introduce a second probability formula.
 
 ## Weights
 

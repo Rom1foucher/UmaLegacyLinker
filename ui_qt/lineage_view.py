@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui_qt.asset_catalog import skill_icon_url, trainee_image_url
+from ui_qt.asset_catalog import race_banner_url, skill_icon_url, trainee_image_url
 from ui_qt.context import AppContext
 from ui_qt.image_assets import (
     ImageRepository,
@@ -830,6 +830,443 @@ class LineageTree(QWidget):
         super().leaveEvent(event)
 
 
+class RaceCalendarWidget(QWidget):
+    """Three-year in-game-style calendar for pair race-affinity planning."""
+
+    BASE_WIDTH = 1500
+    YEAR_GAP = 16.0
+    MONTHS = (
+        "Jan.",
+        "Fév.",
+        "Mars",
+        "Avr.",
+        "Mai",
+        "Juin",
+        "Juil.",
+        "Août",
+        "Sept.",
+        "Oct.",
+        "Nov.",
+        "Déc.",
+    )
+    YEAR_COLORS = {
+        1: ("#18384c", "#66c7ff"),
+        2: ("#3a3419", "#f3cf39"),
+        3: ("#1d3825", "#79dc8b"),
+    }
+
+    def __init__(
+        self,
+        context: AppContext,
+        plan: dict[str, Any],
+        repository: ImageRepository,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.context = context
+        self.plan = dict(plan)
+        self.repository = repository
+        self._pixmaps: dict[str, QPixmap] = {}
+        self._race_urls: dict[int, str] = {}
+        self._race_rects: list[tuple[QRectF, dict[str, Any]]] = []
+        self.setMouseTracking(True)
+        # The calendar is a scrollable fixed canvas.  Letting a QScrollArea
+        # stretch it both degraded the small race banners and used to make
+        # sizeHint() mutate the minimum height, recursively triggering another
+        # sizeHint() call until Python exhausted its stack.
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setFixedSize(self.BASE_WIDTH, self._required_height())
+        self.repository.image_ready.connect(self._image_ready)
+        self.repository.image_failed.connect(self._image_failed)
+        self.refresh_images()
+        self.retranslate()
+
+    def _races(self) -> list[dict[str, Any]]:
+        return [
+            race
+            for race in self.plan.get("races") or []
+            if isinstance(race, dict)
+        ]
+
+    def refresh_images(self) -> None:
+        self._pixmaps.clear()
+        self._race_urls.clear()
+        for index, race in enumerate(self._races()):
+            url = race_banner_url(race.get("race_id"), "en")
+            if not url:
+                continue
+            self._race_urls[index] = url
+            pixmap = self.repository.pixmap(url)
+            if pixmap is not None:
+                self._pixmaps[url] = pixmap
+        self.update()
+
+    def _image_ready(self, url: str, pixmap: object) -> None:
+        if url not in self._race_urls.values():
+            return
+        if isinstance(pixmap, QPixmap) and not pixmap.isNull():
+            self._pixmaps[url] = pixmap
+            self.update()
+
+    def _image_failed(self, url: str) -> None:
+        if url in self._race_urls.values():
+            self.update()
+
+    def retranslate(self) -> None:
+        self.setAccessibleName(self.context.t("Planning G1"))
+        self.setAccessibleDescription(
+            self.context.t(
+                "G1 à gagner avec la nouvelle trainee : +6 si les deux parents l’ont gagnée, +3 si un seul parent l’a gagnée."
+            )
+        )
+        self.update()
+
+    def _calendar_entries(self) -> tuple[dict[tuple[int, int, int], list[tuple[int, dict[str, Any]]]], list[tuple[int, dict[str, Any]]]]:
+        scheduled: dict[tuple[int, int, int], list[tuple[int, dict[str, Any]]]] = {}
+        unscheduled: list[tuple[int, dict[str, Any]]] = []
+        for index, race in enumerate(self._races()):
+            if "planned_slot" in race:
+                planned = race.get("planned_slot")
+                if isinstance(planned, dict):
+                    try:
+                        key = (
+                            int(planned.get("year")),
+                            int(planned.get("month")),
+                            int(planned.get("half")),
+                        )
+                    except (TypeError, ValueError):
+                        key = ()
+                    if (
+                        len(key) == 3
+                        and key[0] in (1, 2, 3)
+                        and 1 <= key[1] <= 12
+                        and key[2] in (1, 2)
+                    ):
+                        scheduled.setdefault(key, []).append((index, race))
+                elif race.get("planning_status") == "missing_calendar":
+                    unscheduled.append((index, race))
+                # A race rejected because its only turn is already occupied is
+                # kept in diagnostics, but is not part of the proposed plan.
+                continue
+            valid_slots: set[tuple[int, int, int]] = set()
+            for slot in race.get("schedule_slots") or []:
+                if not isinstance(slot, dict):
+                    continue
+                try:
+                    key = (
+                        int(slot.get("year")),
+                        int(slot.get("month")),
+                        int(slot.get("half")),
+                    )
+                except (TypeError, ValueError):
+                    continue
+                if key[0] not in (1, 2, 3) or not 1 <= key[1] <= 12 or key[2] not in (1, 2):
+                    continue
+                valid_slots.add(key)
+            if valid_slots:
+                # A race available in both Classic and Senior still creates
+                # only one race-affinity link. Plan it at its first available
+                # occurrence instead of displaying (and suggesting) it twice.
+                scheduled.setdefault(min(valid_slots), []).append((index, race))
+            else:
+                unscheduled.append((index, race))
+        for items in scheduled.values():
+            items.sort(
+                key=lambda item: (
+                    -int(item[1].get("affinity_bonus") or 0),
+                    str(item[1].get("name") or "").casefold(),
+                )
+            )
+        return scheduled, unscheduled
+
+    def _layout_metrics(
+        self,
+    ) -> tuple[
+        float,
+        float,
+        list[float],
+        float,
+        float,
+        list[tuple[int, dict[str, Any]]],
+        int,
+    ]:
+        """Return the immutable canvas metrics without changing widget geometry."""
+
+        width = float(self.BASE_WIDTH)
+        margin = 12.0
+        column_width = (
+            width - 2.0 * margin - 2.0 * self.YEAR_GAP
+        ) / 12.0
+        card_width = max(76.0, column_width - 10.0)
+        card_height = min(50.0, max(38.0, card_width * 0.36))
+        scheduled, unscheduled = self._calendar_entries()
+        row_heights: list[float] = []
+        for first_month in range(1, 13, 2):
+            maximum = max(
+                (
+                    len(scheduled.get((year, month, half), []))
+                    for year in (1, 2, 3)
+                    for month in (first_month, first_month + 1)
+                    for half in (1, 2)
+                ),
+                default=0,
+            )
+            card_rows = max(1, maximum)
+            row_heights.append(max(78.0, 26.0 + card_rows * (card_height + 5.0) + 7.0))
+        unknown_height = 0.0
+        if unscheduled:
+            unknown_height = 44.0 + math.ceil(len(unscheduled) / 4) * 30.0
+        required = 50.0 + sum(row_heights) + unknown_height + 16.0
+        required_int = max(200, int(math.ceil(required)))
+        return (
+            margin,
+            column_width,
+            row_heights,
+            card_width,
+            card_height,
+            unscheduled,
+            required_int,
+        )
+
+    def _required_height(self) -> int:
+        return self._layout_metrics()[-1]
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.fillRect(self.rect(), QColor(COLORS["background"]))
+        (
+            margin,
+            column_width,
+            row_heights,
+            card_width,
+            card_height,
+            unscheduled,
+            _required_height,
+        ) = self._layout_metrics()
+        scheduled, _ = self._calendar_entries()
+        width = float(self.BASE_WIDTH)
+        self._race_rects = []
+
+        year_font = QFont(self.font())
+        year_font.setPointSizeF(9.0)
+        year_font.setBold(True)
+        painter.setFont(year_font)
+        year_names = {
+            1: self.context.t("ANNÉE JUNIOR"),
+            2: self.context.t("ANNÉE CLASSIQUE"),
+            3: self.context.t("ANNÉE SENIOR"),
+        }
+        for year in (1, 2, 3):
+            background, foreground = self.YEAR_COLORS[year]
+            year_left = (
+                margin
+                + (year - 1) * (4.0 * column_width + self.YEAR_GAP)
+            )
+            rect = QRectF(
+                year_left,
+                6.0,
+                4.0 * column_width - 3.0,
+                31.0,
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(background))
+            painter.drawRoundedRect(rect, 7.0, 7.0)
+            painter.setPen(QColor(foreground))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, year_names[year])
+
+        label_font = QFont(self.font())
+        label_font.setPointSizeF(7.3)
+        label_font.setBold(True)
+        y = 44.0
+        for row_index, row_height in enumerate(row_heights):
+            first_month = row_index * 2 + 1
+            for year in (1, 2, 3):
+                for month_offset, month in enumerate((first_month, first_month + 1)):
+                    for half in (1, 2):
+                        column = (
+                            month_offset * 2 + (half - 1)
+                        )
+                        year_left = (
+                            margin
+                            + (year - 1)
+                            * (4.0 * column_width + self.YEAR_GAP)
+                        )
+                        cell = QRectF(
+                            year_left + column * column_width,
+                            y,
+                            column_width - 3.0,
+                            row_height - 3.0,
+                        )
+                        shade = "#121922" if (month + column) % 2 else "#141c26"
+                        painter.setBrush(QColor(shade))
+                        painter.setPen(QPen(QColor("#202b38"), 0.8))
+                        painter.drawRect(cell)
+                        period = self.context.t("Début") if half == 1 else self.context.t("Fin")
+                        header = f"{period} {self.context.t(self.MONTHS[month - 1])}"
+                        painter.setFont(label_font)
+                        painter.setPen(QColor("#7f91a8"))
+                        painter.drawText(
+                            QRectF(
+                                cell.left() + 3.0,
+                                cell.top() + 2.0,
+                                cell.width() - 6.0,
+                                17.0,
+                            ),
+                            Qt.AlignmentFlag.AlignCenter,
+                            header,
+                        )
+                        for item_index, (race_index, race) in enumerate(
+                            scheduled.get((year, month, half), [])
+                        ):
+                            card = QRectF(
+                                cell.left() + 5.0,
+                                cell.top() + 22.0 + item_index * (card_height + 5.0),
+                                card_width,
+                                card_height,
+                            )
+                            self._draw_race_card(painter, race_index, race, card)
+            y += row_height
+
+        if unscheduled:
+            title_rect = QRectF(margin, y + 7.0, width - 2.0 * margin, 24.0)
+            painter.setFont(year_font)
+            painter.setPen(QColor("#91a3bb"))
+            painter.drawText(
+                title_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self.context.t("DATE INDISPONIBLE DANS LE MASTER.MDB"),
+            )
+            chip_width = (width - 2.0 * margin - 3.0 * 8.0) / 4.0
+            for index, (race_index, race) in enumerate(unscheduled):
+                chip = QRectF(
+                    margin + (index % 4) * (chip_width + 8.0),
+                    y + 34.0 + (index // 4) * 30.0,
+                    chip_width,
+                    25.0,
+                )
+                self._draw_race_card(painter, race_index, race, chip, compact=True)
+
+    def _draw_race_card(
+        self,
+        painter: QPainter,
+        race_index: int,
+        race: dict[str, Any],
+        rect: QRectF,
+        *,
+        compact: bool = False,
+    ) -> None:
+        shared = bool(race.get("shared"))
+        border = "#e7bd38" if shared else "#57a7ff"
+        painter.setBrush(QColor("#101720"))
+        painter.setPen(QPen(QColor(border), 1.5))
+        painter.drawRoundedRect(rect, 5.0, 5.0)
+
+        url = self._race_urls.get(race_index)
+        pixmap = self._pixmaps.get(url or "")
+        has_banner = pixmap is not None and not pixmap.isNull() and not compact
+        if has_banner:
+            target = rect.adjusted(2.0, 2.0, -2.0, -2.0)
+            # Scale down to cover the card, but never enlarge a low-resolution
+            # GameTora banner.  Any uncovered edge keeps the card background.
+            cover_scale = max(
+                target.width() / float(pixmap.width()),
+                target.height() / float(pixmap.height()),
+            )
+            scale = min(1.0, cover_scale)
+            scaled = pixmap.scaled(
+                max(1, int(round(pixmap.width() * scale))),
+                max(1, int(round(pixmap.height() * scale))),
+                Qt.AspectRatioMode.IgnoreAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            visible_width = min(target.width(), float(scaled.width()))
+            visible_height = min(target.height(), float(scaled.height()))
+            destination = QRectF(
+                target.center().x() - visible_width / 2.0,
+                target.center().y() - visible_height / 2.0,
+                visible_width,
+                visible_height,
+            )
+            source = QRectF(
+                max(0.0, (scaled.width() - visible_width) / 2.0),
+                max(0.0, (scaled.height() - visible_height) / 2.0),
+                visible_width,
+                visible_height,
+            )
+            painter.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(target, 4.0, 4.0)
+            painter.setClipPath(clip)
+            painter.drawPixmap(destination, scaled, source)
+            painter.restore()
+
+        bonus = f"+{int(race.get('affinity_bonus') or 0)}"
+        badge_font = QFont(self.font())
+        badge_font.setPointSizeF(7.2)
+        badge_font.setBold(True)
+        painter.setFont(badge_font)
+        badge_width = painter.fontMetrics().horizontalAdvance(bonus) + 10.0
+        badge = QRectF(rect.right() - badge_width - 3.0, rect.top() + 3.0, badge_width, 18.0)
+        painter.setBrush(QColor("#0e1a17"))
+        painter.setPen(QPen(QColor("#4ac88f"), 1.0))
+        painter.drawRoundedRect(badge, 7.0, 7.0)
+        painter.setPen(QColor("#8af0c0"))
+        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, bonus)
+
+        name = str(race.get("name") or "G1")
+        # The banner already contains the race title. Only render our own
+        # label as a placeholder while the image is unavailable.
+        if compact or not has_banner:
+            text_font = QFont(self.font())
+            text_font.setPointSizeF(7.6)
+            text_font.setBold(True)
+            painter.setFont(text_font)
+            text_rect = rect.adjusted(7.0, 2.0, -5.0, -2.0)
+            available = max(
+                10,
+                int(text_rect.width() - badge_width - 6.0),
+            )
+            visible = painter.fontMetrics().elidedText(
+                name,
+                Qt.TextElideMode.ElideRight,
+                available,
+            )
+            painter.setPen(QColor("#f3f7fc"))
+            painter.drawText(
+                text_rect.adjusted(0.0, 0.0, -badge_width - 4.0, 0.0),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                visible,
+            )
+        self._race_rects.append((QRectF(rect), race))
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        point = event.position()
+        for rect, race in reversed(self._race_rects):
+            if not rect.contains(point):
+                continue
+            sources = ", ".join(str(value) for value in race.get("sources") or [])
+            bonus = int(race.get("affinity_bonus") or 0)
+            lines = [
+                str(race.get("name") or "G1"),
+                self.context.t("Bonus d’affinité planifié : +{bonus}")
+                .replace("{bonus}", str(bonus)),
+            ]
+            if sources:
+                lines.append(
+                    self.context.t("Déjà gagnée par : {sources}")
+                    .replace("{sources}", sources)
+                )
+            QToolTip.showText(event.globalPosition().toPoint(), "\n".join(lines), self)
+            return
+        QToolTip.hideText()
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+
 class GameRankGlyph(QWidget):
     """Small game-inspired rank letter with a gold fill and dark outline."""
 
@@ -919,7 +1356,7 @@ class LineageDialog(QDialog):
         self.repository = image_repository(context)
         self.setModal(True)
         self.setMinimumSize(980, 650)
-        self.resize(1480, 900)
+        self.resize(1600, 930)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 16, 18, 14)
@@ -957,8 +1394,8 @@ class LineageDialog(QDialog):
 
         self.nodes = build_result_lineage_nodes(self.ace, self.row, self.mode)
         self.tabs = QTabWidget()
-        visual_page = QWidget()
-        visual_layout = QVBoxLayout(visual_page)
+        self.visual_page = QWidget()
+        visual_layout = QVBoxLayout(self.visual_page)
         visual_layout.setContentsMargins(0, 0, 0, 0)
         self.spark_legend = QLabel()
         self.spark_legend.setObjectName("muted")
@@ -976,7 +1413,44 @@ class LineageDialog(QDialog):
         self.attribution.setOpenExternalLinks(True)
         self.attribution.setWordWrap(True)
         visual_layout.addWidget(self.attribution)
-        self.tabs.addTab(visual_page, "")
+        self.tabs.addTab(self.visual_page, "")
+
+        self.race_plan = (
+            self.row.get("race_affinity_plan")
+            or (self.row.get("affinity") or {}).get("race_affinity_plan")
+            or (self.row.get("final_parent_affinity") or {}).get("race_affinity_plan")
+            or (self.row.get("final_branch_affinity") or {}).get("race_affinity_plan")
+            or {}
+        )
+        if not isinstance(self.race_plan, dict):
+            self.race_plan = {}
+        self.planning_page: QWidget | None = None
+        self.calendar: RaceCalendarWidget | None = None
+        self.planning_legend: QLabel | None = None
+        if self.race_plan.get("races"):
+            self.planning_page = QWidget()
+            planning_layout = QVBoxLayout(self.planning_page)
+            planning_layout.setContentsMargins(0, 0, 0, 0)
+            self.planning_legend = QLabel()
+            self.planning_legend.setObjectName("muted")
+            self.planning_legend.setWordWrap(True)
+            planning_layout.addWidget(self.planning_legend)
+            planning_scroll = QScrollArea()
+            # Keep the game-like canvas and banner density stable; a smaller
+            # dialog scrolls, a larger dialog centres the same fixed planning.
+            planning_scroll.setWidgetResizable(False)
+            planning_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            planning_scroll.setAlignment(
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+            )
+            self.calendar = RaceCalendarWidget(
+                context,
+                self.race_plan,
+                self.repository,
+            )
+            planning_scroll.setWidget(self.calendar)
+            planning_layout.addWidget(planning_scroll, 1)
+            self.tabs.addTab(self.planning_page, "")
 
         self.details = QTextBrowser()
         self.details.setOpenExternalLinks(True)
@@ -1071,8 +1545,10 @@ class LineageDialog(QDialog):
             self.distance_badge.set_metric("P(S)", f"{probability:.1f}%", rank="S")
         self.online_toggle.setText(t("Illustrations en ligne (cache local)"))
         self.clear_cache_button.setText(t("Vider le cache d’images"))
-        self.tabs.setTabText(0, t("Vue de lignée"))
-        self.tabs.setTabText(1, t("Diagnostic"))
+        self.tabs.setTabText(self.tabs.indexOf(self.visual_page), t("Vue de lignée"))
+        if self.planning_page is not None:
+            self.tabs.setTabText(self.tabs.indexOf(self.planning_page), t("Planning G1"))
+        self.tabs.setTabText(self.tabs.indexOf(self.details), t("Diagnostic"))
         component_details = self.row.get("component_details") or {}
         if not isinstance(component_details, dict):
             component_details = {}
@@ -1086,20 +1562,53 @@ class LineageDialog(QDialog):
                 "de la run lorsqu’elle est disponible · ◆ doré = priorité majeure · ◇ bleu = white compatible, utile ou rare pour le profil."
             ).replace("{count}", str(event_count))
         )
+        if self.planning_legend is not None:
+            shared_bonus = int(self.race_plan.get("shared_race_bonus") or 6)
+            one_side_bonus = int(self.race_plan.get("one_side_race_bonus") or 3)
+            optimal_bonus = int(
+                self.race_plan.get("optimal_bonus")
+                or self.race_plan.get("exact_bonus_if_all_won")
+                or 0
+            )
+            race_count = int(
+                self.race_plan.get("optimal_race_count")
+                or self.race_plan.get("race_count")
+                or 0
+            )
+            streaks = self.race_plan.get("streaks") or {}
+            max_consecutive = int(streaks.get("max_consecutive") or 0)
+            self.planning_legend.setText(
+                t(
+                    "Gagne ces G1 avec la nouvelle trainee pour créer les liens de course : "
+                    "+{shared} si les deux parents l’ont déjà gagnée · "
+                    "+{single} si un seul parent l’a gagnée. Planning optimal : "
+                    "+{optimal} avec {count} courses, une seule par tour, "
+                    "{streak} consécutive(s) au maximum."
+                )
+                .replace("{shared}", str(shared_bonus))
+                .replace("{single}", str(one_side_bonus))
+                .replace("{optimal}", str(optimal_bonus))
+                .replace("{count}", str(race_count))
+                .replace("{streak}", str(max_consecutive))
+            )
         self.attribution.setText(
             t(
-                'Illustrations de trainees et icônes de skills chargées à la demande depuis '
-                '<a href="https://gametora.com/umamusume/characters">GameTora</a> et conservées uniquement '
+                'Les bannières G1, illustrations de trainees et icônes de skills sont chargées à la demande depuis '
+                '<a href="https://gametora.com/umamusume/races">GameTora</a> et conservées uniquement '
                 'dans le cache local. Visuels du jeu © Cygames, Inc.'
             )
         )
         self.close_button.setText(t("Fermer"))
         self.tree.retranslate()
+        if self.calendar is not None:
+            self.calendar.retranslate()
         self._update_cache_label()
 
     def _toggle_online_images(self, enabled: bool) -> None:
         set_online_images_enabled(self.context, enabled)
         self.tree.refresh_images()
+        if self.calendar is not None:
+            self.calendar.refresh_images()
         self._update_cache_label()
 
     def _update_cache_label(self) -> None:
@@ -1125,3 +1634,5 @@ class LineageDialog(QDialog):
             return
         self.repository.clear_cache()
         self.tree.refresh_images()
+        if self.calendar is not None:
+            self.calendar.refresh_images()

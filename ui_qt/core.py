@@ -34,6 +34,7 @@ from uma_moe import (
     OnlineSearchResult,
     UmaMoeApiClient,
     UmaMoeError,
+    build_lineage_factor_api_filters,
     extract_opposing_parent_candidates,
     generate_auto_uql,
     rank_online_grandparent_pairs,
@@ -700,6 +701,30 @@ def run_online_search(
         progress(100, "Paires de GP locales classées.")
         return result
 
+    linked_payload = (
+        read_json_object(linked.json_path)
+        if linked.json_path.is_file()
+        else {}
+    )
+    linked_veterans = list(linked_payload.get("veterans") or [])
+
+    def linked_member(trained_id: int | None) -> dict[str, Any] | None:
+        if trained_id is None:
+            return None
+        return next(
+            (
+                member
+                for member in linked_veterans
+                if int(member.get("trained_chara_id") or 0) == int(trained_id)
+            ),
+            None,
+        )
+
+    fixed_local_context = linked_member(request.fixed_local_id)
+    opposing_context = request.opposing_parent_payload or linked_member(
+        request.opposing_parent_trained_id
+    )
+
     effective_uql = request.uql.strip()
     auto_uql_text, generated_meta = generate_auto_uql(
         manual_weights.weights_path,
@@ -713,11 +738,20 @@ def run_online_search(
         scoring_config_path=scoring_config,
         options=request.uql_options or {},
         master_path=request.master_path,
+        ace_card_id=request.ace_card_id,
+        search_mode=request.search_mode,
+        opposing_parent=opposing_context,
+        fixed_local_parent=fixed_local_context,
     )
-    search_filters = generated_meta.get("search_filters") or {}
-    main_pinks = list(search_filters.get("main_parent_pink_sparks") or [])
-    profile_whites = list(search_filters.get("optional_main_white_factors") or [])
-    lineage_whites = list(search_filters.get("optional_white_sparks") or [])
+    search_filters = dict(generated_meta.get("search_filters") or {})
+    lineage_api_filters, lineage_api_diagnostics = build_lineage_factor_api_filters(
+        request.master_path,
+        request.lineage_blue_filter,
+        request.lineage_pink_filter,
+    )
+    search_filters.update(lineage_api_filters)
+    generated_meta["search_filters"] = search_filters
+    generated_meta["lineage_api_filters"] = lineage_api_diagnostics
     operation: dict[str, Any] | None
 
     if request.auto_uql and not request.use_import:
@@ -748,13 +782,20 @@ def run_online_search(
             request.api_base.strip() or DEFAULT_API_BASE,
             token=(request.token.strip() or None),
         )
-        api_filters: dict[str, list[int]] = {}
-        if main_pinks:
-            api_filters["main_parent_pink_sparks"] = main_pinks
-        if profile_whites:
-            api_filters["optional_main_white_factors"] = profile_whites
-        if lineage_whites:
-            api_filters["optional_white_sparks"] = lineage_whites
+        api_filters: dict[str, Any] = {
+            key: value
+            for key, value in search_filters.items()
+            if value not in (None, "", [], (), {})
+        }
+        if lineage_api_diagnostics:
+            logger(
+                "Filtres lignée appliqués par l’API avant pagination puis "
+                "revalidés localement : "
+                + ", ".join(
+                    f"{item['factor']} ≥ {item['minimum_stars']}★"
+                    for item in lineage_api_diagnostics.values()
+                )
+            )
         if request.search_mode == "parent" and (
             request.allowed_parent_card_ids or request.excluded_parent_card_ids
         ):
@@ -769,8 +810,9 @@ def run_online_search(
                 logger(
                     "Filtres costume non détectés dans l’OpenAPI : contrôle local uniquement."
                 )
-        raw_payload, operation = client.search_many(
-            filters=api_filters,
+        raw_payload, operation = client.search_many_planned(
+            base_filters=api_filters,
+            retrieval_plan=generated_meta.get("retrieval_plan") or {},
             desired_candidates=desired,
             page_size=100,
             logger=logger,

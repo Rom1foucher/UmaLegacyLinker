@@ -19,6 +19,7 @@ from scoring_config import (
 from uma_moe import (
     MAX_FETCH_CANDIDATES,
     UmaMoeApiClient,
+    _recall_guard_remote_pool_size,
     _select_diverse_parent_branch_pool,
     _future_gp_pair_g1_score,
     _future_gp_preselection_weights,
@@ -384,6 +385,32 @@ class FakeUmaMoeClient(UmaMoeApiClient):
 
 
 class UmaMoeFetchLimitTests(unittest.TestCase):
+    def test_hard_filter_recall_guard_keeps_all_350_valid_candidates(self) -> None:
+        self.assertEqual(
+            _recall_guard_remote_pool_size(
+                100,
+                350,
+                hard_filter_active=True,
+            ),
+            350,
+        )
+        self.assertEqual(
+            _recall_guard_remote_pool_size(
+                100,
+                350,
+                hard_filter_active=False,
+            ),
+            100,
+        )
+        self.assertEqual(
+            _recall_guard_remote_pool_size(
+                100,
+                2000,
+                hard_filter_active=True,
+            ),
+            500,
+        )
+
     def test_search_many_hard_caps_at_2000_candidates(self) -> None:
         client = FakeUmaMoeClient()
         payload, operation = client.search_many(desired_candidates=5000, page_size=100)

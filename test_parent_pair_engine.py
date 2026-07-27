@@ -1,3 +1,5 @@
+import unittest
+
 from parent_optimizer import (
     _aptitude_pair_score,
     _blue_score,
@@ -156,6 +158,11 @@ def test_parent_pair_engine_scores_all_six_members_and_five_g1_links():
     assert pair["affinity"]["g1_bonus"] == 15
     assert pair["affinity"]["total"] == 63
     assert pair["affinity"]["parent_parent_common_g1"] == ["Z"]
+    assert pair["race_affinity_plan"]["common_g1_names"] == ["Z"]
+    assert pair["race_affinity_plan"]["left_only_g1_names"] == ["A", "B"]
+    assert pair["race_affinity_plan"]["right_only_g1_names"] == ["C", "D"]
+    assert pair["race_affinity_plan"]["exact_bonus_if_all_won"] == 18
+    assert pair["component_details"]["affinity"]["g1_race_plan"] is pair["race_affinity_plan"]
     assert pair["affinity"]["parent_1_branch"]["details"]["parent_gp1_common_g1"] == ["A"]
     assert pair["affinity"]["parent_2_branch"]["details"]["parent_gp2_common_g1"] == ["D"]
     assert pair["component_details"]["blue"]["slot_count"] == 6
@@ -890,3 +897,8 @@ def test_race_scenario_component_no_longer_scores_granted_skill_weight():
     )
     assert high_weight == zero_weight
     assert detail_high["top_factors"][0]["granted_skills_scored_in"] == "white_skill"
+
+
+class ParentPairG1DiagnosticTests(unittest.TestCase):
+    def test_shared_and_one_sided_g1_diagnostic(self):
+        test_parent_pair_engine_scores_all_six_members_and_five_g1_links()

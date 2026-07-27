@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from g1_race_planning import build_pair_g1_diagnostic
+
 
 SURFACES = ("turf", "dirt")
 DISTANCES = ("sprint", "mile", "medium", "long")
@@ -2150,7 +2152,14 @@ def evaluate_parent_pair(
     )
 
     parent_pair_base = resolver.pair(chara_1, chara_2)
-    parent_common = sorted(_member_g1(parent_1) & _member_g1(parent_2))
+    race_affinity_plan = build_pair_g1_diagnostic(
+        parent_1,
+        parent_2,
+        left_label="parent_1",
+        right_label="parent_2",
+        bonus_per_link=resolved_g1_bonus,
+    )
+    parent_common = list(race_affinity_plan["common_g1_names"])
     parent_pair_g1 = resolved_g1_bonus * len(parent_common)
     inheritance_affinity_detail = _pair_inheritance_affinities(
         resolver, int(ace.get("chara_id") or 0), parent_1, parent_2, resolved_g1_bonus
@@ -2162,6 +2171,9 @@ def evaluate_parent_pair(
         "parent_parent_base": parent_pair_base,
         "parent_parent_common_g1": parent_common,
         "parent_parent_common_g1_bonus": parent_pair_g1,
+        "parent_parent_left_only_g1": race_affinity_plan["left_only_g1_names"],
+        "parent_parent_right_only_g1": race_affinity_plan["right_only_g1_names"],
+        "race_affinity_plan": race_affinity_plan,
         "parent_1_branch": left["affinity"],
         "parent_2_branch": right["affinity"],
         "inheritance_affinities": inheritance_affinity_detail,
@@ -2225,7 +2237,10 @@ def evaluate_parent_pair(
                 "parent_parent_base": parent_pair_base,
                 "parent_parent_common_g1": parent_common,
                 "parent_parent_common_g1_bonus": parent_pair_g1,
+                "parent_parent_left_only_g1": race_affinity_plan["left_only_g1_names"],
+                "parent_parent_right_only_g1": race_affinity_plan["right_only_g1_names"],
             },
+            "g1_race_plan": race_affinity_plan,
             "inheritance_affinities": inheritance_affinity_detail,
             "note": "Overall compatibility remains diagnostic; Spark proc estimates use the six individual coefficients.",
         },
@@ -2234,6 +2249,7 @@ def evaluate_parent_pair(
         "parent_1": _candidate_identity(parent_1),
         "parent_2": _candidate_identity(parent_2),
         "affinity": affinity,
+        "race_affinity_plan": race_affinity_plan,
         "components": components,
         "component_details": component_details,
         "score": _weighted_total(components, weights),
@@ -2707,6 +2723,15 @@ def optimize_parents(
                 "affinity_g1_bonus": row["affinity"]["g1_bonus"],
                 "affinity_component_score": round(row["components"]["affinity"], 3),
                 "parent_parent_common_g1": " | ".join(row["affinity"]["parent_parent_common_g1"]),
+                "parent_1_only_g1": " | ".join(
+                    (row.get("race_affinity_plan") or {}).get("left_only_g1_names") or []
+                ),
+                "parent_2_only_g1": " | ".join(
+                    (row.get("race_affinity_plan") or {}).get("right_only_g1_names") or []
+                ),
+                "optimal_g1_plan_bonus": (
+                    (row.get("race_affinity_plan") or {}).get("exact_bonus_if_all_won")
+                ),
                 "distance_status": row["distance_viability"]["key"],
                 "distance_tier": row["distance_viability"]["tier"],
                 "distance_stars": row["distance_s_summary"]["total_stars"],
@@ -2742,7 +2767,7 @@ def optimize_parents(
         _write_csv(
             parent_pairs_csv,
             pair_csv_rows,
-            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "parent_1_only_g1", "parent_2_only_g1", "optimal_g1_plan_bonus", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         future_csv_rows = [

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 GAMETORA_CHARACTER_BASE = "https://gametora.com/images/umamusume/characters"
 GAMETORA_SUPPORT_BASE = "https://media.gametora.com/umamusume/supports/full/small"
 GAMETORA_SKILL_BASE = "https://media.gametora.com/umamusume/skills/icon"
+GAMETORA_RACE_BANNER_BASE = "https://media.gametora.com/umamusume/races/banners"
 ALLOWED_IMAGE_HOSTS = frozenset({"gametora.com", "www.gametora.com", "media.gametora.com"})
 
 
@@ -51,6 +52,16 @@ def skill_icon_url(skill_id: object) -> str | None:
     if resolved is None:
         return None
     return f"{GAMETORA_SKILL_BASE}/{resolved}.png"
+
+
+def race_banner_url(race_id: object, language: str = "en") -> str | None:
+    """Return GameTora's compact in-game race banner for a resolved race ID."""
+
+    resolved = _positive_integer(race_id)
+    if resolved is None:
+        return None
+    locale = "jp" if str(language).strip().lower().startswith("ja") else "en"
+    return f"{GAMETORA_RACE_BANNER_BASE}/{locale}/{resolved}.png"
 
 
 def is_allowed_image_url(url: str) -> bool:

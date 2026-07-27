@@ -4,8 +4,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from uma_moe import UmaMoeApiClient, generate_auto_uql
+from uma_moe import (
+    UmaMoeApiClient,
+    build_lineage_factor_api_filters,
+    generate_auto_uql,
+)
 
 
 class UmaMoeUqlOptionTests(unittest.TestCase):
@@ -111,6 +117,84 @@ class UmaMoeUqlOptionTests(unittest.TestCase):
         for filters in client.seen_filters:
             self.assertEqual(filters["min_blue_stars_sum"], 7)
             self.assertEqual(filters["min_white_count"], 12)
+
+    def test_named_lineage_minimum_becomes_api_aggregate_id_range(self) -> None:
+        resolver = SimpleNamespace(
+            factors={
+                201: {
+                    "factor_id": 201,
+                    "type": "blue_stat",
+                    "name": "Stamina",
+                },
+                202: {
+                    "factor_id": 202,
+                    "type": "blue_stat",
+                    "name": "Stamina",
+                },
+                1201: {
+                    "factor_id": 1201,
+                    "type": "red_aptitude",
+                    "name": "Dirt",
+                },
+            },
+            close=lambda: None,
+        )
+        with patch("uma_moe.MasterResolver", return_value=resolver):
+            filters, diagnostics = build_lineage_factor_api_filters(
+                "master.mdb",
+                ("Stamina", 5),
+                ("Dirt", 4),
+            )
+
+        self.assertEqual(filters["blue_sparks"], [205, 206, 207, 208, 209])
+        self.assertEqual(
+            filters["pink_sparks"],
+            [1204, 1205, 1206, 1207, 1208, 1209],
+        )
+        self.assertTrue(diagnostics["blue_sparks"]["server_side"])
+        self.assertTrue(diagnostics["blue_sparks"]["locally_revalidated"])
+
+    def test_hard_lineage_filter_suppresses_conflicting_soft_cohort(self) -> None:
+        class RecordingClient(UmaMoeApiClient):
+            def __init__(self) -> None:
+                super().__init__("https://example.invalid/api")
+                self.seen_filters: list[dict[str, object]] = []
+
+            def search_many(  # type: ignore[override]
+                self, *, filters=None, desired_candidates=250, page_size=100, logger=None
+            ):
+                self.seen_filters.append(dict(filters or {}))
+                return {"items": []}, {"filters": dict(filters or {})}
+
+        client = RecordingClient()
+        _payload, operation = client.search_many_planned(
+            base_filters={"pink_sparks": [1205, 1206, 1207, 1208, 1209]},
+            retrieval_plan={
+                "cohorts": [
+                    {
+                        "name": "distance",
+                        "kind": "distance",
+                        "share": 0.45,
+                        "filters": {"pink_sparks": [3203, 3204]},
+                    },
+                    {
+                        "name": "large",
+                        "kind": "broad",
+                        "share": 0.55,
+                        "filters": {},
+                    },
+                ]
+            },
+            desired_candidates=100,
+        )
+
+        self.assertEqual(
+            client.seen_filters,
+            [{"pink_sparks": [1205, 1206, 1207, 1208, 1209]}],
+        )
+        suppressed = operation["retrieval_plan"]["suppressed_conflicting_cohorts"]
+        self.assertEqual(suppressed[0]["kind"], "distance")
+        self.assertEqual(suppressed[0]["conflicting_keys"], ["pink_sparks"])
 
 
 if __name__ == "__main__":

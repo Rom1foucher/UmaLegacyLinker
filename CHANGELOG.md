@@ -4,6 +4,8 @@ This project uses feature-level semantic versioning. Small internal iterations a
 
 ## 1.7.1 - Preset and export fixes
 
+- Added explicit shared/one-sided G1 diagnostics to parent and grandparent pairs. The Lineage Viewer now turns those races into a three-year in-game-style planning calendar, labels shared races `+6` and one-sided races `+3`, and loads GameTora G1 banners through the existing bounded local image cache. The calendar uses a fixed scrollable canvas so layout negotiation cannot recurse through `sizeHint()`, and cached banners are never enlarged beyond their native resolution.
+- Fixed the Qt uma.moe fetch pipeline so every generated structured filter and the planned Distance/Surface/broad cohorts reach `/api/v3/search` instead of being discarded before a plain broad fetch. Per-factor Blue/Pink lineage minima now run server-side before the 2,000-result cap and are revalidated locally; hard-filtered automatic searches retain every valid remote candidate up to the 500-candidate exact-scoring ceiling.
 - Restored file and clipboard Lineage Planner export on uma.moe parent-pair results, verified the output against the current frontend v1 import envelope and preserved race-saddle histories for normalized and remote lineage members.
 - Fixed course-preset persistence in the Qt interface, including the explicit no-preset state, complete condition replacement when switching presets and preserving a preset when only the running style changes.
 - Unified the Ace, target parent, race profile, course preset, exact conditions and scoring inputs into one live context shared by the Lineage Optimisation and uma.moe pages. Both pages now display and edit every shared race/scoring input they consume.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from parent_optimizer import lineage_preview_for_pair
 from ui_qt.asset_catalog import (
     image_cache_path,
     is_allowed_image_url,
+    race_banner_url,
     skill_icon_url,
     support_card_image_url,
     trainee_image_url,
@@ -38,6 +40,36 @@ def member(card_id: int, name: str, *, blue: int = 0, pink: int = 0) -> dict:
 
 
 class VisualAssetTests(unittest.TestCase):
+    def test_race_calendar_size_hint_path_has_no_geometry_mutation(self) -> None:
+        source = Path("ui_qt/lineage_view.py").read_text(encoding="utf-8")
+        module = ast.parse(source)
+        calendar = next(
+            node
+            for node in module.body
+            if isinstance(node, ast.ClassDef) and node.name == "RaceCalendarWidget"
+        )
+        methods = {
+            node.name: node
+            for node in calendar.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertNotIn("sizeHint", methods)
+        layout_calls = {
+            node.func.attr
+            for node in ast.walk(methods["_layout_metrics"])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        self.assertFalse(
+            {"setMinimumHeight", "setMinimumSize", "setFixedSize"} & layout_calls
+        )
+
+    def test_race_calendar_uses_one_slot_and_banner_as_the_title(self) -> None:
+        source = Path("ui_qt/lineage_view.py").read_text(encoding="utf-8")
+        self.assertIn('if "planned_slot" in race:', source)
+        self.assertIn("scheduled.setdefault(key, []).append", source)
+        self.assertIn("if compact or not has_banner:", source)
+        self.assertEqual(source.count("class RaceCalendarWidget"), 1)
+
     def test_known_gametora_asset_urls_are_costume_aware(self) -> None:
         self.assertEqual(
             trainee_image_url(103101),
@@ -50,6 +82,10 @@ class VisualAssetTests(unittest.TestCase):
         self.assertEqual(
             skill_icon_url(10011),
             "https://media.gametora.com/umamusume/skills/icon/10011.png",
+        )
+        self.assertEqual(
+            race_banner_url(1022),
+            "https://media.gametora.com/umamusume/races/banners/en/1022.png",
         )
 
     def test_remote_image_allowlist_rejects_non_https_and_lookalikes(self) -> None:

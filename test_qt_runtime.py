@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -52,6 +54,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
     def test_result_panes_do_not_refresh_before_the_detail_browser_exists(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
         from ui_qt.pages_optimizer import ResultPane
 
         errors: list[BaseException] = []
@@ -70,7 +73,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                 self.assertEqual(errors, [])
         finally:
             for pane in panes:
-                pane.close()
+                _dispose_widget(pane, self.application)
             sys.excepthook = previous_hook
 
     def test_searchable_combo_resolves_text_without_stale_item_data(self) -> None:
@@ -96,6 +99,202 @@ class QtRuntimeSmokeTests(unittest.TestCase):
 
         combo._completion_activated("MEJIRO MCQUEEN — ORIGINAL")
         self.assertEqual(combo.currentData(), 202)
+
+    def test_shared_race_editor_applies_clears_and_synchronizes_presets(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.lineage_settings import LineageRaceEditor
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            presets = root / "courses.json"
+            presets.write_text(
+                json.dumps(
+                    {
+                        "courses": {
+                            "full": {
+                                "label": "Full preset",
+                                "profile": {
+                                    "surface": "turf",
+                                    "distance": "medium",
+                                },
+                                "race": {"racecourse": "Kyoto"},
+                                "conditions": {
+                                    "track_id": 10008,
+                                    "rotation": 1,
+                                    "season": 3,
+                                    "weather": 1,
+                                    "ground_condition": 1,
+                                },
+                            },
+                            "partial": {
+                                "label": "Partial preset",
+                                "profile": {
+                                    "surface": "dirt",
+                                    "distance": "mile",
+                                },
+                                "conditions": {"rotation": 2},
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store = SettingsStore(root / "config.json")
+            store.update({"course_overrides_path": str(presets)})
+            context = AppContext(store)
+            first = LineageRaceEditor(context)
+            second = LineageRaceEditor(context)
+            tracks = [
+                SimpleNamespace(
+                    name="Kyoto",
+                    display_name="Kyoto (10008)",
+                    track_id=10008,
+                )
+            ]
+            first.course_combo.setCurrentIndex(
+                first.course_combo.findData("full")
+            )
+            state = context.lineage_state()
+            self.assertEqual(state.course_key, "full")
+            self.assertEqual((state.surface, state.distance), ("turf", "medium"))
+            # A preset selected before the MDB lists load must not lose its
+            # explicit track identifier.
+            self.assertEqual(state.track_id, 10008)
+            first.set_track_options(tracks)
+            second.set_track_options(tracks)
+            self.assertEqual(state.season, "Automne")
+            self.assertEqual(second.course_combo.currentData(), "full")
+            self.assertEqual(second.track_combo.currentData(), 10008)
+
+            style_index = first.style_combo.findData("end_closer")
+            first.style_combo.setCurrentIndex(style_index)
+            first.style_combo.activated.emit(style_index)
+            self.assertEqual(context.lineage_state().course_key, "full")
+
+            surface_index = first.surface_combo.findData("dirt")
+            first.surface_combo.setCurrentIndex(surface_index)
+            first.surface_combo.activated.emit(surface_index)
+            self.assertEqual(context.lineage_state().course_key, "")
+            self.assertEqual(second.course_combo.currentIndex(), 0)
+
+            first.course_combo.setCurrentIndex(
+                first.course_combo.findData("full")
+            )
+            first.course_combo.setCurrentIndex(
+                first.course_combo.findData("partial")
+            )
+            state = context.lineage_state()
+            self.assertEqual(state.course_key, "partial")
+            self.assertEqual((state.surface, state.distance), ("dirt", "mile"))
+            self.assertEqual(state.rotation, "Gauche")
+            self.assertEqual(state.season, "Non précisé")
+            self.assertEqual(state.weather, "Non précisé")
+            self.assertEqual(state.ground_condition, "Non précisé")
+            self.assertEqual(state.track_id, 0)
+
+            second.course_combo.setCurrentIndex(0)
+            self.assertEqual(context.lineage_state().course_key, "")
+            self.assertEqual(first.course_combo.currentIndex(), 0)
+            self.assertEqual(store.get("optimizer_course_key"), "")
+
+            _dispose_widget(first, self.application)
+            _dispose_widget(second, self.application)
+
+    def test_lineage_and_online_pages_share_live_editable_context(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_online import OnlinePage
+        from ui_qt.pages_optimizer import OptimizerPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(
+                SettingsStore(Path(temp_dir) / "config.json")
+            )
+            optimizer = OptimizerPage(context)
+            online = OnlinePage(context)
+            options = (
+                ("Ace — Costume", 101, 1),
+                ("Parent — Costume", 202, 2),
+                ("Other — Costume", 303, 3),
+            )
+            optimizer._card_to_chara = {
+                card_id: chara_id
+                for _label, card_id, chara_id in options
+            }
+            online._card_to_chara = dict(optimizer._card_to_chara)
+            for combo in (
+                optimizer.ace_combo,
+                optimizer.parent_combo,
+                online.ace_combo,
+                online.target_combo,
+            ):
+                combo.blockSignals(True)
+                combo.clear()
+                for label, card_id, _chara_id in options:
+                    combo.addItem(label, card_id)
+                combo.blockSignals(False)
+
+            optimizer.ace_combo.setCurrentIndex(
+                optimizer.ace_combo.findData(101)
+            )
+            optimizer.parent_combo.setCurrentIndex(
+                optimizer.parent_combo.findData(202)
+            )
+            self.assertEqual(online.ace_combo.currentData(), 101)
+            self.assertEqual(online.target_combo.currentData(), 202)
+
+            # The optimiser still enforces the domain rule when the shared
+            # target is edited from uma.moe.
+            online.target_combo.setCurrentIndex(
+                online.target_combo.findData(101)
+            )
+            self.assertEqual(context.lineage_state().future_parent_card_id, 202)
+            self.assertEqual(online.target_combo.currentData(), 202)
+
+            online.top_spin.setValue(77)
+            self.assertEqual(optimizer.top_n_spin.value(), 77)
+            self.assertEqual(context.lineage_state().top_n, 77)
+
+            dirt_index = online.surface_combo.findData("dirt")
+            online.surface_combo.setCurrentIndex(dirt_index)
+            online.surface_combo.activated.emit(dirt_index)
+            self.assertEqual(optimizer.surface_combo.currentData(), "dirt")
+            self.assertEqual(
+                context.store.get("optimizer_surface"), "dirt"
+            )
+
+            _dispose_widget(optimizer, self.application)
+            _dispose_widget(online, self.application)
+
+    def test_combo_popups_keep_dark_readable_palettes(self) -> None:
+        from PySide6.QtGui import QPalette
+
+        from ui_qt.components import SearchableComboBox, ThemedComboBox
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.theme import COLORS
+
+        for combo in (ThemedComboBox(), SearchableComboBox()):
+            views = [combo.view()]
+            if isinstance(combo, SearchableComboBox):
+                views.append(combo.completer().popup())
+            for view in views:
+                palette = view.palette()
+                self.assertEqual(
+                    palette.color(QPalette.ColorRole.Base).name(),
+                    COLORS["surface_alt"],
+                )
+                self.assertEqual(
+                    palette.color(QPalette.ColorRole.Text).name(),
+                    COLORS["text"],
+                )
+                self.assertNotEqual(
+                    palette.color(QPalette.ColorRole.Base),
+                    palette.color(QPalette.ColorRole.Text),
+                )
+            _dispose_widget(combo, self.application)
 
     def test_distribution_chart_renders_at_editor_width(self) -> None:
         from ui_qt.distribution_chart import DistributionDonut

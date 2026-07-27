@@ -72,6 +72,8 @@ EXACT_EN: dict[str, str] = {
     "Incompatible → green skill à 0 ; correspondante → activée.": "Incompatible → green skill set to 0; matching → enabled.",
     "Preset de course": "Course preset",
     "Profil générique": "Generic profile",
+    "Aucun preset — profil manuel": "No preset — manual profile",
+    "Ces réglages sont partagés en temps réel entre Optimisation de lignée et uma.moe.": "These settings are shared in real time between Lineage Optimisation and uma.moe.",
     "Facultatif — corrections liées au tracé exact ; le fichier fourni contient CM9 à CM16.": "Optional — adjustments for the exact course layout; the bundled file contains CM9 to CM16.",
     "Facultatif — CM16 à CM46, profils Team Trials et archive CM9 à CM15.": "Optional — CM16 to CM46, Team Trials profiles, and the CM9 to CM15 archive.",
     "Calculer les meilleurs parents / grands-parents": "Calculate the best parents / grandparents",

@@ -2,6 +2,12 @@
 
 This project uses feature-level semantic versioning. Small internal iterations are consolidated into the nearest meaningful release instead of receiving their own public version.
 
+## Unreleased
+
+- Fixed course-preset persistence in the Qt interface, including the explicit no-preset state, complete condition replacement when switching presets and preserving a preset when only the running style changes.
+- Unified the Ace, target parent, race profile, course preset, exact conditions and scoring inputs into one live context shared by the Lineage Optimisation and uma.moe pages. Both pages now display and edit every shared race/scoring input they consume.
+- Applied an explicit dark palette to standard selectors, searchable dropdowns and detached completer popups so native Windows popup styling cannot produce white text on a white background.
+
 ## 1.7.0 - PySide6 becomes the only interface
 
 - Added umadump as a second extraction backend, selected automatically from the tool's name. It is run once from the output folder so its exports land beside the other artefacts, and its `trained_chara_data.json` feeds the linker unchanged.

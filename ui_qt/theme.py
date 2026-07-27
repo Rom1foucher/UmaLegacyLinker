@@ -246,10 +246,23 @@ def application_stylesheet() -> str:
         border: none;
         width: 24px;
     }}
-    QComboBox QAbstractItemView {{
+    QComboBox QAbstractItemView, QAbstractItemView#comboPopup {{
         background: {COLORS['surface_alt']};
+        color: {COLORS['text']};
         border: 1px solid {COLORS['border']};
         selection-background-color: #27564f;
+        selection-color: {COLORS['text']};
+        outline: none;
+    }}
+    QComboBox QAbstractItemView::item, QAbstractItemView#comboPopup::item {{
+        min-height: 25px;
+        padding: 4px 7px;
+        background: {COLORS['surface_alt']};
+        color: {COLORS['text']};
+    }}
+    QComboBox QAbstractItemView::item:selected, QAbstractItemView#comboPopup::item:selected {{
+        background: #27564f;
+        color: {COLORS['text']};
     }}
     QCheckBox {{
         spacing: 7px;

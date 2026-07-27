@@ -36,9 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from i18n import profile_values
-from course_presets import course_preset_conditions, load_course_preset_payload, ordered_course_presets
-from parent_optimizer import OptimizerError, load_ace_options
+from parent_optimizer import OptimizerError, load_ace_options, load_track_options
 from secret_store import SecretStoreError, resolve_api_key, save_api_key
 from uma_moe import (
     DEFAULT_API_BASE,
@@ -53,21 +51,22 @@ from ui_qt.components import (
     PageHeader,
     PathPicker,
     SearchableComboBox,
+    ThemedComboBox,
     muted_label,
     section_label,
     sync_scroll_pane_height,
 )
-from ui_qt.context import AppContext
+from ui_qt.context import AppContext, LineageContextState
 from ui_qt.core import (
     OnlineSearchRequest,
     VeteranOption,
-    active_course_overrides_path,
     api_key_path,
     load_local_veteran_options,
     load_opposing_parent_candidates,
     open_path,
     run_online_search,
 )
+from ui_qt.lineage_settings import LineageRaceEditor
 from ui_qt.lineage_view import LineageDialog
 from ui_qt.models import Column, ResultTableModel, nested
 from ui_qt.presentation import distance_status, online_detail_html, profile_summary
@@ -398,6 +397,7 @@ class OnlinePage(QWidget):
         self._ace_options: list[Any] = []
         self._local_options: list[VeteranOption] = []
         self._card_to_chara: dict[int, int] = {}
+        self._syncing_lineage = False
         self._allowed_ids = _id_set(context.store.get("uma_moe_parent_allowed_card_ids"))
         self._excluded_ids = _id_set(context.store.get("uma_moe_parent_excluded_card_ids"))
 
@@ -411,6 +411,7 @@ class OnlinePage(QWidget):
         context_layout = QHBoxLayout(self.context_strip)
         context_layout.setContentsMargins(13, 8, 13, 8)
         self.context_label = muted_label("")
+        self.context_label.setWordWrap(True)
         self.refresh_button = QPushButton("")
         context_layout.addWidget(self.context_label, 1)
         context_layout.addWidget(self.refresh_button)
@@ -434,21 +435,15 @@ class OnlinePage(QWidget):
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(8)
         self.mode_label = QLabel("")
-        self.mode_combo = QComboBox()
+        self.mode_combo = ThemedComboBox()
         self.ace_label = QLabel("")
         self.ace_combo = SearchableComboBox()
         self.target_label = QLabel("")
         self.target_combo = SearchableComboBox()
-        self.surface_label = QLabel("")
-        self.surface_combo = QComboBox()
-        self.distance_label = QLabel("")
-        self.distance_combo = QComboBox()
-        self.style_label = QLabel("")
-        self.style_combo = QComboBox()
         self.top_label = QLabel("")
         self.top_spin = QSpinBox()
         self.top_spin.setRange(5, 200)
-        self.top_spin.setValue(_integer(context.store.get("optimizer_top_n", "30"), 30))
+        self.top_spin.setValue(context.lineage_state().top_n)
         self.top_spin.setMaximumWidth(160)
         form.addWidget(self.mode_label, 0, 0)
         form.addWidget(self.mode_combo, 1, 0)
@@ -456,16 +451,27 @@ class OnlinePage(QWidget):
         form.addWidget(self.ace_combo, 1, 1)
         form.addWidget(self.target_label, 0, 2)
         form.addWidget(self.target_combo, 1, 2)
-        for column, (label, combo) in enumerate(
-            ((self.surface_label, self.surface_combo), (self.distance_label, self.distance_combo), (self.style_label, self.style_combo))
-        ):
-            form.addWidget(label, 2, column)
-            form.addWidget(combo, 3, column)
-        form.addWidget(self.top_label, 4, 0)
-        form.addWidget(self.top_spin, 5, 0)
+        form.addWidget(self.top_label, 2, 0)
+        form.addWidget(self.top_spin, 3, 0)
         for column in range(3):
             form.setColumnStretch(column, 1)
         config_layout.addWidget(objective)
+
+        self.race_editor = LineageRaceEditor(self.context)
+        self.surface_combo = self.race_editor.surface_combo
+        self.distance_combo = self.race_editor.distance_combo
+        self.style_combo = self.race_editor.style_combo
+        self.course_combo = self.race_editor.course_combo
+        self.course_picker = self.race_editor.course_picker
+        self.track_combo = self.race_editor.track_combo
+        self.rotation_combo = self.race_editor.rotation_combo
+        self.season_combo = self.race_editor.season_combo
+        self.weather_combo = self.race_editor.weather_combo
+        self.ground_combo = self.race_editor.ground_combo
+        self.custom_scoring = self.race_editor.custom_scoring
+        self.priority_picker = self.race_editor.priority_picker
+        self.shared_advanced = self.race_editor.advanced
+        config_layout.addWidget(self.race_editor)
 
         pair_panel = QFrame()
         pair_panel.setObjectName("panel")
@@ -565,9 +571,13 @@ class OnlinePage(QWidget):
         self.pink_spin.setMaximumWidth(120)
         advanced.addWidget(self.soft_title, 0, 0, 1, 3)
         advanced.addWidget(self.soft_hint, 1, 0, 1, 3)
-        advanced.addWidget(self.prefer_profile, 2, 0)
-        advanced.addWidget(self.prefer_lineage, 2, 1)
-        advanced.addWidget(self.surface_cohort, 2, 2)
+        soft_checks = QVBoxLayout()
+        soft_checks.setContentsMargins(0, 0, 0, 0)
+        soft_checks.setSpacing(5)
+        soft_checks.addWidget(self.prefer_profile)
+        soft_checks.addWidget(self.prefer_lineage)
+        soft_checks.addWidget(self.surface_cohort)
+        advanced.addLayout(soft_checks, 2, 0, 1, 3)
         advanced.addWidget(self.hard_title, 3, 0, 1, 3)
         advanced.addWidget(self.hard_hint, 4, 0, 1, 3)
         advanced.addWidget(self.require_surface, 5, 0)
@@ -582,14 +592,14 @@ class OnlinePage(QWidget):
         lineage.setHorizontalSpacing(12)
         self.lineage_title = QLabel("")
         self.lineage_blue_label = QLabel("")
-        self.lineage_blue_combo = QComboBox()
+        self.lineage_blue_combo = ThemedComboBox()
         self.lineage_blue_combo.addItem("—", None)
         for name in ("Speed", "Stamina", "Power", "Guts", "Wit"):
             self.lineage_blue_combo.addItem(name, name)
         self.lineage_blue_stars = QSpinBox()
         self.lineage_blue_stars.setRange(0, 9)
         self.lineage_pink_label = QLabel("")
-        self.lineage_pink_combo = QComboBox()
+        self.lineage_pink_combo = ThemedComboBox()
         self.lineage_pink_combo.addItem("—", None)
         for name in (
             list(SURFACE_FACTOR_NAMES.values())
@@ -746,17 +756,19 @@ class OnlinePage(QWidget):
         self.advanced.toggle.toggled.connect(
             lambda _checked: QTimer.singleShot(0, self._sync_config_pane_height)
         )
+        self.race_editor.layout_changed.connect(
+            lambda: QTimer.singleShot(0, self._sync_config_pane_height)
+        )
         QTimer.singleShot(0, self._sync_config_pane_height)
         root.addWidget(vertical, 1)
 
         self.refresh_button.clicked.connect(lambda: self.refresh_options(show_errors=True))
         self.mode_combo.currentIndexChanged.connect(self._mode_changed)
         self.auto_pairs.toggled.connect(self.fixed_combo.setDisabled)
-        self.ace_combo.currentIndexChanged.connect(self._refresh_context)
-        self.target_combo.currentIndexChanged.connect(self._refresh_context)
-        self.surface_combo.currentIndexChanged.connect(self._refresh_context)
-        self.distance_combo.currentIndexChanged.connect(self._refresh_context)
-        self.style_combo.currentIndexChanged.connect(self._refresh_context)
+        self.ace_combo.currentIndexChanged.connect(self._lineage_selection_changed)
+        self.target_combo.currentIndexChanged.connect(self._lineage_selection_changed)
+        self.top_spin.valueChanged.connect(self._lineage_selection_changed)
+        self.race_editor.changed.connect(self._refresh_context)
         self.allowed_button.clicked.connect(lambda: self._pick_filter("allowed"))
         self.excluded_button.clicked.connect(lambda: self._pick_filter("excluded"))
         self.show_key.clicked.connect(self._toggle_key)
@@ -767,32 +779,19 @@ class OnlinePage(QWidget):
         self.opposing_extract_button.clicked.connect(self._extract_opposing_candidates)
         self.load_button.clicked.connect(lambda: self.load_latest(show_errors=True))
         self.open_button.clicked.connect(self.open_output)
+        self.context.lineage_changed.connect(self._sync_lineage_context)
         self.context.configuration_changed.connect(self._schedule_sync)
         self.context.language_changed.connect(lambda _language: self.retranslate())
         self._sync_timer = QTimer(self)
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self.sync_context)
         self.retranslate()
+        self._sync_lineage_context()
         QTimer.singleShot(0, lambda: self.refresh_options(show_errors=False))
         QTimer.singleShot(80, lambda: self.load_latest(show_errors=False))
 
     def _schedule_sync(self) -> None:
         self._sync_timer.start(120)
-
-    def _populate_profiles(self) -> None:
-        for combo, kind, codes, fallback in (
-            (self.surface_combo, "surface", ("turf", "dirt"), "turf"),
-            (self.distance_combo, "distance", ("sprint", "mile", "medium", "long"), "medium"),
-            (self.style_combo, "style", ("front_runner", "pace_chaser", "late_surger", "end_closer"), "pace_chaser"),
-        ):
-            selected = combo.currentData() or self.context.store.get(f"optimizer_{kind}", fallback)
-            combo.blockSignals(True)
-            combo.clear()
-            for code, label in zip(codes, profile_values(kind, self.context.language)):
-                combo.addItem(label, code)
-            index = combo.findData(selected)
-            combo.setCurrentIndex(index if index >= 0 else 0)
-            combo.blockSignals(False)
 
     def retranslate(self) -> None:
         t = self.context.t
@@ -810,9 +809,6 @@ class OnlinePage(QWidget):
         self.mode_label.setText(t("Type de recherche"))
         self.ace_label.setText(t("Ace visé"))
         self.target_label.setText(t("Parent à produire"))
-        self.surface_label.setText(t("Surface"))
-        self.distance_label.setText(t("Distance"))
-        self.style_label.setText(t("Style"))
         self.top_label.setText(t("Résultats conservés"))
         self.auto_pairs.setText(t("Tester automatiquement toutes les paires local × distant"))
         self.local_pool_label.setText(t("Pool local"))
@@ -891,7 +887,6 @@ class OnlinePage(QWidget):
         self.open_button.setText(t("Ouvrir la sortie"))
         self.refresh_button.setText(t("Actualiser les listes"))
         self.results_title.setText(t("Résultats intégrés"))
-        self._populate_profiles()
         self._refresh_filter_summaries()
         self._refresh_opposing_options()
         self._mode_changed()
@@ -905,8 +900,7 @@ class OnlinePage(QWidget):
         )
 
     def sync_context(self) -> None:
-        self._populate_profiles()
-        self.top_spin.setValue(_integer(self.context.store.get("optimizer_top_n", str(self.top_spin.value())), self.top_spin.value()))
+        self._sync_lineage_context()
         self._refresh_context()
 
     def refresh_options(self, _checked: bool = False, *, show_errors: bool = True) -> None:
@@ -915,23 +909,34 @@ class OnlinePage(QWidget):
             data = Path(self.context.veterans_json_path).expanduser()
             self._ace_options = list(load_ace_options(master))
             self._local_options = load_local_veteran_options(master, data)
+            tracks = load_track_options(master)
         except Exception as exc:
             if show_errors:
                 QMessageBox.warning(self, self.context.t("Configuration incomplète"), self.context.t(str(exc)))
             return
         self._card_to_chara = {item.card_id: item.chara_id for item in self._ace_options}
-        saved_ace = _integer(self.context.store.get("optimizer_ace_card_id"))
-        saved_target = _integer(self.context.store.get("optimizer_future_parent_card_id"))
-        current_ace = self.ace_combo.currentData() or saved_ace
-        current_target = self.target_combo.currentData() or saved_target
-        for combo, selected in ((self.ace_combo, current_ace), (self.target_combo, current_target)):
-            combo.blockSignals(True)
-            combo.clear()
-            for option in self._ace_options:
-                combo.addItem(option.display_name, option.card_id)
-            index = combo.findData(selected)
-            combo.setCurrentIndex(index if index >= 0 else (0 if combo.count() else -1))
-            combo.blockSignals(False)
+        state = self.context.lineage_state()
+        self._syncing_lineage = True
+        try:
+            for combo, selected in (
+                (self.ace_combo, state.ace_card_id),
+                (self.target_combo, state.future_parent_card_id),
+            ):
+                combo.blockSignals(True)
+                combo.clear()
+                for option in self._ace_options:
+                    combo.addItem(option.display_name, option.card_id)
+                index = combo.findData(selected)
+                combo.setCurrentIndex(
+                    index if index >= 0 else (0 if combo.count() else -1)
+                )
+                combo.blockSignals(False)
+        finally:
+            self._syncing_lineage = False
+        self.race_editor.set_track_options(
+            sorted(tracks, key=lambda item: item.name.casefold())
+        )
+        self._lineage_selection_changed()
         fixed_selected = _integer(self.context.store.get("uma_moe_fixed_gp_id"))
         self.fixed_combo.blockSignals(True)
         self.fixed_combo.clear()
@@ -940,7 +945,13 @@ class OnlinePage(QWidget):
         fixed_index = self.fixed_combo.findData(fixed_selected)
         self.fixed_combo.setCurrentIndex(fixed_index if fixed_index >= 0 else (0 if self.fixed_combo.count() else -1))
         self.fixed_combo.blockSignals(False)
-        required = self.required_combo.currentData() or _integer(self.context.store.get("uma_moe_required_parent_card_id"))
+        required = (
+            self.required_combo.currentData()
+            if self.required_combo.currentIndex() >= 0
+            else _integer(
+                self.context.store.get("uma_moe_required_parent_card_id")
+            )
+        )
         self.required_combo.clear()
         self.required_combo.addItem(self.context.t("Aucun costume requis"), None)
         for option in self._ace_options:
@@ -994,44 +1005,45 @@ class OnlinePage(QWidget):
         self.excluded_button.setText(f"{self.context.t('Exclus')} ({len(self._excluded_ids)})")
 
     def _current_profile(self) -> dict[str, Any]:
-        return {
-            "surface": str(self.surface_combo.currentData() or "turf"),
-            "distance": str(self.distance_combo.currentData() or "medium"),
-            "style": str(self.style_combo.currentData() or "pace_chaser"),
-        }
+        return self.race_editor.current_profile()
 
     def _course_conditions(self) -> dict[str, object]:
-        mapping: dict[str, dict[str, object]] = {
-            "optimizer_rotation": {"Droite": 1, "Gauche": 2},
-            "optimizer_season": {"Printemps": [1, 5], "Été": 2, "Automne": 3, "Hiver": 4},
-            "optimizer_weather": {"Ensoleillé": 1, "Nuageux": 2, "Pluie": 3, "Neige": 4},
-            "optimizer_ground": {"Firm": 1, "Good": 2, "Soft": 3, "Heavy": 4},
-        }
-        keys = {
-            "optimizer_rotation": "rotation",
-            "optimizer_season": "season",
-            "optimizer_weather": "weather",
-            "optimizer_ground": "ground_condition",
-        }
-        course_key = self.context.store.get("optimizer_course_key")
-        definitions = dict(
-            ordered_course_presets(
-                load_course_preset_payload(
-                    active_course_overrides_path(self.context.course_overrides_path)
-                )
-            )
-        )
-        result: dict[str, object] = dict(
-            course_preset_conditions(definitions.get(course_key) or {})
-        )
-        track = _integer(self.context.store.get("optimizer_track_id"))
-        if track:
-            result["track_id"] = track
-        for store_key, options in mapping.items():
-            value = options.get(self.context.store.get(store_key))
-            if value is not None:
-                result[keys[store_key]] = value
-        return result
+        return self.race_editor.selected_conditions()
+
+    def _lineage_selection_changed(self, *_args: object) -> None:
+        if self._syncing_lineage:
+            return
+        changes: dict[str, object] = {"top_n": self.top_spin.value()}
+        ace_id = _integer(self.ace_combo.currentData())
+        target_id = _integer(self.target_combo.currentData())
+        if ace_id:
+            changes["ace_card_id"] = ace_id
+        if target_id:
+            changes["future_parent_card_id"] = target_id
+        self.context.update_lineage(**changes)
+        self._refresh_context()
+
+    def _sync_lineage_context(
+        self, _state: LineageContextState | None = None
+    ) -> None:
+        lineage = self.context.lineage_state()
+        self._syncing_lineage = True
+        try:
+            for combo, value in (
+                (self.ace_combo, lineage.ace_card_id),
+                (self.target_combo, lineage.future_parent_card_id),
+            ):
+                index = combo.findData(value)
+                if index >= 0 and combo.currentIndex() != index:
+                    combo.blockSignals(True)
+                    combo.setCurrentIndex(index)
+                    combo.blockSignals(False)
+            self.top_spin.blockSignals(True)
+            self.top_spin.setValue(lineage.top_n)
+            self.top_spin.blockSignals(False)
+        finally:
+            self._syncing_lineage = False
+        self._refresh_context()
 
     def _refresh_context(self, _index: int = -1) -> None:
         mode = self.context.t("Parent distant" if self.mode_combo.currentData() == "parent" else "GP distant")
@@ -1041,6 +1053,10 @@ class OnlinePage(QWidget):
         if self.mode_combo.currentData() != "parent":
             text += f" · {self.context.t('Parent à produire')}: {target}"
         text += f" · {profile_summary(self._current_profile(), self.context.language)}"
+        text += (
+            f" · {self.context.t('Preset de course')}: "
+            f"{self.race_editor.current_course_label()}"
+        )
         self.context_label.setText(text)
 
     def _toggle_key(self) -> None:
@@ -1210,7 +1226,6 @@ class OnlinePage(QWidget):
                 raise UmaMoeError("Le costume requis est également exclu.")
             if self._allowed_ids and required is not None and int(required) not in self._allowed_ids:
                 raise UmaMoeError("Le costume requis doit être présent dans les costumes autorisés.")
-            priority_text = self.context.store.get("skill_priorities_path")
             opposing_id, opposing_payload = (
                 self._opposing_selection()
                 if self.mode_combo.currentData() != "parent"
@@ -1222,6 +1237,7 @@ class OnlinePage(QWidget):
             lineage_pink = self._lineage_filter(
                 self.lineage_pink_combo, self.lineage_pink_stars
             )
+            profile = self.race_editor.current_profile()
             request = OnlineSearchRequest(
                 search_mode=str(self.mode_combo.currentData() or "parent"),
                 master_path=Path(self.context.master_path).expanduser(),
@@ -1233,11 +1249,11 @@ class OnlinePage(QWidget):
                 automatic_pairs=self.auto_pairs.isChecked(),
                 local_pool_size=self.local_pool.value(),
                 remote_pool_size=self.remote_pool.value(),
-                surface=str(self.surface_combo.currentData() or "turf"),
-                distance=str(self.distance_combo.currentData() or "medium"),
-                style=str(self.style_combo.currentData() or "pace_chaser"),
-                course_overrides_path=active_course_overrides_path(self.context.course_overrides_path),
-                course_key=self.context.store.get("optimizer_course_key") or None,
+                surface=profile["surface"],
+                distance=profile["distance"],
+                style=profile["style"],
+                course_overrides_path=self.race_editor.course_overrides_path(),
+                course_key=self.race_editor.current_course_key(),
                 course_conditions=self._course_conditions(),
                 top_n=self.top_spin.value(),
                 use_import=use_import,
@@ -1261,8 +1277,8 @@ class OnlinePage(QWidget):
                 allowed_parent_card_ids=tuple(sorted(self._allowed_ids)),
                 excluded_parent_card_ids=tuple(sorted(self._excluded_ids)),
                 token=self.key_edit.text().strip(),
-                use_custom_scoring=self.context.store.get("use_custom_scoring", "0") in {"1", "true", "True"},
-                skill_priorities_path=(Path(priority_text).expanduser() if priority_text else None),
+                use_custom_scoring=self.custom_scoring.isChecked(),
+                skill_priorities_path=self.race_editor.skill_priorities_path(),
                 opposing_parent_trained_id=opposing_id,
                 opposing_parent_payload=opposing_payload,
                 local_pair_mode=local_pairs,
@@ -1275,14 +1291,16 @@ class OnlinePage(QWidget):
             QMessageBox.warning(self, self.context.t("Configuration incomplète"), self.context.t(str(exc)))
             return
         self.persist_api_key()
+        shared_updates: dict[str, object] = {
+            "ace_card_id": request.ace_card_id,
+            "top_n": request.top_n,
+        }
+        if request.target_parent_card_id:
+            shared_updates["future_parent_card_id"] = request.target_parent_card_id
+        self.context.update_lineage(**shared_updates)
         self.context.store.update(
             {
                 "uma_moe_search_mode": request.search_mode,
-                "optimizer_ace_card_id": request.ace_card_id,
-                "optimizer_future_parent_card_id": request.target_parent_card_id or self.context.store.get("optimizer_future_parent_card_id", "0"),
-                "optimizer_surface": request.surface,
-                "optimizer_distance": request.distance,
-                "optimizer_style": request.style,
                 "uma_moe_auto_pairs": int(request.automatic_pairs),
                 "uma_moe_fixed_gp_id": fixed or 0,
                 "uma_moe_local_pool": request.local_pool_size,
@@ -1310,7 +1328,6 @@ class OnlinePage(QWidget):
                 "uma_moe_opposing_id": opposing_id or 0,
             }
         )
-        self.context.configuration_changed.emit()
         busy_label = (
             "Classement des paires de GP locales…"
             if local_pairs

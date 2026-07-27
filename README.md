@@ -78,7 +78,7 @@ ranked against that fixed branch with the same six-member engine as a final pare
 future parent's own unknown Sparks remain empty; the selected GPs, the opposing branch and a
 projected G1 plan are evaluated exactly. Leaving the field empty preserves the generic future-GP model.
 
-The active Ace, target parent, profile and course conditions come from the **Lineage Optimisation** tab and are displayed in the uma.moe tab before the search starts.
+The active Ace, target parent, profile, course preset, exact conditions and scoring files form one live shared context. They are displayed and editable from both **Lineage Optimisation** and **uma.moe**; changing either page updates the other immediately.
 
 Friend IDs can be copied directly from result tables. Online retrieval is capped at **2,000 candidates per search**.
 For final-parent searches, this budget is divided between a Distance cohort, a target-surface

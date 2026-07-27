@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QScrollArea,
     QSplitter,
     QAbstractScrollArea,
@@ -21,6 +23,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ui_qt.theme import COLORS
 
 
 class NoWheelFilter(QObject):
@@ -72,7 +76,40 @@ def install_no_wheel_filter(application: QApplication) -> NoWheelFilter:
     return guard
 
 
-class SearchableComboBox(QComboBox):
+def _apply_combo_popup_palette(view: QAbstractItemView) -> None:
+    """Keep detached/native combo popups readable on every Qt platform.
+
+    On Windows, a combo or completer popup can be promoted to a top-level
+    native window.  In that case it does not always inherit the application's
+    descendant stylesheet, which previously produced white text on the native
+    white background for a subset of selectors.
+    """
+
+    view.setObjectName("comboPopup")
+    palette = view.palette()
+    palette.setColor(QPalette.ColorRole.Base, QColor(COLORS["surface_alt"]))
+    palette.setColor(QPalette.ColorRole.Window, QColor(COLORS["surface_alt"]))
+    palette.setColor(QPalette.ColorRole.Text, QColor(COLORS["text"]))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(COLORS["text"]))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#27564f"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(COLORS["text"]))
+    view.setPalette(palette)
+
+
+class ThemedComboBox(QComboBox):
+    """QComboBox with a platform-independent dark popup palette."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        _apply_combo_popup_palette(self.view())
+
+    def showPopup(self) -> None:
+        # Some platform styles rebuild/repolish the popup just before display.
+        _apply_combo_popup_palette(self.view())
+        super().showPopup()
+
+
+class SearchableComboBox(ThemedComboBox):
     """Editable combo box whose displayed text and selected data stay in sync.
 
     Qt normally keeps the previous ``currentIndex`` while the user types in an
@@ -101,6 +138,7 @@ class SearchableComboBox(QComboBox):
         completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         completer.setMaxVisibleItems(16)
         completer.activated[str].connect(self._completion_activated)
+        _apply_combo_popup_palette(completer.popup())
 
     @staticmethod
     def _normalise(value: str) -> str:
@@ -128,6 +166,7 @@ class SearchableComboBox(QComboBox):
         completer = self.completer()
         completer.setCompletionPrefix(text)
         if text.strip() and self.isVisible():
+            _apply_combo_popup_palette(completer.popup())
             completer.complete()
 
     def _completion_activated(self, text: str) -> None:
@@ -225,7 +264,7 @@ class PathPicker(QWidget):
         layout.setSpacing(7)
         self.edit = QLineEdit(value)
         self.button = QPushButton("Parcourir…")
-        self.button.setFixedWidth(104)
+        self.button.setFixedWidth(112)
         layout.addWidget(self.edit, 1)
         layout.addWidget(self.button)
         self.button.clicked.connect(self.browse)

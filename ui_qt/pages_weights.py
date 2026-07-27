@@ -11,7 +11,6 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -51,6 +50,7 @@ from ui_qt.components import (
     CollapsibleSection,
     PageHeader,
     PathPicker,
+    ThemedComboBox,
     muted_label,
     section_label,
 )
@@ -187,7 +187,7 @@ class WeightsPage(QWidget):
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
         self.category_filter_label = muted_label("")
-        self.category_combo = QComboBox()
+        self.category_combo = ThemedComboBox()
         self.changed_only = QCheckBox("")
         self.show_advanced = QCheckBox("")
         navigation_layout.addLayout(navigation_head)
@@ -338,7 +338,7 @@ class WeightsPage(QWidget):
         self.enum_page = QWidget()
         enum_layout = QVBoxLayout(self.enum_page)
         enum_layout.setContentsMargins(0, 5, 0, 5)
-        self.enum_edit = QComboBox()
+        self.enum_edit = ThemedComboBox()
         enum_layout.addWidget(self.enum_edit)
 
         self.text_page = QWidget()

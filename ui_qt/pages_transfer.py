@@ -8,7 +8,6 @@ from typing import Any
 from PySide6.QtCore import QItemSelection, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -24,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui_qt.components import PageHeader, StatusCard, muted_label
+from ui_qt.components import PageHeader, StatusCard, ThemedComboBox, muted_label
 from ui_qt.context import AppContext
 from ui_qt.core import (
     TransferRequest,
@@ -84,7 +83,7 @@ class TransferPage(QWidget):
         filter_layout = QHBoxLayout(filters)
         filter_layout.setContentsMargins(12, 8, 12, 8)
         self.filter_label = QLabel("")
-        self.status_combo = QComboBox()
+        self.status_combo = ThemedComboBox()
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
         self.count_label = muted_label("")

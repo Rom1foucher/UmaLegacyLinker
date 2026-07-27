@@ -9,7 +9,6 @@ from PySide6.QtCore import QThreadPool, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import LANGUAGE_LABELS
+from ui_qt.components import ThemedComboBox
 from ui_qt.context import AppContext
 from ui_qt.core import APP_NAME, APP_VERSION
 from ui_qt.pages_home_data import DataPage, HomePage
@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
 
         self.language_label = QLabel("")
         self.language_label.setObjectName("muted")
-        self.language_combo = QComboBox()
+        self.language_combo = ThemedComboBox()
         for code, label in LANGUAGE_LABELS.items():
             self.language_combo.addItem(label, code)
         self.language_combo.setCurrentIndex(

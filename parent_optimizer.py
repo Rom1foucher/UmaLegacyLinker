@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -12,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from g1_race_planning import build_pair_g1_diagnostic
+from g1_race_planning import build_pair_g1_diagnostic, schedule_export_summary
 
 
 SURFACES = ("turf", "dirt")
@@ -390,6 +391,7 @@ class AffinityResolver:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
+        self.available_tables = available
         missing = sorted(required - available)
         if missing:
             raise OptimizerError(f"Tables MDB manquantes : {', '.join(missing)}")
@@ -410,8 +412,11 @@ class AffinityResolver:
         self.card_names = _text_map(self.connection, 4)
         self.costume_names = _text_map(self.connection, 5)
         self.chara_names = _text_map(self.connection, 6)
+        self.race_names = _text_map(self.connection, 28)
+        self.race_short_names = _text_map(self.connection, 29)
         self.track_names = _text_map(self.connection, 35)
         self.track_name_to_id = {name.lower(): track_id for track_id, name in self.track_names.items()}
+        self._objective_race_cache: dict[int, list[dict[str, Any]]] = {}
 
     def close(self) -> None:
         self.connection.close()
@@ -446,6 +451,139 @@ class AffinityResolver:
             "card_name": self.card_names.get(card_id, f"Card {card_id}"),
             "costume_name": self.costume_names.get(card_id, ""),
         }
+
+    def card_details_for_chara(self, chara_id: int) -> dict[str, Any]:
+        resolved_chara = int(chara_id)
+        card_id = next(
+            (
+                candidate_card_id
+                for candidate_card_id, candidate_chara_id in self.card_to_chara.items()
+                if candidate_chara_id == resolved_chara
+            ),
+            None,
+        )
+        return {
+            "card_id": card_id,
+            "chara_id": resolved_chara,
+            "uma_name": self.chara_names.get(
+                resolved_chara,
+                f"Chara {resolved_chara}",
+            ),
+            "card_name": (
+                self.card_names.get(card_id, f"Card {card_id}")
+                if card_id is not None
+                else self.chara_names.get(
+                    resolved_chara,
+                    f"Chara {resolved_chara}",
+                )
+            ),
+        }
+
+    def objective_races(self, chara_id: int) -> list[dict[str, Any]]:
+        """Resolve the fixed race objectives of a trainee's normal career route.
+
+        Only ``condition_type = 1`` rows are literal race objectives. Fan-count,
+        race-count and other deadline objectives do not consume the deadline
+        turn itself and must not be treated as mandatory schedule entries.
+        """
+
+        resolved_chara_id = int(chara_id)
+        if resolved_chara_id in self._objective_race_cache:
+            return copy.deepcopy(self._objective_race_cache[resolved_chara_id])
+        required = {
+            "single_mode_route",
+            "single_mode_route_race",
+            "single_mode_program",
+            "race_instance",
+            "race",
+        }
+        if not required.issubset(self.available_tables):
+            self._objective_race_cache[resolved_chara_id] = []
+            return []
+        race_instance_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(race_instance)")
+        }
+        date_selection = (
+            "ri.date AS race_date"
+            if "date" in race_instance_columns
+            else "NULL AS race_date"
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT rr.id AS objective_id,
+                   rr.turn AS turn,
+                   rr.condition_value_1 AS required_position,
+                   p.id AS program_id,
+                   ri.id AS race_instance_id,
+                   r.id AS race_id,
+                   r.grade AS grade,
+                   r."group" AS race_group,
+                   {date_selection}
+            FROM single_mode_route route
+            JOIN single_mode_route_race rr
+              ON rr.race_set_id = route.race_set_id
+            JOIN single_mode_program p
+              ON p.id = rr.condition_id
+            JOIN race_instance ri
+              ON ri.id = p.race_instance_id
+            JOIN race r
+              ON r.id = ri.race_id
+            WHERE route.scenario_id = 0
+              AND route.chara_id = ?
+              AND rr.target_type = 1
+              AND rr.race_type = 0
+              AND rr.condition_type = 1
+              AND rr.turn BETWEEN 1 AND 72
+            ORDER BY rr.turn, rr.sort_id, rr.id
+            """,
+            (resolved_chara_id,),
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            turn = int(row["turn"])
+            phase = (turn - 1) % 24
+            slot = {
+                "year": (turn - 1) // 24 + 1,
+                "month": phase // 2 + 1,
+                "half": phase % 2 + 1,
+            }
+            instance_id = int(row["race_instance_id"])
+            race_date = (
+                int(row["race_date"])
+                if row["race_date"] is not None
+                else slot["month"] * 100 + (1 if slot["half"] == 1 else 16)
+            )
+            grade = int(row["grade"])
+            race_group = int(row["race_group"])
+            required_position = max(0, int(row["required_position"] or 0))
+            result.append(
+                {
+                    "objective_id": int(row["objective_id"]),
+                    "turn": turn,
+                    "program_id": int(row["program_id"]),
+                    "race_instance_id": instance_id,
+                    "race_id": int(row["race_id"]),
+                    "name": self.race_names.get(
+                        instance_id,
+                        self.race_short_names.get(
+                            instance_id,
+                            f"Objective race {instance_id}",
+                        ),
+                    ),
+                    "date": race_date,
+                    "grade": grade,
+                    "race_group": race_group,
+                    "is_g1": grade == 100 and race_group == 1,
+                    "required_position": required_position,
+                    "objective_slot": slot,
+                    "schedule_slots": [dict(slot)],
+                    "mandatory_objective": True,
+                    "objective": True,
+                }
+            )
+        self._objective_race_cache[resolved_chara_id] = result
+        return copy.deepcopy(result)
 
     def ace_details(self, card_id: int, surface: str, distance: str, style: str) -> dict[str, Any]:
         chara_id = self.card_to_chara.get(card_id)
@@ -2114,6 +2252,8 @@ def evaluate_parent_pair(
     config: dict[str, Any],
     parent_1_branch: dict[str, Any] | None = None,
     parent_2_branch: dict[str, Any] | None = None,
+    parent_1_origin: str = "local",
+    parent_2_origin: str = "local",
     g1_bonus_value: int | None = None,
     affinity_thresholds: Iterable[Iterable[float]] | None = None,
 ) -> dict[str, Any]:
@@ -2157,6 +2297,14 @@ def evaluate_parent_pair(
         parent_2,
         left_label="parent_1",
         right_label="parent_2",
+        left_origin=parent_1_origin,
+        right_origin=parent_2_origin,
+        target=ace,
+        objective_races=(
+            resolver.objective_races(int(ace.get("chara_id") or 0))
+            if hasattr(resolver, "objective_races")
+            else []
+        ),
         bonus_per_link=resolved_g1_bonus,
     )
     parent_common = list(race_affinity_plan["common_g1_names"])
@@ -2314,6 +2462,16 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> Non
         writer.writeheader()
         for row in rows:
             writer.writerow({field: row.get(field, "") for field in fields})
+
+
+def _g1_schedule_csv_fields(plan: dict[str, Any] | None) -> dict[str, int]:
+    metrics = schedule_export_summary(plan)
+    return {
+        "optimal_g1_plan_bonus": metrics["standard_optimal_bonus"],
+        "trackblazer_g1_plan_bonus": metrics["trackblazer_optimal_bonus"],
+        "objective_race_count": metrics["objective_race_count"],
+        "objective_conflict_count": metrics["objective_conflict_count"],
+    }
 
 
 def optimize_parents(
@@ -2600,7 +2758,7 @@ def optimize_parents(
         generated_at = datetime.now(timezone.utc).isoformat()
         payload = {
             "metadata": {
-                "schema_version": 7,
+                "schema_version": 8,
                 "generated_at_utc": generated_at,
                 "purpose": "Rank final parent pairs, parent branches and future grandparents for a target Ace profile.",
                 "source_master": {"filename": master.name, "sha256": _sha256(master)},
@@ -2729,9 +2887,7 @@ def optimize_parents(
                 "parent_2_only_g1": " | ".join(
                     (row.get("race_affinity_plan") or {}).get("right_only_g1_names") or []
                 ),
-                "optimal_g1_plan_bonus": (
-                    (row.get("race_affinity_plan") or {}).get("exact_bonus_if_all_won")
-                ),
+                **_g1_schedule_csv_fields(row.get("race_affinity_plan")),
                 "distance_status": row["distance_viability"]["key"],
                 "distance_tier": row["distance_viability"]["tier"],
                 "distance_stars": row["distance_s_summary"]["total_stars"],
@@ -2767,7 +2923,7 @@ def optimize_parents(
         _write_csv(
             parent_pairs_csv,
             pair_csv_rows,
-            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "parent_1_only_g1", "parent_2_only_g1", "optimal_g1_plan_bonus", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "parent_1_only_g1", "parent_2_only_g1", "optimal_g1_plan_bonus", "trackblazer_g1_plan_bonus", "objective_race_count", "objective_conflict_count", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         future_csv_rows = [

@@ -376,6 +376,23 @@ def _g1_plan_block(
             names("right_only_g1_names"),
         ),
     )
+    objective_races = [
+        str(race.get("name") or "")
+        for race in plan.get("objective_races") or []
+        if isinstance(race, dict) and str(race.get("name") or "").strip()
+    ]
+    if objective_races:
+        target = plan.get("target") or {}
+        target_name = _identity_name(target if isinstance(target, dict) else {})
+        rows += (
+            (
+                _t("Objectifs obligatoires de {name}", language).replace(
+                    "{name}",
+                    target_name,
+                ),
+                " · ".join(objective_races),
+            ),
+        )
     body = "".join(
         "<tr>"
         f"<th>{escape(label)}</th>"
@@ -383,22 +400,57 @@ def _g1_plan_block(
         "</tr>"
         for label, value in rows
     )
-    summary = _facts_table(
-        [
-            (
-                _t("Bonus du planning optimal", language),
-                f"+{int(plan.get('optimal_bonus') or plan.get('exact_bonus_if_all_won') or 0)}",
-            ),
-            (
-                _t("Courses planifiées", language),
-                int(plan.get("optimal_race_count") or plan.get("race_count") or 0),
-            ),
-            (
-                _t("Série maximale", language),
-                int((plan.get("streaks") or {}).get("max_consecutive") or 0),
-            ),
-        ]
+    variants = plan.get("schedule_variants") or {}
+    standard = (
+        variants.get("standard")
+        if isinstance(variants, dict) and isinstance(variants.get("standard"), dict)
+        else plan
     )
+    trackblazer = (
+        variants.get("trackblazer")
+        if isinstance(variants, dict)
+        and isinstance(variants.get("trackblazer"), dict)
+        else {}
+    )
+    objective_conflicts = sum(
+        str(race.get("planning_status") or "") == "objective_conflict"
+        for race in standard.get("races") or []
+        if isinstance(race, dict)
+    )
+    facts: list[tuple[str, object]] = [
+        (
+            _t("Bonus optimal avec objectifs", language),
+            f"+{int(standard.get('optimal_bonus') or 0)}",
+        ),
+        (
+            _t("G1 d’affinité planifiées", language),
+            int(
+                standard.get("optimal_affinity_race_count")
+                or standard.get("optimal_race_count")
+                or 0
+            ),
+        ),
+        (
+            _t("Courses d’objectif planifiées", language),
+            int(standard.get("scheduled_objective_race_count") or 0),
+        ),
+        (
+            _t("Conflits G1 / objectifs", language),
+            objective_conflicts,
+        ),
+        (
+            _t("Série maximale", language),
+            int((standard.get("streaks") or {}).get("max_consecutive") or 0),
+        ),
+    ]
+    if trackblazer:
+        facts.append(
+            (
+                _t("Bonus optimal Trackblazer", language),
+                f"+{int(trackblazer.get('optimal_bonus') or 0)}",
+            )
+        )
+    summary = _facts_table(facts)
     return (
         summary
         + "<table class='factor-table' width='100%' cellspacing='0' cellpadding='0'>"

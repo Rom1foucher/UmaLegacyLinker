@@ -68,6 +68,11 @@ class VisualAssetTests(unittest.TestCase):
         self.assertIn('if "planned_slot" in race:', source)
         self.assertIn("scheduled.setdefault(key, []).append", source)
         self.assertIn("if compact or not has_banner:", source)
+        self.assertIn("COURSES NON PLACÉES DANS LE PLANNING OPTIMAL", source)
+        self.assertIn('"shared": ("#3a3015"', source)
+        self.assertIn('"remote": ("#29203f"', source)
+        self.assertIn("Planning pour Trackblazer", source)
+        self.assertIn("def set_plan(", source)
         self.assertEqual(source.count("class RaceCalendarWidget"), 1)
 
     def test_known_gametora_asset_urls_are_costume_aware(self) -> None:

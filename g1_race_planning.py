@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 
@@ -207,11 +208,13 @@ def _phase_options(
             return
 
         race_index = ordered[position]
-        visit(position + 1, used_years, assignments, bonus)
         available_years = sorted(
             {year for year, _month, _half in slot_keys[race_index]}
         )
         race_bonus = int(races[race_index].get("affinity_bonus") or 0)
+        mandatory = bool(races[race_index].get("mandatory_objective"))
+        if not mandatory:
+            visit(position + 1, used_years, assignments, bonus)
         for year in available_years:
             if year in used_years:
                 continue
@@ -238,8 +241,8 @@ def _phase_options(
 
 def _streak_summary(planned_slots: set[tuple[int, int, int]]) -> dict[str, int]:
     lengths: list[int] = []
-    current = 0
     for year in (1, 2, 3):
+        current = 0
         for month in range(1, 13):
             for half in (1, 2):
                 if (year, month, half) in planned_slots:
@@ -247,14 +250,38 @@ def _streak_summary(planned_slots: set[tuple[int, int, int]]) -> dict[str, int]:
                 elif current:
                     lengths.append(current)
                     current = 0
-    if current:
-        lengths.append(current)
+        if current:
+            lengths.append(current)
     return {
         "max_consecutive": max(lengths, default=0),
         "runs_of_2": sum(length == 2 for length in lengths),
         "runs_of_3": sum(length == 3 for length in lengths),
         "runs_of_4_plus": sum(length >= 4 for length in lengths),
     }
+
+
+def _streak_lengths(
+    planned_slots: set[tuple[int, int, int]],
+) -> dict[tuple[int, int, int], int]:
+    """Map every planned turn to the length of its consecutive race run."""
+
+    result: dict[tuple[int, int, int], int] = {}
+    for year in (1, 2, 3):
+        current: list[tuple[int, int, int]] = []
+        for month in range(1, 13):
+            for half in (1, 2):
+                slot = (year, month, half)
+                if slot in planned_slots:
+                    current.append(slot)
+                    continue
+                if current:
+                    length = len(current)
+                    result.update({item: length for item in current})
+                    current = []
+        if current:
+            length = len(current)
+            result.update({item: length for item in current})
+    return result
 
 
 def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
@@ -363,6 +390,11 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
     excluded_races: list[dict[str, Any]] = []
     missing_calendar_races: list[dict[str, Any]] = []
     planned_slots: set[tuple[int, int, int]] = set()
+    objective_slots = {
+        slot
+        for index, slot in selected.items()
+        if bool(races[index].get("mandatory_objective"))
+    }
     for index, race in enumerate(races):
         slot = selected.get(index)
         if slot is not None:
@@ -379,6 +411,8 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
             race["planning_status"] = (
                 "unsupported_calendar"
                 if index in incompatible_phase_indexes
+                else "objective_conflict"
+                if any(key in objective_slots for key in slot_keys[index])
                 else "calendar_conflict"
             )
             excluded_races.append(race)
@@ -386,6 +420,18 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
             race["planned_slot"] = None
             race["planning_status"] = "missing_calendar"
             missing_calendar_races.append(race)
+
+    streak_lengths = _streak_lengths(planned_slots)
+    for race in scheduled_races:
+        planned = race.get("planned_slot") or {}
+        slot = (
+            int(planned.get("year") or 0),
+            int(planned.get("month") or 0),
+            int(planned.get("half") or 0),
+        )
+        length = streak_lengths.get(slot, 1)
+        race["consecutive_race_count"] = length
+        race["long_streak_warning"] = length >= 4
 
     optimal_bonus = sum(
         int(race.get("affinity_bonus") or 0)
@@ -395,6 +441,16 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
         int(race.get("affinity_bonus") or 0)
         for race in races
     )
+    scheduled_affinity_races = [
+        race
+        for race in scheduled_races
+        if int(race.get("affinity_bonus") or 0) > 0
+    ]
+    scheduled_objectives = [
+        race
+        for race in scheduled_races
+        if bool(race.get("mandatory_objective"))
+    ]
     return {
         "scheduled_races": scheduled_races,
         "excluded_races": excluded_races,
@@ -402,9 +458,116 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
         "optimal_bonus": optimal_bonus,
         "lost_bonus": max(0, theoretical_bonus - optimal_bonus),
         "optimal_race_count": len(scheduled_races),
+        "optimal_affinity_race_count": len(scheduled_affinity_races),
+        "scheduled_objective_race_count": len(scheduled_objectives),
         "excluded_race_count": len(excluded_races),
         "missing_calendar_race_count": len(missing_calendar_races),
         "streaks": _streak_summary(planned_slots),
+    }
+
+
+def _race_identity(race: dict[str, Any]) -> tuple[str, object]:
+    for key in ("race_id", "race_instance_id"):
+        value = race.get(key)
+        if value not in (None, "", 0, "0"):
+            try:
+                return key, int(value)
+            except (TypeError, ValueError):
+                return key, str(value)
+    return "name", str(race.get("name") or "").strip().casefold()
+
+
+def _objective_slot(race: dict[str, Any]) -> dict[str, int] | None:
+    raw = race.get("objective_slot")
+    if not isinstance(raw, dict):
+        slots = race.get("schedule_slots") or []
+        raw = slots[0] if len(slots) == 1 and isinstance(slots[0], dict) else None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        slot = {
+            "year": int(raw.get("year")),
+            "month": int(raw.get("month")),
+            "half": int(raw.get("half")),
+        }
+    except (TypeError, ValueError):
+        return None
+    if slot["year"] not in (1, 2, 3):
+        return None
+    if not 1 <= slot["month"] <= 12 or slot["half"] not in (1, 2):
+        return None
+    return slot
+
+
+def _schedule_variant(
+    affinity_races: list[dict[str, Any]],
+    objective_races: list[dict[str, Any]],
+    *,
+    include_objectives: bool,
+) -> dict[str, Any]:
+    races = copy.deepcopy(affinity_races)
+    objectives = copy.deepcopy(objective_races) if include_objectives else []
+    unmatched_by_identity: dict[tuple[str, object], list[int]] = {}
+    for index, race in enumerate(races):
+        unmatched_by_identity.setdefault(_race_identity(race), []).append(index)
+
+    for objective in objectives:
+        slot = _objective_slot(objective)
+        if slot is None:
+            continue
+        identity = _race_identity(objective)
+        matching_indexes = unmatched_by_identity.get(identity) or []
+        matching_index = next(
+            (
+                index
+                for index in matching_indexes
+                if not bool(races[index].get("mandatory_objective"))
+            ),
+            None,
+        )
+        objective_detail = {
+            key: copy.deepcopy(value)
+            for key, value in objective.items()
+            if key not in {"planned_slot", "planning_status"}
+        }
+        if matching_index is not None:
+            race = races[matching_index]
+            race["mandatory_objective"] = True
+            race["objective"] = True
+            race["objective_only"] = False
+            race["objective_slot"] = dict(slot)
+            race["objective_details"] = [objective_detail]
+            # Winning the objective already realizes this race-affinity link.
+            # Do not schedule the same G1 again in another career year.
+            race["schedule_slots"] = [dict(slot)]
+            continue
+
+        races.append(
+            {
+                **objective_detail,
+                "mandatory_objective": True,
+                "objective": True,
+                "objective_only": True,
+                "objective_slot": dict(slot),
+                "objective_details": [objective_detail],
+                "schedule_slots": [dict(slot)],
+                "sources": [],
+                "source_sides": [],
+                "source_origins": [],
+                "owner_count": 0,
+                "shared": False,
+                "affinity_bonus": 0,
+            }
+        )
+
+    schedule = optimize_race_schedule(races)
+    return {
+        "mode": "standard" if include_objectives else "trackblazer",
+        "considers_objectives": include_objectives,
+        "races": races,
+        "objective_races": objectives,
+        "objective_race_count": len(objectives),
+        **schedule,
     }
 
 
@@ -414,6 +577,10 @@ def build_pair_g1_diagnostic(
     *,
     left_label: str,
     right_label: str,
+    left_origin: str | None = None,
+    right_origin: str | None = None,
+    target: dict[str, Any] | None = None,
+    objective_races: list[dict[str, Any]] | None = None,
     bonus_per_link: int = 3,
 ) -> dict[str, Any]:
     """Describe the optimal G1 plan for a trainee built from two legacies.
@@ -430,7 +597,15 @@ def build_pair_g1_diagnostic(
     right_only_names = sorted(right_names - left_names)
     resolved_bonus = max(0, int(bonus_per_link))
 
-    def race(name: str, sources: list[str]) -> dict[str, Any]:
+    resolved_left_origin = str(left_origin or "left")
+    resolved_right_origin = str(right_origin or "right")
+
+    def race(
+        name: str,
+        sources: list[str],
+        source_sides: list[str],
+        source_origins: list[str],
+    ) -> dict[str, Any]:
         detail = _merge_race_details(
             name,
             left_details.get(name),
@@ -440,23 +615,71 @@ def build_pair_g1_diagnostic(
         return {
             **detail,
             "sources": sources,
+            "source_sides": source_sides,
+            "source_origins": source_origins,
             "owner_count": owner_count,
             "shared": owner_count == 2,
             "affinity_bonus": owner_count * resolved_bonus,
         }
 
-    common = [race(name, [left_label, right_label]) for name in common_names]
-    left_only = [race(name, [left_label]) for name in left_only_names]
-    right_only = [race(name, [right_label]) for name in right_only_names]
+    common = [
+        race(
+            name,
+            [left_label, right_label],
+            ["left", "right"],
+            [resolved_left_origin, resolved_right_origin],
+        )
+        for name in common_names
+    ]
+    left_only = [
+        race(
+            name,
+            [left_label],
+            ["left"],
+            [resolved_left_origin],
+        )
+        for name in left_only_names
+    ]
+    right_only = [
+        race(
+            name,
+            [right_label],
+            ["right"],
+            [resolved_right_origin],
+        )
+        for name in right_only_names
+    ]
     races = sorted(common + left_only + right_only, key=_race_sort_key)
     exact_bonus = sum(int(item["affinity_bonus"]) for item in races)
-    schedule = optimize_race_schedule(races)
-    scheduled_count = int(schedule["optimal_race_count"])
+    resolved_objectives = [
+        dict(race)
+        for race in (objective_races or [])
+        if isinstance(race, dict)
+    ]
+    standard_schedule = _schedule_variant(
+        races,
+        resolved_objectives,
+        include_objectives=True,
+    )
+    trackblazer_schedule = _schedule_variant(
+        races,
+        resolved_objectives,
+        include_objectives=False,
+    )
+    scheduled_count = int(standard_schedule["optimal_affinity_race_count"])
+    target_identity = {
+        key: target.get(key)
+        for key in ("card_id", "chara_id", "uma_name", "card_name")
+        if isinstance(target, dict) and target.get(key) is not None
+    }
 
     return {
         "model": "new_trainee_race_affinity_plan",
         "left_label": left_label,
         "right_label": right_label,
+        "left_origin": resolved_left_origin,
+        "right_origin": resolved_right_origin,
+        "target": target_identity,
         "bonus_per_link": resolved_bonus,
         "shared_race_bonus": 2 * resolved_bonus,
         "one_side_race_bonus": resolved_bonus,
@@ -469,14 +692,57 @@ def build_pair_g1_diagnostic(
         "common_g1": common,
         "left_only_g1": left_only,
         "right_only_g1": right_only,
-        "races": races,
+        "affinity_races": copy.deepcopy(races),
+        "objective_races": resolved_objectives,
+        "objective_race_count": len(resolved_objectives),
+        "schedule_variants": {
+            "standard": standard_schedule,
+            "trackblazer": trackblazer_schedule,
+        },
         "race_count": len(races),
         "scheduled_race_count": scheduled_count,
         "unscheduled_race_count": len(races) - scheduled_count,
         "exact_bonus_if_all_won": exact_bonus,
-        **schedule,
+        **standard_schedule,
         "formula": (
             "new trainee wins × selected legacy wins: "
             "two matching legacies create two links; one matching legacy creates one link"
         ),
+    }
+
+
+def schedule_export_summary(plan: dict[str, Any] | None) -> dict[str, int]:
+    """Return stable scalar metrics for CSV and compact diagnostic exports."""
+
+    resolved = plan if isinstance(plan, dict) else {}
+    variants = resolved.get("schedule_variants") or {}
+    standard = (
+        variants.get("standard")
+        if isinstance(variants, dict) and isinstance(variants.get("standard"), dict)
+        else resolved
+    )
+    trackblazer = (
+        variants.get("trackblazer")
+        if isinstance(variants, dict)
+        and isinstance(variants.get("trackblazer"), dict)
+        else {}
+    )
+    objective_conflicts = sum(
+        str(race.get("planning_status") or "") == "objective_conflict"
+        for race in standard.get("races") or []
+        if isinstance(race, dict)
+    )
+    return {
+        "standard_optimal_bonus": int(standard.get("optimal_bonus") or 0),
+        "trackblazer_optimal_bonus": int(
+            trackblazer.get("optimal_bonus")
+            or standard.get("optimal_bonus")
+            or 0
+        ),
+        "objective_race_count": int(
+            standard.get("objective_race_count")
+            or resolved.get("objective_race_count")
+            or 0
+        ),
+        "objective_conflict_count": objective_conflicts,
     }

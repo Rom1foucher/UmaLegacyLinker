@@ -831,10 +831,10 @@ class LineageTree(QWidget):
 
 
 class RaceCalendarWidget(QWidget):
-    """Three-year in-game-style calendar for pair race-affinity planning."""
+    """Fixed, themed three-year calendar for race-affinity planning."""
 
-    BASE_WIDTH = 1500
-    YEAR_GAP = 16.0
+    BASE_WIDTH = 1464
+    YEAR_GAP = 18.0
     MONTHS = (
         "Jan.",
         "Fév.",
@@ -850,9 +850,17 @@ class RaceCalendarWidget(QWidget):
         "Déc.",
     )
     YEAR_COLORS = {
-        1: ("#18384c", "#66c7ff"),
-        2: ("#3a3419", "#f3cf39"),
-        3: ("#1d3825", "#79dc8b"),
+        1: ("#17283a", COLORS["blue"]),
+        2: ("#301a27", COLORS["warning"]),
+        3: ("#17301D", COLORS["accent"]),
+    }
+    SOURCE_COLORS = {
+        "shared": ("#3a3015", "#e6bd55", "#ffe5a0"),
+        "local": ("#142943", "#5d9ee8", "#b9d9ff"),
+        "remote": ("#29203f", "#9b7adb", "#ddceff"),
+        "planned": ("#163039", "#55aebe", "#c1edf4"),
+        "objective": ("#3a2025", "#d87b86", "#ffd1d6"),
+        "other": ("#1b2736", "#63758d", "#d5dfeb"),
     }
 
     def __init__(
@@ -888,6 +896,15 @@ class RaceCalendarWidget(QWidget):
             if isinstance(race, dict)
         ]
 
+    def set_plan(self, plan: dict[str, Any]) -> None:
+        """Swap a precomputed schedule variant without invoking the solver."""
+
+        self.plan = dict(plan)
+        self.refresh_images()
+        self.setFixedSize(self.BASE_WIDTH, self._required_height())
+        self.updateGeometry()
+        self.update()
+
     def refresh_images(self) -> None:
         self._pixmaps.clear()
         self._race_urls.clear()
@@ -921,7 +938,12 @@ class RaceCalendarWidget(QWidget):
         )
         self.update()
 
-    def _calendar_entries(self) -> tuple[dict[tuple[int, int, int], list[tuple[int, dict[str, Any]]]], list[tuple[int, dict[str, Any]]]]:
+    def _calendar_entries(
+        self,
+    ) -> tuple[
+        dict[tuple[int, int, int], list[tuple[int, dict[str, Any]]]],
+        list[tuple[int, dict[str, Any]]],
+    ]:
         scheduled: dict[tuple[int, int, int], list[tuple[int, dict[str, Any]]]] = {}
         unscheduled: list[tuple[int, dict[str, Any]]] = []
         for index, race in enumerate(self._races()):
@@ -943,10 +965,11 @@ class RaceCalendarWidget(QWidget):
                         and key[2] in (1, 2)
                     ):
                         scheduled.setdefault(key, []).append((index, race))
-                elif race.get("planning_status") == "missing_calendar":
+                else:
                     unscheduled.append((index, race))
-                # A race rejected because its only turn is already occupied is
-                # kept in diagnostics, but is not part of the proposed plan.
+                # Conflicts stay visible below the calendar. They remain useful
+                # diagnostic data even though they are not in the executable
+                # one-race-per-turn recommendation.
                 continue
             valid_slots: set[tuple[int, int, int]] = set()
             for slot in race.get("schedule_slots") or []:
@@ -977,7 +1000,35 @@ class RaceCalendarWidget(QWidget):
                     str(item[1].get("name") or "").casefold(),
                 )
             )
+        # Old diagnostics may not contain the solver's warning metadata.
+        # Reconstruct it here so every 4+ run remains visible but is clearly
+        # presented as a risky recommendation.
+        for year in (1, 2, 3):
+            current: list[tuple[int, int, int]] = []
+            for month in range(1, 13):
+                for half in (1, 2):
+                    key = (year, month, half)
+                    if key in scheduled:
+                        current.append(key)
+                        continue
+                    self._mark_calendar_streak(scheduled, current)
+                    current = []
+            self._mark_calendar_streak(scheduled, current)
         return scheduled, unscheduled
+
+    @staticmethod
+    def _mark_calendar_streak(
+        scheduled: dict[
+            tuple[int, int, int],
+            list[tuple[int, dict[str, Any]]],
+        ],
+        slots: list[tuple[int, int, int]],
+    ) -> None:
+        length = len(slots)
+        for slot in slots:
+            for _index, race in scheduled.get(slot, []):
+                race["consecutive_race_count"] = length
+                race["long_streak_warning"] = length >= 4
 
     def _layout_metrics(
         self,
@@ -1015,8 +1066,8 @@ class RaceCalendarWidget(QWidget):
             row_heights.append(max(78.0, 26.0 + card_rows * (card_height + 5.0) + 7.0))
         unknown_height = 0.0
         if unscheduled:
-            unknown_height = 44.0 + math.ceil(len(unscheduled) / 4) * 30.0
-        required = 50.0 + sum(row_heights) + unknown_height + 16.0
+            unknown_height = 46.0 + math.ceil(len(unscheduled) / 4) * 31.0
+        required = 52.0 + sum(row_heights) + unknown_height + 14.0
         required_int = max(200, int(math.ceil(required)))
         return (
             margin,
@@ -1035,7 +1086,7 @@ class RaceCalendarWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        painter.fillRect(self.rect(), QColor(COLORS["background"]))
+        painter.fillRect(self.rect(), QColor(COLORS["surface"]))
         (
             margin,
             column_width,
@@ -1066,11 +1117,19 @@ class RaceCalendarWidget(QWidget):
             )
             rect = QRectF(
                 year_left,
-                6.0,
+                7.0,
                 4.0 * column_width - 3.0,
-                31.0,
+                30.0,
+            )
+            panel = QRectF(
+                year_left - 4.0,
+                3.0,
+                4.0 * column_width + 5.0,
+                42.0 + sum(row_heights),
             )
             painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#101722"))
+            painter.drawRoundedRect(panel, 10.0, 10.0)
             painter.setBrush(QColor(background))
             painter.drawRoundedRect(rect, 7.0, 7.0)
             painter.setPen(QColor(foreground))
@@ -1079,7 +1138,7 @@ class RaceCalendarWidget(QWidget):
         label_font = QFont(self.font())
         label_font.setPointSizeF(7.3)
         label_font.setBold(True)
-        y = 44.0
+        y = 45.0
         for row_index, row_height in enumerate(row_heights):
             first_month = row_index * 2 + 1
             for year in (1, 2, 3):
@@ -1099,20 +1158,20 @@ class RaceCalendarWidget(QWidget):
                             column_width - 3.0,
                             row_height - 3.0,
                         )
-                        shade = "#121922" if (month + column) % 2 else "#141c26"
+                        shade = "#111923" if (month + half) % 2 else "#131c27"
                         painter.setBrush(QColor(shade))
-                        painter.setPen(QPen(QColor("#202b38"), 0.8))
-                        painter.drawRect(cell)
+                        painter.setPen(QPen(QColor(COLORS["border"]), 0.75))
+                        painter.drawRoundedRect(cell, 3.0, 3.0)
                         period = self.context.t("Début") if half == 1 else self.context.t("Fin")
                         header = f"{period} {self.context.t(self.MONTHS[month - 1])}"
                         painter.setFont(label_font)
-                        painter.setPen(QColor("#7f91a8"))
+                        painter.setPen(QColor(COLORS["muted"]))
                         painter.drawText(
                             QRectF(
                                 cell.left() + 3.0,
-                                cell.top() + 2.0,
+                                cell.bottom() - 19.0,
                                 cell.width() - 6.0,
-                                17.0,
+                                16.0,
                             ),
                             Qt.AlignmentFlag.AlignCenter,
                             header,
@@ -1122,7 +1181,7 @@ class RaceCalendarWidget(QWidget):
                         ):
                             card = QRectF(
                                 cell.left() + 5.0,
-                                cell.top() + 22.0 + item_index * (card_height + 5.0),
+                                cell.top() + 6.0 + item_index * (card_height + 5.0),
                                 card_width,
                                 card_height,
                             )
@@ -1132,11 +1191,11 @@ class RaceCalendarWidget(QWidget):
         if unscheduled:
             title_rect = QRectF(margin, y + 7.0, width - 2.0 * margin, 24.0)
             painter.setFont(year_font)
-            painter.setPen(QColor("#91a3bb"))
+            painter.setPen(QColor(COLORS["muted"]))
             painter.drawText(
                 title_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                self.context.t("DATE INDISPONIBLE DANS LE MASTER.MDB"),
+                self.context.t("COURSES NON PLACÉES DANS LE PLANNING OPTIMAL"),
             )
             chip_width = (width - 2.0 * margin - 3.0 * 8.0) / 4.0
             for index, (race_index, race) in enumerate(unscheduled):
@@ -1157,9 +1216,12 @@ class RaceCalendarWidget(QWidget):
         *,
         compact: bool = False,
     ) -> None:
-        shared = bool(race.get("shared"))
-        border = "#e7bd38" if shared else "#57a7ff"
-        painter.setBrush(QColor("#101720"))
+        source_kind = self._source_kind(race)
+        risky_streak = bool(race.get("long_streak_warning"))
+        background, border, foreground = self.SOURCE_COLORS[source_kind]
+        if risky_streak:
+            background, border, foreground = ("#24282e", "#727b86", "#d2d7dd")
+        painter.setBrush(QColor(background))
         painter.setPen(QPen(QColor(border), 1.5))
         painter.drawRoundedRect(rect, 5.0, 5.0)
 
@@ -1202,18 +1264,45 @@ class RaceCalendarWidget(QWidget):
             painter.drawPixmap(destination, scaled, source)
             painter.restore()
 
-        bonus = f"+{int(race.get('affinity_bonus') or 0)}"
+        if risky_streak:
+            painter.setBrush(QColor(77, 83, 92, 174))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), 4.0, 4.0)
+
+        bonus_value = int(race.get("affinity_bonus") or 0)
+        bonus = f"+{bonus_value}"
         badge_font = QFont(self.font())
         badge_font.setPointSizeF(7.2)
         badge_font.setBold(True)
         painter.setFont(badge_font)
-        badge_width = painter.fontMetrics().horizontalAdvance(bonus) + 10.0
-        badge = QRectF(rect.right() - badge_width - 3.0, rect.top() + 3.0, badge_width, 18.0)
-        painter.setBrush(QColor("#0e1a17"))
-        painter.setPen(QPen(QColor("#4ac88f"), 1.0))
-        painter.drawRoundedRect(badge, 7.0, 7.0)
-        painter.setPen(QColor("#8af0c0"))
-        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, bonus)
+        badge_width = 0.0
+        if bonus_value > 0:
+            badge_width = painter.fontMetrics().horizontalAdvance(bonus) + 10.0
+            badge = QRectF(
+                rect.right() - badge_width - 3.0,
+                rect.top() + 3.0,
+                badge_width,
+                18.0,
+            )
+            painter.setBrush(QColor("#10221d"))
+            painter.setPen(QPen(QColor(COLORS["accent"]), 1.0))
+            painter.drawRoundedRect(badge, 7.0, 7.0)
+            painter.setPen(QColor("#9aefd2"))
+            painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, bonus)
+
+        source_label = self._source_label(source_kind)
+        source_width = painter.fontMetrics().horizontalAdvance(source_label) + 10.0
+        source_badge = QRectF(
+            rect.left() + 3.0,
+            rect.top() + 3.0 if compact else rect.bottom() - 21.0,
+            source_width,
+            18.0,
+        )
+        painter.setBrush(QColor(background))
+        painter.setPen(QPen(QColor(border), 1.0))
+        painter.drawRoundedRect(source_badge, 7.0, 7.0)
+        painter.setPen(QColor(foreground))
+        painter.drawText(source_badge, Qt.AlignmentFlag.AlignCenter, source_label)
 
         name = str(race.get("name") or "G1")
         # The banner already contains the race title. Only render our own
@@ -1223,7 +1312,12 @@ class RaceCalendarWidget(QWidget):
             text_font.setPointSizeF(7.6)
             text_font.setBold(True)
             painter.setFont(text_font)
-            text_rect = rect.adjusted(7.0, 2.0, -5.0, -2.0)
+            text_rect = rect.adjusted(
+                source_width + 9.0 if compact else 7.0,
+                2.0,
+                -5.0,
+                -2.0,
+            )
             available = max(
                 10,
                 int(text_rect.width() - badge_width - 6.0),
@@ -1241,6 +1335,35 @@ class RaceCalendarWidget(QWidget):
             )
         self._race_rects.append((QRectF(rect), race))
 
+    @staticmethod
+    def _source_kind(race: dict[str, Any]) -> str:
+        if race.get("objective_only"):
+            return "objective"
+        if race.get("shared"):
+            return "shared"
+        origins = {
+            str(value or "").strip().casefold()
+            for value in race.get("source_origins") or []
+        }
+        if origins & {"remote", "distant"}:
+            return "remote"
+        if "local" in origins:
+            return "local"
+        if "planned" in origins:
+            return "planned"
+        return "other"
+
+    def _source_label(self, source_kind: str) -> str:
+        labels = {
+            "shared": "COMM.",
+            "local": self.context.t("LOC."),
+            "remote": self.context.t("DIST."),
+            "planned": self.context.t("PROJ."),
+            "objective": "OBJ.",
+            "other": "G1",
+        }
+        return labels[source_kind]
+
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         point = event.position()
         for rect, race in reversed(self._race_rects):
@@ -1257,6 +1380,59 @@ class RaceCalendarWidget(QWidget):
                 lines.append(
                     self.context.t("Déjà gagnée par : {sources}")
                     .replace("{sources}", sources)
+                )
+            origins = {
+                str(value or "").strip().casefold()
+                for value in race.get("source_origins") or []
+            }
+            if len(origins) == 1:
+                origin = next(iter(origins))
+                if origin in {"local", "remote", "distant", "planned"}:
+                    if origin == "local":
+                        origin_label = self.context.t("locale")
+                    elif origin == "planned":
+                        origin_label = self.context.t("projetée")
+                    else:
+                        origin_label = self.context.t("distant")
+                    lines.append(
+                        self.context.t("Origine de la G1 : {origin}")
+                        .replace("{origin}", origin_label)
+                    )
+            if race.get("mandatory_objective"):
+                required = int(race.get("required_position") or 0)
+                objective_line = self.context.t(
+                    "Course d’objectif obligatoire du personnage visé."
+                )
+                if required > 0:
+                    objective_line += " " + self.context.t(
+                        "Position requise : {position} ou mieux."
+                    ).replace("{position}", str(required))
+                lines.append(objective_line)
+            status = str(race.get("planning_status") or "")
+            if status == "objective_conflict":
+                lines.append(
+                    self.context.t(
+                        "G1 possible et utile pour l’affinité, mais non retenue : une course d’objectif obligatoire occupe ce tour."
+                    )
+                )
+            elif status == "calendar_conflict":
+                lines.append(
+                    self.context.t(
+                        "G1 possible et utile pour l’affinité, mais une course plus rentable occupe déjà ce tour."
+                    )
+                )
+            elif status in {"missing_calendar", "unsupported_calendar"}:
+                lines.append(
+                    self.context.t(
+                        "Cette course reste dans le diagnostic, mais sa date ne permet pas un placement fiable."
+                    )
+                )
+            if race.get("long_streak_warning"):
+                count = int(race.get("consecutive_race_count") or 4)
+                lines.append(
+                    self.context.t(
+                        "Course possible et bonus d’affinité conservé. Elle fait partie d’une série de {count} courses consécutives, susceptible de réduire les chances de gagner."
+                    ).replace("{count}", str(count))
                 )
             QToolTip.showText(event.globalPosition().toPoint(), "\n".join(lines), self)
             return
@@ -1427,17 +1603,72 @@ class LineageDialog(QDialog):
         self.planning_page: QWidget | None = None
         self.calendar: RaceCalendarWidget | None = None
         self.planning_legend: QLabel | None = None
+        self.planning_key: QLabel | None = None
+        self.planning_title: QLabel | None = None
+        self.trackblazer_toggle: QCheckBox | None = None
         if self.race_plan.get("races"):
             self.planning_page = QWidget()
             planning_layout = QVBoxLayout(self.planning_page)
-            planning_layout.setContentsMargins(0, 0, 0, 0)
+            planning_layout.setContentsMargins(2, 4, 2, 0)
+            planning_layout.setSpacing(8)
+            planning_header = QFrame()
+            planning_header.setObjectName("planningHeader")
+            planning_header.setStyleSheet(
+                "QFrame#planningHeader {"
+                f" background:{COLORS['surface']};"
+                f" border:1px solid {COLORS['border']};"
+                " border-radius:10px;"
+                "}"
+                "QLabel#planningTitle {"
+                f" color:{COLORS['text']}; font-size:12pt; font-weight:700;"
+                "}"
+                "QCheckBox#trackblazerToggle {"
+                f" color:{COLORS['text']};"
+                f" background:{COLORS['surface_alt']};"
+                f" border:1px solid {COLORS['border']};"
+                " border-radius:8px; padding:7px 11px;"
+                "}"
+                "QCheckBox#trackblazerToggle:checked {"
+                f" color:{COLORS['accent']};"
+                " background:#16342f; border-color:#34705f;"
+                "}"
+                "QCheckBox#trackblazerToggle:disabled { color:#647287; }"
+            )
+            header_layout = QVBoxLayout(planning_header)
+            header_layout.setContentsMargins(13, 10, 13, 10)
+            header_layout.setSpacing(5)
+            mode_row = QHBoxLayout()
+            self.planning_title = QLabel()
+            self.planning_title.setObjectName("planningTitle")
+            mode_row.addWidget(self.planning_title)
+            mode_row.addStretch(1)
+            self.trackblazer_toggle = QCheckBox()
+            self.trackblazer_toggle.setObjectName("trackblazerToggle")
+            variants = self.race_plan.get("schedule_variants") or {}
+            has_trackblazer = isinstance(variants, dict) and isinstance(
+                variants.get("trackblazer"),
+                dict,
+            )
+            objective_count = int(self.race_plan.get("objective_race_count") or 0)
+            self.trackblazer_toggle.setEnabled(
+                has_trackblazer and objective_count > 0
+            )
+            mode_row.addWidget(self.trackblazer_toggle)
+            header_layout.addLayout(mode_row)
+            self.planning_key = QLabel()
+            self.planning_key.setObjectName("muted")
+            self.planning_key.setTextFormat(Qt.TextFormat.RichText)
+            self.planning_key.setWordWrap(True)
+            header_layout.addWidget(self.planning_key)
             self.planning_legend = QLabel()
             self.planning_legend.setObjectName("muted")
             self.planning_legend.setWordWrap(True)
-            planning_layout.addWidget(self.planning_legend)
+            header_layout.addWidget(self.planning_legend)
+            planning_layout.addWidget(planning_header)
             planning_scroll = QScrollArea()
-            # Keep the game-like canvas and banner density stable; a smaller
-            # dialog scrolls, a larger dialog centres the same fixed planning.
+            # The canvas keeps a stable banner size. At the default 1600×930
+            # dialog size it fits without scrollbars; smaller windows can still
+            # scroll instead of shrinking and pixelating the race artwork.
             planning_scroll.setWidgetResizable(False)
             planning_scroll.setFrameShape(QFrame.Shape.NoFrame)
             planning_scroll.setAlignment(
@@ -1445,7 +1676,7 @@ class LineageDialog(QDialog):
             )
             self.calendar = RaceCalendarWidget(
                 context,
-                self.race_plan,
+                self._active_race_plan(),
                 self.repository,
             )
             planning_scroll.setWidget(self.calendar)
@@ -1465,8 +1696,80 @@ class LineageDialog(QDialog):
 
         self.online_toggle.toggled.connect(self._toggle_online_images)
         self.clear_cache_button.clicked.connect(self._clear_cache)
+        if self.trackblazer_toggle is not None:
+            self.trackblazer_toggle.toggled.connect(
+                self._toggle_trackblazer_schedule
+            )
         self.repository.cache_changed.connect(self._update_cache_label)
         self.retranslate()
+
+    def _active_race_plan(self) -> dict[str, Any]:
+        variants = self.race_plan.get("schedule_variants") or {}
+        mode = (
+            "trackblazer"
+            if self.trackblazer_toggle is not None
+            and self.trackblazer_toggle.isChecked()
+            else "standard"
+        )
+        if isinstance(variants, dict) and isinstance(variants.get(mode), dict):
+            return variants[mode]
+        return self.race_plan
+
+    def _toggle_trackblazer_schedule(self, _enabled: bool) -> None:
+        if self.calendar is not None:
+            self.calendar.set_plan(self._active_race_plan())
+        self._update_planning_copy()
+
+    def _update_planning_copy(self) -> None:
+        if self.planning_legend is None:
+            return
+        t = self.context.t
+        plan = self._active_race_plan()
+        shared_bonus = int(self.race_plan.get("shared_race_bonus") or 6)
+        one_side_bonus = int(self.race_plan.get("one_side_race_bonus") or 3)
+        optimal_bonus = int(
+            plan.get("optimal_bonus")
+            or self.race_plan.get("exact_bonus_if_all_won")
+            or 0
+        )
+        affinity_count = int(
+            plan.get("optimal_affinity_race_count")
+            or plan.get("optimal_race_count")
+            or self.race_plan.get("race_count")
+            or 0
+        )
+        objective_count = int(plan.get("scheduled_objective_race_count") or 0)
+        streaks = plan.get("streaks") or {}
+        max_consecutive = int(streaks.get("max_consecutive") or 0)
+        trackblazer = bool(
+            self.trackblazer_toggle is not None
+            and self.trackblazer_toggle.isChecked()
+        )
+        if trackblazer:
+            summary = t(
+                "Mode Trackblazer : objectifs ignorés · +{optimal} d’affinité · "
+                "{affinity_count} G1 · série maximale {streak}."
+            )
+        else:
+            summary = t(
+                "Planning idéal : +{optimal} d’affinité · {affinity_count} G1 utiles · "
+                "{objective_count} course(s) d’objectif · série maximale {streak}."
+            )
+        self.planning_legend.setText(
+            (
+                t(
+                    "+{shared} commune · +{single} gagnée par un seul parent. "
+                    "Une seule course par tour. "
+                )
+                + summary
+            )
+            .replace("{shared}", str(shared_bonus))
+            .replace("{single}", str(one_side_bonus))
+            .replace("{optimal}", str(optimal_bonus))
+            .replace("{affinity_count}", str(affinity_count))
+            .replace("{objective_count}", str(objective_count))
+            .replace("{streak}", str(max_consecutive))
+        )
 
     def retranslate(self) -> None:
         t = self.context.t
@@ -1548,6 +1851,31 @@ class LineageDialog(QDialog):
         self.tabs.setTabText(self.tabs.indexOf(self.visual_page), t("Vue de lignée"))
         if self.planning_page is not None:
             self.tabs.setTabText(self.tabs.indexOf(self.planning_page), t("Planning G1"))
+        if self.planning_title is not None:
+            self.planning_title.setText(t("Planning optimal proposé"))
+        if self.trackblazer_toggle is not None:
+            self.trackblazer_toggle.setText(t("Planning pour Trackblazer"))
+            if self.trackblazer_toggle.isEnabled():
+                self.trackblazer_toggle.setToolTip(
+                    t(
+                        "Ignore les courses d’objectif du personnage visé et optimise uniquement les G1 d’affinité."
+                    )
+                )
+            else:
+                self.trackblazer_toggle.setToolTip(
+                    t("Aucune course d’objectif fixe à ignorer pour ce personnage.")
+                )
+        if self.planning_key is not None:
+            self.planning_key.setText(
+                t(
+                    '<span style="color:#e6bd55">● Commune</span> &nbsp; '
+                    '<span style="color:#5d9ee8">● Locale</span> &nbsp; '
+                    '<span style="color:#9b7adb">● Distante</span> &nbsp; '
+                    '<span style="color:#55aebe">● Projetée</span> &nbsp; '
+                    '<span style="color:#d87b86">● Objectif obligatoire</span> &nbsp; '
+                    '<span style="color:#8a929d">● Série de 4+ (risquée)</span>'
+                )
+            )
         self.tabs.setTabText(self.tabs.indexOf(self.details), t("Diagnostic"))
         component_details = self.row.get("component_details") or {}
         if not isinstance(component_details, dict):
@@ -1562,35 +1890,7 @@ class LineageDialog(QDialog):
                 "de la run lorsqu’elle est disponible · ◆ doré = priorité majeure · ◇ bleu = white compatible, utile ou rare pour le profil."
             ).replace("{count}", str(event_count))
         )
-        if self.planning_legend is not None:
-            shared_bonus = int(self.race_plan.get("shared_race_bonus") or 6)
-            one_side_bonus = int(self.race_plan.get("one_side_race_bonus") or 3)
-            optimal_bonus = int(
-                self.race_plan.get("optimal_bonus")
-                or self.race_plan.get("exact_bonus_if_all_won")
-                or 0
-            )
-            race_count = int(
-                self.race_plan.get("optimal_race_count")
-                or self.race_plan.get("race_count")
-                or 0
-            )
-            streaks = self.race_plan.get("streaks") or {}
-            max_consecutive = int(streaks.get("max_consecutive") or 0)
-            self.planning_legend.setText(
-                t(
-                    "Gagne ces G1 avec la nouvelle trainee pour créer les liens de course : "
-                    "+{shared} si les deux parents l’ont déjà gagnée · "
-                    "+{single} si un seul parent l’a gagnée. Planning optimal : "
-                    "+{optimal} avec {count} courses, une seule par tour, "
-                    "{streak} consécutive(s) au maximum."
-                )
-                .replace("{shared}", str(shared_bonus))
-                .replace("{single}", str(one_side_bonus))
-                .replace("{optimal}", str(optimal_bonus))
-                .replace("{count}", str(race_count))
-                .replace("{streak}", str(max_consecutive))
-            )
+        self._update_planning_copy()
         self.attribution.setText(
             t(
                 'Les bannières G1, illustrations de trainees et icônes de skills sont chargées à la demande depuis '

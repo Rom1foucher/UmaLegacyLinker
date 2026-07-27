@@ -18,7 +18,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - two-column Spark cards that explicitly fill the Qt rich-text viewport, keeping stars, names and engine probabilities readable even in the narrow result pane;
 - branch summaries that total each final parent with its two grandparents, condense duplicate Blue/Pink/White Sparks, keep Green sources distinct and mark Sparks carried by the direct parent;
 - costume-aware trainee artwork and White Skill icons loaded asynchronously through a persistent, optional local cache;
-- explicit shared/one-sided G1 diagnostics and a three-year half-month planning calendar for both parent and grandparent pairs, with `+6`/`+3` link values and cached GameTora race banners;
+- explicit shared/local/remote G1 diagnostics and a themed three-year optimal calendar for both parent and grandparent pairs, with `+6`/`+3` link values, mandatory objective locks, an objective-free Trackblazer switch and cached GameTora race banners;
 - rich, colour-coded Spark chips ordered Blue → Pink → Green → White, with resolved skill icons, the existing full-run White inheritance probability and gold emphasis for the three strongest White score contributions;
 - loading the latest generated ranking;
 - export of a selected final pair to the uma.moe Lineage Planner format;
@@ -32,7 +32,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - cooperative cancellation of long-running tasks from the status bar;
 - a fixed opposing-parent context and offline local GP-pair ranking in the uma.moe search.
 
-Pair ranking and every scoring formula remain unchanged. The lineage view retains the compact identities, Sparks and skill IDs required for rendering, then displays the White full-run probability already emitted by the scoring engine for its configured Inspiration Events. G1 planning likewise renders the engine's pair comparison: a race carried by both selected legacies is worth two future `+3` links, while a one-sided race is worth one. It neither substitutes the separate future-GP generation mechanic nor calculates a second rate in the UI.
+Pair ranking and every scoring formula remain unchanged. The lineage view retains the compact identities, Sparks and skill IDs required for rendering, then displays the White full-run probability already emitted by the scoring engine for its configured Inspiration Events. G1 planning likewise renders the engine's pair comparison: a race carried by both selected legacies is worth two future `+3` links, while a one-sided race is worth one. The solver maximises obtainable affinity with one race per turn, then minimises streaks of four, three and two; fixed target-character objectives constrain the standard variant, while Trackblazer switches to a precomputed objective-free variant. It neither substitutes the separate future-GP generation mechanic nor calculates a second rate in the UI.
 
 ## Visual QA
 

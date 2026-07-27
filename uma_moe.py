@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from g1_race_planning import build_pair_g1_diagnostic
+from g1_race_planning import build_pair_g1_diagnostic, schedule_export_summary
 from legacy_linker import MasterResolver, grouped_factors
 from parent_optimizer import (
     AffinityResolver,
@@ -2765,6 +2765,8 @@ def _final_parent_affinity_potential(
     g1_bonus_value: int,
     planned_g1_budget: int,
     single_g1_weight: float = 0.6,
+    fixed_origin: str = "local",
+    candidate_origin: str = "remote",
 ) -> dict[str, Any]:
     """Estimate the future parent branch in the final Ace run.
 
@@ -2793,6 +2795,18 @@ def _final_parent_affinity_potential(
         gp2,
         left_label="gp_1",
         right_label="gp_2",
+        left_origin=fixed_origin,
+        right_origin=candidate_origin,
+        target=(
+            resolver.card_details_for_chara(target_parent_chara)
+            if hasattr(resolver, "card_details_for_chara")
+            else {"chara_id": target_parent_chara}
+        ),
+        objective_races=(
+            resolver.objective_races(target_parent_chara)
+            if hasattr(resolver, "objective_races")
+            else []
+        ),
         bonus_per_link=g1_bonus_value,
     )
     common = list(race_affinity_plan["common_g1_names"])
@@ -2896,6 +2910,52 @@ def _identity(member: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _g1_schedule_csv_fields(plan: dict[str, Any] | None) -> dict[str, int]:
+    metrics = schedule_export_summary(plan)
+    return {
+        "optimal_g1_plan_bonus": metrics["standard_optimal_bonus"],
+        "trackblazer_g1_plan_bonus": metrics["trackblazer_optimal_bonus"],
+        "objective_race_count": metrics["objective_race_count"],
+        "objective_conflict_count": metrics["objective_conflict_count"],
+    }
+
+
+def _g1_schedule_diagnostic_fields(
+    plan: dict[str, Any] | None,
+) -> dict[str, Any]:
+    resolved = plan if isinstance(plan, dict) else {}
+    variants = resolved.get("schedule_variants") or {}
+    standard = (
+        variants.get("standard")
+        if isinstance(variants, dict) and isinstance(variants.get("standard"), dict)
+        else resolved
+    )
+    objectives = [
+        {
+            "name": race.get("name"),
+            "turn": race.get("turn"),
+            "required_position": race.get("required_position"),
+            "slot": race.get("objective_slot"),
+            "is_g1": bool(race.get("is_g1")),
+        }
+        for race in resolved.get("objective_races") or []
+        if isinstance(race, dict)
+    ]
+    return {
+        "left_origin": resolved.get("left_origin"),
+        "right_origin": resolved.get("right_origin"),
+        "target": resolved.get("target"),
+        "objective_races": objectives,
+        "objective_conflicts": [
+            race.get("name")
+            for race in standard.get("races") or []
+            if isinstance(race, dict)
+            and race.get("planning_status") == "objective_conflict"
+        ],
+        **schedule_export_summary(resolved),
+    }
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     import csv
 
@@ -2909,6 +2969,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "production_run_scored_value", "common_gp_g1_count", "local_only_g1_count",
         "remote_only_g1_count", "common_gp_g1_races", "local_only_g1_races",
         "remote_only_g1_races", "optimal_g1_plan_bonus",
+        "trackblazer_g1_plan_bonus", "objective_race_count",
+        "objective_conflict_count",
         "blue", "pink", "white", "white_generation",
         "unique", "candidate_g1",
         "final_pair_affinity_total", "projected_parent_g1_count",
@@ -3387,6 +3449,8 @@ def rank_online_grandparent_pairs(
                 g1_bonus_value,
                 planned_g1_budget,
                 single_g1_weight,
+                fixed_origin="local",
+                candidate_origin=("local" if local_pair_mode else "remote"),
             )
             final_parent_affinity["base_full_score_at"] = final_full_score_at
             production_affinity = _full_production_affinity(
@@ -3475,6 +3539,8 @@ def rank_online_grandparent_pairs(
                     race_skills=race_skills,
                     config=config,
                     parent_2_branch=opposing_branch,
+                    parent_1_origin="planned",
+                    parent_2_origin="local",
                     g1_bonus_value=g1_bonus_value,
                     affinity_thresholds=(
                         (config.get("affinity") or {}).get("parent_pair_thresholds")
@@ -3643,7 +3709,7 @@ def rank_online_grandparent_pairs(
     rankings_json_path = output_dir / "uma_moe_grandparent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 7,
+            "schema_version": 8,
             "generated_at_utc": generated,
             "source": (
                 "local veterans (both pools)"
@@ -3747,7 +3813,7 @@ def rank_online_grandparent_pairs(
             "common_gp_g1_races": "; ".join(common_races),
             "local_only_g1_races": "; ".join(local_only_races),
             "remote_only_g1_races": "; ".join(remote_only_races),
-            "optimal_g1_plan_bonus": g1_plan.get("exact_bonus_if_all_won"),
+            **_g1_schedule_csv_fields(g1_plan),
             "blue": round(row["components"]["blue"], 2),
             "pink": round(row["components"]["pink"], 2),
             "white": round(row["components"]["white_skill"], 2),
@@ -3805,6 +3871,9 @@ def rank_online_grandparent_pairs(
                     ),
                     "exact_bonus_if_all_won": (
                         (row.get("race_affinity_plan") or {}).get("exact_bonus_if_all_won")
+                    ),
+                    **_g1_schedule_diagnostic_fields(
+                        row.get("race_affinity_plan")
                     ),
                 }
                 for row in top
@@ -3877,7 +3946,8 @@ def _write_parent_pair_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "parent_parent_base", "parent_parent_common_g1_count", "parent_parent_common_g1",
         "local_parent_only_g1_count", "local_parent_only_g1",
         "remote_parent_only_g1_count", "remote_parent_only_g1",
-        "optimal_g1_plan_bonus",
+        "optimal_g1_plan_bonus", "trackblazer_g1_plan_bonus",
+        "objective_race_count", "objective_conflict_count",
         "distance_status", "distance_tier", "distance_stars", "distance_carriers",
         "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met",
         "distance_initial_rank", "distance_probability_a", "distance_probability_s",
@@ -4386,6 +4456,8 @@ def rank_online_parent_pairs(
                 config=config,
                 parent_1_branch=local_branch,
                 parent_2_branch=remote_branch,
+                parent_1_origin="local",
+                parent_2_origin="remote",
                 g1_bonus_value=g1_bonus_value,
                 affinity_thresholds=pair_thresholds,
             )
@@ -4480,7 +4552,7 @@ def rank_online_parent_pairs(
     rankings_json_path = output_dir / "uma_moe_parent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 3,
+            "schema_version": 4,
             "generated_at_utc": generated,
             "source": "uma.moe public API or imported API response",
             "search_mode": "parent_for_ace",
@@ -4596,7 +4668,7 @@ def rank_online_parent_pairs(
             "local_parent_only_g1": "; ".join(g1_plan.get("left_only_g1_names") or []),
             "remote_parent_only_g1_count": g1_plan.get("right_only_g1_count"),
             "remote_parent_only_g1": "; ".join(g1_plan.get("right_only_g1_names") or []),
-            "optimal_g1_plan_bonus": g1_plan.get("exact_bonus_if_all_won"),
+            **_g1_schedule_csv_fields(g1_plan),
             "distance_status": viability.get("key"),
             "distance_tier": viability.get("tier"),
             "distance_stars": distance_summary.get("total_stars"),
@@ -4672,6 +4744,9 @@ def rank_online_parent_pairs(
                     ),
                     "exact_bonus_if_all_won": (
                         (row.get("race_affinity_plan") or {}).get("exact_bonus_if_all_won")
+                    ),
+                    **_g1_schedule_diagnostic_fields(
+                        row.get("race_affinity_plan")
                     ),
                 }
                 for row in top

@@ -696,6 +696,85 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             self.assertFalse(dialog.calendar.grab().toImage().isNull())
             dialog.close()
 
+    def test_lineage_planning_switches_to_trackblazer_without_recomputing(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.lineage_view import LineageDialog
+
+        slot = {"year": 2, "month": 5, "half": 2}
+        objective = {
+            "race_id": 2002,
+            "name": "Mandatory Trial",
+            "affinity_bonus": 0,
+            "mandatory_objective": True,
+            "objective_only": True,
+            "planned_slot": slot,
+            "planning_status": "scheduled",
+        }
+        blocked_g1 = {
+            "race_id": 1001,
+            "name": "Affinity Cup",
+            "affinity_bonus": 6,
+            "shared": True,
+            "planned_slot": None,
+            "planning_status": "objective_conflict",
+        }
+        trackblazer_g1 = {
+            **blocked_g1,
+            "planned_slot": slot,
+            "planning_status": "scheduled",
+        }
+        plan = {
+            "shared_race_bonus": 6,
+            "one_side_race_bonus": 3,
+            "objective_race_count": 1,
+            "races": [blocked_g1, objective],
+            "schedule_variants": {
+                "standard": {
+                    "mode": "standard",
+                    "races": [blocked_g1, objective],
+                    "optimal_bonus": 0,
+                    "optimal_affinity_race_count": 0,
+                    "scheduled_objective_race_count": 1,
+                    "streaks": {"max_consecutive": 1},
+                },
+                "trackblazer": {
+                    "mode": "trackblazer",
+                    "races": [trackblazer_g1],
+                    "optimal_bonus": 6,
+                    "optimal_affinity_race_count": 1,
+                    "scheduled_objective_race_count": 0,
+                    "streaks": {"max_consecutive": 1},
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SettingsStore(Path(temp_dir) / "config.json")
+            store.update({"online_images": "0", "ui_language": "en"})
+            dialog = LineageDialog(
+                AppContext(store),
+                {"card_id": 103101, "card_name": "Target"},
+                {
+                    "score": 90,
+                    "parent_1": {"card_name": "Local", "sparks": []},
+                    "parent_2": {"card_name": "Remote", "sparks": []},
+                    "race_affinity_plan": plan,
+                    "affinity": {"total": 150},
+                },
+            )
+            self.assertIsNotNone(dialog.trackblazer_toggle)
+            self.assertTrue(dialog.trackblazer_toggle.isEnabled())
+            self.assertEqual(dialog.calendar.plan["mode"], "standard")
+            self.assertIn("0 affinity", dialog.planning_legend.text())
+            dialog.trackblazer_toggle.setChecked(True)
+            self.application.processEvents()
+            self.assertEqual(dialog.calendar.plan["mode"], "trackblazer")
+            self.assertIn("objectives ignored", dialog.planning_legend.text())
+            scheduled, excluded = dialog.calendar._calendar_entries()
+            self.assertEqual(scheduled[(2, 5, 2)][0][1]["name"], "Affinity Cup")
+            self.assertFalse(excluded)
+            dialog.close()
+
     def test_grandparent_dialog_uses_target_parent_as_root(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore

@@ -112,6 +112,42 @@ def _planner_factors(member: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(result, key=sort_key)
 
 
+def _planner_saddle_ids(
+    member: dict[str, Any],
+    source: dict[str, Any] | None = None,
+) -> list[int]:
+    """Return the race-saddle IDs consumed by Lineage Planner imports.
+
+    Local veterans and succession snapshots expose the raw
+    ``win_saddle_id_array``. Normalized and uma.moe members instead retain the
+    same IDs in ``g1_wins.details``. The planner only reads race history from
+    the embedded veteran/succession object or ``manualWinSaddleIds``, so the
+    latter must be populated for normalized branches.
+    """
+    saddle_ids: set[int] = set()
+    for record in (source, member):
+        if not isinstance(record, dict):
+            continue
+        raw_ids = record.get("win_saddle_id_array")
+        if isinstance(raw_ids, list):
+            for raw_id in raw_ids:
+                saddle_id = _integer(raw_id)
+                if saddle_id is not None and saddle_id > 0:
+                    saddle_ids.add(saddle_id)
+
+    g1_wins = member.get("g1_wins")
+    details = g1_wins.get("details") if isinstance(g1_wins, dict) else None
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            saddle_id = _integer(detail.get("saddle_id"))
+            if saddle_id is not None and saddle_id > 0:
+                saddle_ids.add(saddle_id)
+
+    return sorted(saddle_ids)
+
+
 def _planner_entry(
     position: str,
     member: dict[str, Any],
@@ -130,7 +166,10 @@ def _planner_entry(
         "sparks": _planner_factors(member),
         "veteran": veteran,
         "succession": succession,
-        "manualWinSaddleIds": [],
+        "manualWinSaddleIds": _planner_saddle_ids(
+            member,
+            veteran if veteran is not None else succession,
+        ),
     }
 
 

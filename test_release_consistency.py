@@ -1,4 +1,4 @@
-"""Keep the Qt-only 1.7.0 release surfaces in sync."""
+"""Keep the Qt-only release surfaces in sync."""
 
 from __future__ import annotations
 

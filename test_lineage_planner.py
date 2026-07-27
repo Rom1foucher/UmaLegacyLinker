@@ -11,10 +11,10 @@ import lineage_planner
 from lineage_planner import _planner_factor, build_lineage_planner_export
 
 
-def factor(group_id: int, stars: int, name: str, factor_type: str) -> dict[str, object]:
+def factor(base_id: int, stars: int, name: str, factor_type: str) -> dict[str, object]:
     return {
-        "factor_id": group_id * 10 + stars,
-        "factor_group_id": group_id,
+        "factor_id": base_id * 10 + stars,
+        "factor_group_id": base_id // 10,
         "name": name,
         "stars": stars,
         "type": factor_type,
@@ -27,10 +27,18 @@ def member(card_id: int, name: str, *, lineage: dict[str, object] | None = None)
         "card_name": name,
         "factors": {
             "all": [
-                factor(33, 2, "Medium", "red_aptitude"),
-                factor(3, 3, "Power", "blue_stat"),
-                factor(20046, 1, "Ramp Up", "white_skill"),
+                factor(330, 2, "Medium", "red_aptitude"),
+                factor(30, 3, "Power", "blue_stat"),
+                factor(200460, 1, "Ramp Up", "white_skill"),
             ]
+        },
+        "g1_wins": {
+            "count": 2,
+            "names": ["Arima Kinen", "Japan Cup"],
+            "details": [
+                {"name": "Arima Kinen", "saddle_id": 31},
+                {"name": "Japan Cup", "saddle_id": 18},
+            ],
         },
         "when_used_as_parent": lineage or {},
     }
@@ -134,15 +142,48 @@ class LineagePlannerTests(unittest.TestCase):
         self.assertEqual(parent["characterId"], 101001)
         self.assertIsNone(parent["veteran"])
         self.assertIsNone(parent["succession"])
-        self.assertEqual(parent["manualWinSaddleIds"], [])
         self.assertEqual(
             parent["sparks"],
             [
-                {"factorId": "3", "level": 3, "name": "Power", "type": 0},
-                {"factorId": "33", "level": 2, "name": "Medium", "type": 1},
-                {"factorId": "20046", "level": 1, "name": "Ramp Up", "type": 3},
+                {"factorId": "30", "level": 3, "name": "Power", "type": 0},
+                {"factorId": "330", "level": 2, "name": "Medium", "type": 1},
+                {"factorId": "200460", "level": 1, "name": "Ramp Up", "type": 3},
             ],
         )
+        self.assertEqual(parent["manualWinSaddleIds"], [18, 31])
+
+    def test_export_matches_current_uma_moe_import_envelope(self) -> None:
+        payload = build_lineage_planner_export(
+            103001,
+            member(101001, "Parent 1"),
+            member(102001, "Parent 2"),
+            exported_at=datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            set(payload),
+            {"version", "type", "exportedAt", "payload"},
+        )
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["type"], "lineage-planner")
+        self.assertIsInstance(payload["payload"], list)
+        for entry in payload["payload"]:
+            self.assertEqual(
+                set(entry),
+                {
+                    "position",
+                    "characterId",
+                    "sparks",
+                    "veteran",
+                    "succession",
+                    "manualWinSaddleIds",
+                },
+            )
+            for spark in entry["sparks"]:
+                self.assertEqual(
+                    set(spark),
+                    {"factorId", "level", "name", "type"},
+                )
 
     def test_local_veterans_include_complete_raw_lineages(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -167,7 +208,9 @@ class LineagePlannerTests(unittest.TestCase):
         self.assertEqual(list(rows), list(lineage_planner.POSITION_ORDER))
         self.assertEqual(rows["p1"]["veteran"], raw_1)
         self.assertEqual(rows["p2"]["veteran"], raw_2)
+        self.assertEqual(rows["p1"]["manualWinSaddleIds"], [])
         self.assertEqual(rows["p1-1"]["succession"]["position_id"], 10)
+        self.assertEqual(rows["p1-1"]["manualWinSaddleIds"], [1])
         self.assertEqual(rows["p1-2-2"]["succession"]["position_id"], 22)
         self.assertEqual(rows["p2-1-1"]["characterId"], 102004)
 

@@ -2,8 +2,9 @@
 
 This project uses feature-level semantic versioning. Small internal iterations are consolidated into the nearest meaningful release instead of receiving their own public version.
 
-## Unreleased
+## 1.7.1 - Preset and export fixes
 
+- Verified Lineage Planner exports against the current uma.moe frontend v1 import envelope and preserved race-saddle histories for normalized and remote lineage members.
 - Fixed course-preset persistence in the Qt interface, including the explicit no-preset state, complete condition replacement when switching presets and preserving a preset when only the running style changes.
 - Unified the Ace, target parent, race profile, course preset, exact conditions and scoring inputs into one live context shared by the Lineage Optimisation and uma.moe pages. Both pages now display and edit every shared race/scoring input they consume.
 - Extended that live scoring context to the Weights page, so custom-scoring activation and the individual White Skill priority file stay synchronized in every direction. Added a precise guide for complete and partial priority JSON files and stricter validation for exact-profile rules.

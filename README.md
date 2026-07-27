@@ -106,7 +106,7 @@ optional target-surface/distance/style constraints on the remote Main, and optio
 Blue/White quality for the full remote lineage. The generated UQL text is kept only as an audit
 and manual-copy representation because the public endpoint has no free-text UQL parameter.
 
-Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format. In the planner, use **Save / Load** to import the generated file. Local branches retain every veteran and succession record available in the source export; remote branches export every Spark and lineage member available from the API result.
+Any selected final parent pair, whether fully local or local × uma.moe, can be exported in the native **Lineage Planner v1 JSON** format used by the current uma.moe frontend. In the planner, use **Save / Load** to import the generated file. Local branches retain every veteran and succession record available in the source export; normalized and remote branches retain every available Spark, lineage member and race-saddle ID.
 
 ## Scoring model
 
@@ -275,8 +275,8 @@ The uma.moe API key can be remembered from the application. On Windows it is enc
 The `Windows release` GitHub Actions workflow builds the same package on every `v*` tag and attaches the archive and checksum to the corresponding GitHub release:
 
 ```powershell
-git tag v1.7.0
-git push origin v1.7.0
+git tag v1.7.1
+git push origin v1.7.1
 ```
 
 The workflow can also be started manually to obtain a downloadable build artifact without creating a release.

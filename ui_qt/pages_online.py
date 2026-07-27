@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -36,6 +37,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lineage_planner import (
+    LineagePlannerError,
+    build_lineage_planner_export,
+    write_lineage_planner_export,
+)
 from parent_optimizer import OptimizerError, load_ace_options, load_track_options
 from secret_store import SecretStoreError, resolve_api_key, save_api_key
 from uma_moe import (
@@ -178,10 +184,16 @@ class OnlineResultsPane(QWidget):
         self.summary = muted_label("")
         self.lineage_button = QPushButton("")
         self.lineage_button.setEnabled(False)
+        self.export_button = QPushButton("")
+        self.export_button.setEnabled(False)
+        self.copy_export_button = QPushButton("")
+        self.copy_export_button.setEnabled(False)
         self.copy_button = QPushButton("")
         self.copy_button.setEnabled(False)
         head.addWidget(self.summary, 1)
         head.addWidget(self.lineage_button)
+        head.addWidget(self.export_button)
+        head.addWidget(self.copy_export_button)
         head.addWidget(self.copy_button)
         root.addLayout(head)
 
@@ -209,6 +221,8 @@ class OnlineResultsPane(QWidget):
         self.table.doubleClicked.connect(self._double_clicked)
         self.copy_button.clicked.connect(self.copy_friend_id)
         self.lineage_button.clicked.connect(self.open_lineage)
+        self.export_button.clicked.connect(self.export_selected_pair)
+        self.copy_export_button.clicked.connect(self.copy_selected_pair_export)
         self.context.language_changed.connect(lambda _language: self.retranslate())
         self.retranslate()
 
@@ -314,6 +328,7 @@ class OnlineResultsPane(QWidget):
         friend = str((((row or {}).get("candidate") or {}).get("online") or {}).get("friend_code") or "")
         self.copy_button.setEnabled(bool(friend))
         self._update_lineage_button()
+        self._update_export_button()
 
     def _double_clicked(self, index) -> None:
         if index.isValid() and "Friend ID" in str(self.model.headerData(index.column(), Qt.Orientation.Horizontal)):
@@ -325,6 +340,15 @@ class OnlineResultsPane(QWidget):
         self.lineage_button.setEnabled(
             self.selected_row() is not None and self.lineage_root is not None
         )
+
+    def _update_export_button(self) -> None:
+        enabled = (
+            self.mode == "parent"
+            and self.selected_row() is not None
+            and self.ace is not None
+        )
+        self.export_button.setEnabled(enabled)
+        self.copy_export_button.setEnabled(enabled)
 
     def open_lineage(self) -> None:
         row = self.selected_row()
@@ -353,6 +377,93 @@ class OnlineResultsPane(QWidget):
             self.copy_button.setText(self.context.t("Copié !"))
             QTimer.singleShot(1400, self.retranslate)
 
+    def _selected_export_pair(
+        self,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
+        row = self.selected_row()
+        if self.mode != "parent" or row is None or self.ace is None:
+            return None
+        parent_1 = row.get("fixed_parent")
+        parent_2 = row.get("candidate")
+        if not isinstance(parent_1, dict) or not isinstance(parent_2, dict):
+            QMessageBox.warning(
+                self,
+                self.context.t("Erreur d’export"),
+                self.context.t("Sélectionne d'abord une paire à exporter."),
+            )
+            return None
+        return self.ace, parent_1, parent_2
+
+    def export_selected_pair(self) -> None:
+        selected = self._selected_export_pair()
+        if selected is None:
+            return
+        ace, parent_1, parent_2 = selected
+        ace_id = _integer(ace.get("card_id"))
+        p1_id = _integer(parent_1.get("card_id"))
+        p2_id = _integer(parent_2.get("card_id"))
+        suggested = (
+            Path(self.context.output_dir).expanduser()
+            / f"uma_moe_lineage_{ace_id}_{p1_id}_{p2_id}.json"
+        )
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            self.context.t("Exporter la paire vers uma.moe Lineage Planner"),
+            str(suggested),
+            "JSON (*.json)",
+        )
+        if not filename:
+            return
+        try:
+            path = write_lineage_planner_export(
+                filename,
+                ace,
+                parent_1,
+                parent_2,
+                master_path=self.context.master_path,
+                veterans_json_path=self.context.veterans_json_path,
+            )
+        except (OSError, ValueError, LineagePlannerError) as exc:
+            QMessageBox.critical(
+                self,
+                self.context.t("Erreur d’export"),
+                self.context.t(str(exc)),
+            )
+            return
+        QMessageBox.information(
+            self,
+            self.context.t("Export terminé"),
+            self.context.t(
+                "Fichier créé : {path}\n\nDans Lineage Planner, ouvre Save / Load puis importe ce JSON."
+            ).replace("{path}", str(path)),
+        )
+
+    def copy_selected_pair_export(self) -> None:
+        selected = self._selected_export_pair()
+        if selected is None:
+            return
+        ace, parent_1, parent_2 = selected
+        try:
+            payload = build_lineage_planner_export(
+                ace,
+                parent_1,
+                parent_2,
+                master_path=self.context.master_path,
+                veterans_json_path=self.context.veterans_json_path,
+            )
+        except (OSError, ValueError, LineagePlannerError) as exc:
+            QMessageBox.critical(
+                self,
+                self.context.t("Erreur d’export"),
+                self.context.t(str(exc)),
+            )
+            return
+        QApplication.clipboard().setText(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        )
+        self.copy_export_button.setText(self.context.t("Export copié !"))
+        QTimer.singleShot(1400, self.retranslate)
+
     def retranslate(self) -> None:
         t = self.context.t
         summary = t("{count} paires classées · tri par en-tête · double-clic sur Friend ID pour copier").replace(
@@ -366,6 +477,14 @@ class OnlineResultsPane(QWidget):
         self.summary.setText(summary)
         self.copy_button.setText(t("Copier le Friend ID"))
         self.lineage_button.setText(t("Voir la lignée"))
+        self.export_button.setText(t("Enregistrer JSON…"))
+        self.export_button.setToolTip(
+            t("Enregistrer la paire sélectionnée pour uma.moe Lineage Planner.")
+        )
+        self.copy_export_button.setText(t("Copier JSON"))
+        self.copy_export_button.setToolTip(
+            t("Copier l’export de la paire sélectionnée dans le presse-papiers.")
+        )
         selected = self.selected_row()
         selected_rank = selected.get("_rank") if selected else None
         self.model.set_columns(self._columns())
@@ -385,6 +504,7 @@ class OnlineResultsPane(QWidget):
             )
         )
         self._update_lineage_button()
+        self._update_export_button()
 
 
 class OnlinePage(QWidget):

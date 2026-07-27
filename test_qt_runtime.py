@@ -76,6 +76,68 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                 _dispose_widget(pane, self.application)
             sys.excepthook = previous_hook
 
+    def test_online_parent_results_expose_lineage_planner_export(self) -> None:
+        from unittest.mock import patch
+
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_online import OnlineResultsPane
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(
+                SettingsStore(Path(temp_dir) / "config.json")
+            )
+            pane = OnlineResultsPane(context)
+            pane.set_payload(
+                {
+                    "ace": {"card_id": 100101},
+                    "results": [
+                        {
+                            "fixed_parent": {"card_id": 100201},
+                            "candidate": {"card_id": 100301},
+                        }
+                    ],
+                },
+                "parent",
+            )
+            self.application.processEvents()
+            self.assertTrue(pane.export_button.isEnabled())
+            self.assertTrue(pane.copy_export_button.isEnabled())
+
+            expected = {
+                "version": 1,
+                "type": "lineage-planner",
+                "payload": [],
+            }
+            with patch(
+                "ui_qt.pages_online.build_lineage_planner_export",
+                return_value=expected,
+            ) as build:
+                pane.copy_selected_pair_export()
+            self.assertEqual(
+                json.loads(QApplication.clipboard().text()),
+                expected,
+            )
+            build.assert_called_once()
+
+            pane.set_payload(
+                {
+                    "target_parent": {"card_id": 100401},
+                    "results": [
+                        {
+                            "fixed_grandparent": {"card_id": 100501},
+                            "candidate": {"card_id": 100601},
+                        }
+                    ],
+                },
+                "grandparent",
+            )
+            self.application.processEvents()
+            self.assertFalse(pane.export_button.isEnabled())
+            self.assertFalse(pane.copy_export_button.isEnabled())
+            _dispose_widget(pane, self.application)
+
     def test_searchable_combo_resolves_text_without_stale_item_data(self) -> None:
         from ui_qt.components import SearchableComboBox
 

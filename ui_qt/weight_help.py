@@ -45,6 +45,7 @@ def _scope(path: Sequence[str], language: str) -> str:
         "blue_star_quality",
         "blue_score_influence_by_distance",
         "blue_neutral_score",
+        "scenario_inheritance",
     }:
         return "Blue Sparks"
     if path and path[0] in {
@@ -135,12 +136,12 @@ def _component_impact(component: str, language: str) -> str:
             "Increasing it favours lineages that can inherit useful White Skills with good probability.",
         ),
         "race_scenario": (
-            "Augmenter renforce la valeur des Race et Scenario Sparks dans le score final.",
-            "Increasing it gives Race and Scenario Sparks more influence on the final score.",
+            "Augmenter renforce la petite valeur statistique propre des Race Sparks. Les Scenario Sparks sont déjà intégrées aux Blues.",
+            "Increasing it gives the small intrinsic stat value of Race Sparks more influence. Scenario Sparks are already included in Blues.",
         ),
         "blue": (
-            "Augmenter privilégie la qualité et la pertinence des Blue Sparks pour la distance choisie.",
-            "Increasing it favours Blue Spark quality and relevance for the selected distance.",
+            "Augmenter privilégie la qualité des Blue Sparks et la valeur attendue des Scenario Sparks pour la distance choisie.",
+            "Increasing it favours Blue Spark quality and the expected value of Scenario Sparks for the selected distance.",
         ),
         "unique": (
             "Augmenter donne davantage de poids aux Uniques vertes héritées dans la lignée.",
@@ -516,7 +517,7 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
         family = {
             "blue_star_quality": "Blue Spark",
             "unique_star_quality": _pick(language, "Unique verte", "green Unique"),
-            "star_quality": _pick(language, "Race ou Scenario Spark", "Race or Scenario Spark"),
+            "star_quality": "Race Spark",
         }[root]
         summary = _pick(
             language,
@@ -547,7 +548,7 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
     if root in {"white_saturation", "race_saturation"} or (
         root == "white_generation" and leaf == "saturation"
     ):
-        family = _pick(language, "White Skills", "White Skills") if root != "race_saturation" else _pick(language, "Race et Scenario Sparks", "Race and Scenario Sparks")
+        family = _pick(language, "White Skills", "White Skills") if root != "race_saturation" else "Race Sparks"
         summary = _pick(
             language,
             f"Échelle de rendement décroissant utilisée quand plusieurs {family} utiles s’additionnent.",
@@ -561,8 +562,7 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
         return WeightHelp(summary, impact, scope, low, high)
 
     if root == "race_factor":
-        is_scenario = leaf == "scenario_per_star_quality"
-        family = _pick(language, "Scenario Sparks", "Scenario Sparks") if is_scenario else _pick(language, "Race Sparks", "Race Sparks")
+        family = "Race Sparks"
         summary = _pick(
             language,
             f"Valeur brute apportée par les {family}, avant la saturation et le poids global.",
@@ -572,6 +572,39 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
             language,
             f"L’augmenter rend chaque {family[:-1] if family.endswith('s') else family} plus rentable dans le classement.",
             f"Increasing it makes each {family[:-1] if family.endswith('s') else family} more valuable in the ranking.",
+        )
+        return WeightHelp(summary, impact, scope, low, high)
+
+    if root == "scenario_inheritance":
+        if "base_proc_rates" in path:
+            stars = _label(leaf, language)
+            summary = _pick(
+                language,
+                f"Probabilité de base par Inspiration Event pour une Scenario Spark {stars}, avant l’affinité individuelle.",
+                f"Base probability per Inspiration Event for a {stars} Scenario Spark, before individual affinity.",
+            )
+        elif leaf == "inspiration_event_count":
+            summary = _pick(
+                language,
+                "Nombre d’Inspiration Events inclus dans la valeur statistique attendue des Scenario Sparks.",
+                "Number of Inspiration Events included in the expected stat value of Scenario Sparks.",
+            )
+        elif leaf == "per_event_probability_cap":
+            summary = _pick(
+                language,
+                "Plafond de probabilité d’un proc de Scenario Spark sur un Inspiration Event.",
+                "Per-Inspiration-Event probability cap for a Scenario Spark proc.",
+            )
+        else:
+            summary = _pick(
+                language,
+                "Nombre de Blue Sparks équivalentes attribué à chaque stat donnée par un proc de Scenario Spark.",
+                "Number of Blue-Spark equivalents assigned to every stat granted by one Scenario Spark proc.",
+            )
+        impact = _pick(
+            language,
+            "L’augmenter renforce le bonus attendu des Scenario Sparks dans la composante Blues, qui peut dépasser 100.",
+            "Increasing it raises the expected Scenario-Spark bonus inside the Blue component, which may exceed 100.",
         )
         return WeightHelp(summary, impact, scope, low, high)
 

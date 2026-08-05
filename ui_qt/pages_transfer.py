@@ -118,9 +118,12 @@ class TransferPage(QWidget):
         self.status_combo.currentIndexChanged.connect(self.apply_filters)
         self.search.textChanged.connect(self.apply_filters)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
         self.retranslate()
         self.load_latest(show_errors=False)
+
+    def _language_changed(self, _language: str) -> None:
+        self.retranslate()
 
     def _columns(self) -> list[Column]:
         t = self.context.t

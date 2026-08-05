@@ -12,7 +12,7 @@ from typing import Any, Iterable
 
 from g1_race_planning import calendar_slots, years_for_race_permissions
 
-from skill_catalog import generate_skill_catalogs
+from skill_catalog import FACTOR_TARGET_LABELS, generate_skill_catalogs
 
 
 FACTOR_TYPE_LABELS = {
@@ -211,17 +211,41 @@ class MasterResolver:
             }
 
         self.factors: dict[int, dict[str, Any]] = {}
+        factor_effects: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+        available_tables = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if "succession_factor_effect" in available_tables:
+            for row in self.connection.execute(
+                "SELECT factor_group_id, effect_id, target_type, value_1, value_2 "
+                "FROM succession_factor_effect ORDER BY id"
+            ):
+                target_type = int(row["target_type"])
+                factor_effects[(int(row["factor_group_id"]), int(row["effect_id"]))].append(
+                    {
+                        "target_type": target_type,
+                        "target_label": FACTOR_TARGET_LABELS.get(
+                            target_type, f"unknown_target_{target_type}"
+                        ),
+                        "value_1": int(row["value_1"]),
+                        "value_2": int(row["value_2"]),
+                    }
+                )
         for row in self.connection.execute(
             "SELECT factor_id, factor_group_id, rarity, factor_type, effect_group_id "
             "FROM succession_factor"
         ):
             factor_id = int(row["factor_id"])
+            factor_group_id = int(row["factor_group_id"])
             factor_type_code = int(row["factor_type"])
             stars = int(row["rarity"])
             factor_type = FACTOR_TYPE_LABELS.get(factor_type_code, "other")
-            self.factors[factor_id] = {
+            factor_payload: dict[str, Any] = {
                 "factor_id": factor_id,
-                "factor_group_id": int(row["factor_group_id"]),
+                "factor_group_id": factor_group_id,
                 "effect_group_id": int(row["effect_group_id"]),
                 "name": self.factor_names.get(factor_id, f"Unknown factor {factor_id}"),
                 "stars": stars,
@@ -229,6 +253,9 @@ class MasterResolver:
                 "type": factor_type,
                 "description": self.factor_descriptions.get(factor_id, ""),
             }
+            if factor_type == "scenario":
+                factor_payload["effects"] = factor_effects.get((factor_group_id, stars), [])
+            self.factors[factor_id] = factor_payload
 
         self.g1_by_saddle_id = self._load_g1_saddles()
         self.g1_by_program_id = self._load_g1_programs()

@@ -245,6 +245,7 @@ class OptimizationRequest:
     top_n: int = 30
     use_custom_scoring: bool = False
     skill_priorities_path: Path | None = None
+    search_kind: str = "all"
 
 
 @dataclass(frozen=True)
@@ -421,8 +422,12 @@ def run_optimization(
     validate_link_request(
         LinkRequest(request.master_path, request.veterans_json_path, request.output_dir)
     )
-    if request.ace_card_id <= 0 or request.future_parent_card_id <= 0:
-        raise OptimizerError("Sélectionne l’Ace et le parent à produire.")
+    if request.search_kind not in {"all", "pairs", "branches", "future"}:
+        raise OptimizerError("Type de recherche locale invalide.")
+    if request.ace_card_id <= 0:
+        raise OptimizerError("Sélectionne l’Ace cible.")
+    if request.search_kind in {"all", "future"} and request.future_parent_card_id <= 0:
+        raise OptimizerError("Sélectionne le parent à produire.")
     if request.top_n < 1:
         raise OptimizerError("Le nombre de résultats doit être positif.")
 
@@ -453,7 +458,13 @@ def run_optimization(
         logger=logger,
     )
 
-    progress(70, "Calcul des lignées et des paires de parents…")
+    calculation_labels = {
+        "all": "Calcul des lignées et des paires de parents…",
+        "pairs": "Calcul des paires finales…",
+        "branches": "Classement des parents locaux…",
+        "future": "Classement des grands-parents locaux…",
+    }
+    progress(70, calculation_labels[request.search_kind])
     result = optimize_parents(
         request.master_path,
         linked.json_path,
@@ -471,6 +482,7 @@ def run_optimization(
         course_conditions=request.course_conditions or {},
         scoring_config_path=scoring_config,
         top_n=request.top_n,
+        search_kind=request.search_kind,
         logger=logger,
     )
     progress(100, "Optimisation terminée.")

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
-from PySide6.QtGui import QTextTable
+from PySide6.QtGui import QPainter, QPixmap, QTextTable
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractButton,
@@ -29,6 +29,7 @@ from ui_qt.lineage_view import LineageDialog
 from ui_qt.main_window import MainWindow
 from ui_qt.pages_online import OnlineResultsPane
 from ui_qt.pages_optimizer import ResultPane
+from ui_qt.pages_search import OnlineSearchOptionsDialog, RaceConditionsDialog
 from ui_qt.presentation import online_detail_html, result_detail_html
 from ui_qt.theme import application_stylesheet
 
@@ -175,9 +176,7 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                 application.processEvents()
                 variants: list[tuple[str, str | None]] = [(page, None)]
                 current_page = window._pages[page]
-                if page == "online" and hasattr(current_page, "mode_combo"):
-                    variants = [("online-parent", "parent"), ("online-grandparent", "grandparent")]
-                elif page == "weights" and hasattr(current_page, "_all_rows"):
+                if page == "weights" and hasattr(current_page, "_all_rows"):
                     variants = [
                         ("weights-distribution", "distribution"),
                         ("weights-probability", "probability"),
@@ -187,11 +186,7 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                     ]
                 for variant, mode in variants:
                     print(f"Auditing {language}/{variant}...", flush=True)
-                    if page == "online" and mode is not None:
-                        combo = current_page.mode_combo
-                        combo.setCurrentIndex(combo.findData(mode))
-                        application.processEvents()
-                    elif page == "weights" and mode is not None:
+                    if page == "weights" and mode is not None:
                         if mode == "distribution":
                             row = next(
                                 item
@@ -233,11 +228,37 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         current_page._show_selection(row)
                         application.processEvents()
                     for width, height in SIZES:
+                        # Recreate the offscreen backing store between sizes.
+                        # Otherwise QScrollArea viewports can leave stale pixels
+                        # after the preceding 1600px capture is shrunk to 1120px.
+                        window.hide()
                         window.resize(width, height)
+                        window.show()
                         application.processEvents()
                         name = f"{language}-{variant}-{width}x{height}.png"
                         target = output_dir / name
-                        window.grab().save(str(target), "PNG")
+                        if page == "tools":
+                            # A fresh top-level avoids stale QScrollArea backing
+                            # pixels in Qt's offscreen plugin at the smallest
+                            # size. It uses the same context and page state.
+                            capture_window = MainWindow(context)
+                            capture_window.show_page("tools")
+                            capture_window.resize(width, height)
+                            capture_window.show()
+                            application.processEvents()
+                            capture = capture_window.grab()
+                            _dispose_widget(capture_window, application)
+                        else:
+                            capture = window.grab()
+                            # Composite the fixed sidebar from a fresh direct
+                            # render after repeated offscreen resizes.
+                            sidebar_capture = QPixmap(window.sidebar.size())
+                            sidebar_capture.fill(Qt.GlobalColor.transparent)
+                            window.sidebar.render(sidebar_capture)
+                            painter = QPainter(capture)
+                            painter.drawPixmap(window.sidebar.pos(), sidebar_capture)
+                            painter.end()
+                        capture.save(str(target), "PNG")
                         issues = audit_window(window)
                         entry = {
                             "language": language,
@@ -249,6 +270,48 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         report["screens"].append(entry)
                         for issue in issues:
                             report["issues"].append(f"{language}/{variant}/{width}x{height}: {issue}")
+
+            dialog_factories = [
+                (
+                    "search-conditions",
+                    lambda: RaceConditionsDialog(context, []),
+                ),
+                (
+                    "search-options-parent",
+                    lambda: OnlineSearchOptionsDialog(
+                        context, "parent", [], []
+                    ),
+                ),
+                (
+                    "search-options-grandparent",
+                    lambda: OnlineSearchOptionsDialog(
+                        context, "grandparent", [], []
+                    ),
+                ),
+            ]
+            for variant, create_dialog in dialog_factories:
+                dialog = create_dialog()
+                print(f"Auditing {language}/{variant}...", flush=True)
+                dialog.resize(900, 760)
+                dialog.show()
+                application.processEvents()
+                name = f"{language}-{variant}-900x760.png"
+                dialog.grab().save(str(output_dir / name), "PNG")
+                issues = audit_window(dialog)
+                report["screens"].append(
+                    {
+                        "language": language,
+                        "page": variant,
+                        "size": [900, 760],
+                        "screenshot": name,
+                        "issues": issues,
+                    }
+                )
+                for issue in issues:
+                    report["issues"].append(
+                        f"{language}/{variant}/900x760: {issue}"
+                    )
+                _dispose_widget(dialog, application)
 
             def member(card_id: int, name: str, blue: int, pink: int) -> dict[str, object]:
                 shared_whites = (

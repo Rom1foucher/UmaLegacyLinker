@@ -66,6 +66,21 @@ def add_race(member_payload, name: str, stars: int):
     member_payload["factors"]["by_type"].setdefault("white_race", []).append(factor)
     return member_payload
 
+
+def add_scenario(member_payload, name: str, stars: int, *stats: str):
+    factor = {
+        "type": "scenario",
+        "name": name,
+        "stars": stars,
+        "effects": [
+            {"target_label": stat.lower(), "value_1": 10, "value_2": 30}
+            for stat in stats
+        ],
+    }
+    member_payload["factors"]["all"].append(factor)
+    member_payload["factors"]["by_type"].setdefault("scenario", []).append(factor)
+    return member_payload
+
 def base_config():
     return {
         "affinity": {
@@ -348,6 +363,108 @@ def test_blue_relevance_and_influence_change_with_distance():
     assert sprint_detail["distance_influence"] == 0.45
     assert sprint_detail["uncompressed_score"] == 100.0
     assert sprint_power < 100.0  # Sprint compresses blue-score differences.
+
+
+def test_scenario_spark_adds_expected_same_star_blue_equivalents_with_affinity():
+    scenario = add_scenario(
+        member(20, "Scenario", []),
+        "Climax Scenario",
+        3,
+        "Stamina",
+        "Guts",
+    )
+    config = {
+        "blue_star_quality": {"1": 0.12, "2": 0.78, "3": 1.0},
+        "blue_neutral_score": 0.0,
+        "blue_score_influence_by_distance": {"medium": 1.0},
+        "blue_stat_weights_by_distance": {
+            "medium": {"Speed": 0.65, "Stamina": 1.0, "Power": 0.8, "Guts": 0.45, "Wit": 0.5},
+        },
+        "scenario_inheritance": {
+            "base_proc_rates": {"1": 0.03, "2": 0.06, "3": 0.09},
+            "inspiration_event_count": 2,
+            "per_event_probability_cap": 1.0,
+            "blue_equivalent_per_proc": 1.0,
+        },
+    }
+
+    base_score, base_detail = _blue_score(
+        [(scenario, "parent", "carrier")],
+        "medium",
+        config,
+        inheritance_affinities={"carrier": 0.0},
+    )
+    affinity_score, affinity_detail = _blue_score(
+        [(scenario, "parent", "carrier")],
+        "medium",
+        config,
+        inheritance_affinities={"carrier": 100.0},
+    )
+
+    assert abs(base_score - 26.1) < 1e-9  # (1.00 + 0.45) × (2 × 9%) × 100
+    assert abs(affinity_score - 52.2) < 1e-9
+    factor = affinity_detail["scenario_inheritance"]["factors"][0]
+    assert factor["stat_targets"] == ["Stamina", "Guts"]
+    assert factor["stat_target_source"] == "master_mdb_effects"
+    assert factor["proc_probability_per_event"] == 0.18
+    assert factor["expected_proc_count"] == 0.36
+    assert base_detail["scenario_blue_equivalent_raw"] == 0.261
+
+
+def test_scenario_sparks_are_blue_bonuses_and_can_raise_score_above_100():
+    carrier = add_scenario(
+        add_blue(member(21, "Perfect plus scenario", []), "Stamina", 3),
+        "Climax Scenario",
+        3,
+        "Stamina",
+        "Guts",
+    )
+    config = {
+        "blue_star_quality": {"1": 0.12, "2": 0.78, "3": 1.0},
+        "blue_neutral_score": 0.0,
+        "blue_score_influence_by_distance": {"medium": 1.0},
+        "blue_stat_weights_by_distance": {
+            "medium": {"Stamina": 1.0, "Guts": 0.45},
+        },
+        "scenario_inheritance": {
+            "base_proc_rates": {"1": 0.03, "2": 0.06, "3": 0.09},
+            "inspiration_event_count": 2,
+            "per_event_probability_cap": 1.0,
+            "blue_equivalent_per_proc": 1.0,
+        },
+    }
+
+    score, detail = _blue_score(
+        [(carrier, "parent", "carrier")], "medium", config
+    )
+
+    assert abs(score - 126.1) < 1e-9
+    assert detail["can_exceed_100"] is True
+    assert detail["blue_raw"] == 1.0
+    assert detail["scenario_blue_equivalent_raw"] == 0.261
+
+
+def test_known_scenario_name_fallback_keeps_old_linked_exports_compatible():
+    old_export = add_scenario(member(22, "Old", []), "Unity Cup", 3)
+    config = {
+        "blue_star_quality": {"1": 0.12, "2": 0.78, "3": 1.0},
+        "blue_neutral_score": 0.0,
+        "blue_score_influence_by_distance": {"mile": 1.0},
+        "blue_stat_weights_by_distance": {"mile": {"Power": 1.0, "Wit": 0.5}},
+        "scenario_inheritance": {
+            "base_proc_rates": {"1": 0.03, "2": 0.06, "3": 0.09},
+            "inspiration_event_count": 2,
+            "per_event_probability_cap": 1.0,
+            "blue_equivalent_per_proc": 1.0,
+        },
+    }
+
+    score, detail = _blue_score([(old_export, "grandparent", "old")], "mile", config)
+
+    assert abs(score - 27.0) < 1e-9
+    factor = detail["scenario_inheritance"]["factors"][0]
+    assert factor["stat_targets"] == ["Power", "Wit"]
+    assert factor["stat_target_source"] == "known_name_fallback"
 
 
 def test_distance_b_compensation_uses_intrinsic_blue_quality_not_compressed_rank_score():
@@ -897,6 +1014,28 @@ def test_race_scenario_component_no_longer_scores_granted_skill_weight():
     )
     assert high_weight == zero_weight
     assert detail_high["top_factors"][0]["granted_skills_scored_in"] == "white_skill"
+
+
+def test_race_scenario_legacy_component_does_not_double_count_scenario_sparks():
+    scenario = add_scenario(
+        member(33, "Scenario", []), "Climax Scenario", 3, "Stamina", "Guts"
+    )
+    score, detail = _race_scenario_score(
+        [(scenario, "parent", "parent")],
+        lambda _key: 0.0,
+        {},
+        {
+            "position_transmission": {"parent": 1.0},
+            "star_quality": {"1": 0.33, "2": 0.67, "3": 1.0},
+            "race_factor": {"base_per_star_quality": 0.025},
+            "race_saturation": {"parent_pair": 1.0},
+        },
+        "parent_pair",
+    )
+
+    assert score == 0.0
+    assert detail["factor_count"] == 0
+    assert detail["scenario_sparks_scored_in"] == "blue"
 
 
 class ParentPairG1DiagnosticTests(unittest.TestCase):

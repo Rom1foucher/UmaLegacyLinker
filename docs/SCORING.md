@@ -37,7 +37,7 @@ Les profils effectifs sont copiés dans le dossier de sortie sous les noms
 | Aptitude de style | 3 % |
 | Unique verte | 9 % |
 | Blues | 8 % |
-| Race/scénario | 4 % |
+| Race Sparks | 4 % |
 
 Une branche est une moitié de solution. Elle n'est pas éliminée parce qu'elle manque de
 distance : l'autre branche peut compenser. Son affinité globale est calculée et affichée comme
@@ -53,7 +53,7 @@ diagnostic, mais n'est plus une composante additive du score parent.
 | Aptitude de style | 2 % |
 | Blues | 20 % |
 | Unique verte | 5 % |
-| Race/scénario | 4 % |
+| Race Sparks | 4 % |
 
 Le tri est lexicographique : le statut de distance est évalué avant le score pondéré. Une
 paire qui commence la run à Distance A est donc toujours prioritaire sur une paire Distance B
@@ -137,7 +137,7 @@ Le score recalcule donc sur les six membres visibles :
 
 - les rangs initiaux et `P(A)` / `P(S)` des aptitudes ;
 - les probabilités cumulées des whites, avec rendement décroissant des doublons ;
-- les blues, uniques et Race/Scenario Sparks ;
+- les blues, les Scenario Sparks intégrées aux blues, les uniques et les Race Sparks ;
 - les six coefficients individuels d'affinité ;
 - les cinq liens G1 de la paire finale.
 
@@ -156,7 +156,7 @@ valeur probabiliste exacte au classement final.
 
 ## Blues
 
-Les blues restent volontairement simples. Le score combine uniquement :
+Le socle Blue reste volontairement simple. Pour les six facteurs Blue garantis, le score combine :
 
 ```text
 qualité du nombre d'étoiles × pertinence de la stat pour la distance
@@ -188,9 +188,42 @@ Barème fourni :
 - 2★ : 0,78 — acceptable ;
 - 3★ : 1,00 — meilleur, sans être obligatoire.
 
-Aucun calcul d'affinité individuel ni multiplicateur parent/GP n'est appliqué aux blues. Leur
-fort taux de transmission et leur rôle secondaire ne justifient pas cette complexité dans le
-classement.
+Aucun calcul d'affinité individuel ni multiplicateur parent/GP n'est appliqué aux Blue Sparks
+elles-mêmes. Leur fort taux de transmission ne justifie pas cette complexité.
+
+### Bonus attendu des Scenario Sparks
+
+Les Scenario Sparks ne reçoivent plus une valeur générique indépendante de leurs effets. Elles
+sont ajoutées comme bonus au numérateur Blue, sans créer de slot supplémentaire :
+
+```text
+p_par_événement = taux_3/6/9 % × (1 + affinité_individuelle / 100)
+nombre_attendu_de_procs = 2 × p_par_événement
+bonus_scénario = qualité_blue(étoiles) × somme(pertinence des stats données)
+                 × nombre_attendu_de_procs × équivalent_blue_par_proc
+```
+
+`équivalent_blue_par_proc` vaut `1,0` par défaut : un proc est assimilé à une Blue Spark du
+même rang pour chacune des stats données. Ce choix représente la forte récompense d'un proc
+(10, 20 ou 30 points par stat, avec une distribution favorisée par les étoiles) sans inventer
+une distribution exacte non connue. Contrairement à un diviseur fixe, le rendement attendu
+augmente avec l'affinité réelle du porteur et tient compte des deux Inspiration Events.
+
+Les effets sont lus dans `succession_factor_effect` depuis le `master.mdb`. Les anciens exports
+restent compatibles grâce aux quatre noms Global connus :
+
+| Scenario Spark | Stats données |
+|---|---|
+| URA Finale | Speed + Stamina |
+| Unity Cup | Power + Wit |
+| Climax Scenario | Stamina + Guts |
+| Our Grand Concert / Grand Live | Speed + Guts |
+
+Comme il s'agit d'un bonus en plus des six slots Blue, la composante Blue peut volontairement
+dépasser 100. Une lignée de six Blues 3★ parfaites reste à 100 au score brut avant Scenario Sparks ; un ou
+plusieurs facteurs scénario pertinents représentent alors un high roll supplémentaire. Cette
+contribution s'applique aussi au classement heuristique des futurs GP, avec leur affinité
+disponible ou une estimation conservatrice lorsqu'elle est inconnue.
 
 ## Modèle probabiliste des aptitudes roses
 
@@ -516,13 +549,16 @@ Sur les conditions sélectionnées (hippodrome, rotation, saison, météo, terra
 Hiérarchie fournie : saison forte (0,65) ; gauche (0,52) > droite (0,32), car plus rare à
 obtenir ; hippodrome modéré (0,26) ; météo/terrain petits bonus (0,12–0,14).
 
-## Race et scenario Sparks
+## Race Sparks
 
-Valeur statistique de base volontairement faible (0,025 par palier d'étoiles ; scénario 0,06).
-Lorsqu'une Race Spark donne une skill utile, cette skill rejoint le moteur probabiliste des whites :
+Valeur statistique générique volontairement faible (`0,025` par palier de qualité d'étoiles).
+Lorsqu'une Race Spark donne une skill utile, cette skill rejoint aussi le moteur probabiliste des whites :
 taux de base `1/2/3 %` selon les étoiles, contre `3/6/9 %` pour une White Skill Spark directe.
 Les deux sources sont fusionnées si elles donnent la même skill. Il n'existe plus de multiplicateur
 arbitraire `granted_skill_multiplier`.
+
+Les Scenario Sparks ne participent plus à cette composante : leur valeur statistique attendue est
+calculée dans les Blues comme décrit plus haut.
 
 ## Recherche uma.moe
 

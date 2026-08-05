@@ -41,7 +41,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             self.application.processEvents()
             self.assertEqual(
                 set(window._pages),
-                {"home", "data", "optimizer", "online", "transfer", "weights", "tools"},
+                {"home", "data", "search", "transfer", "weights", "tools"},
             )
             for language in ("fr", "en"):
                 window.context.set_language(language)
@@ -264,72 +264,130 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             _dispose_widget(first, self.application)
             _dispose_widget(second, self.application)
 
-    def test_lineage_and_online_pages_share_live_editable_context(self) -> None:
+    def test_search_workspace_uses_one_live_context_for_every_search(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore
         from ui_qt.layout_audit import _dispose_widget
-        from ui_qt.pages_online import OnlinePage
-        from ui_qt.pages_optimizer import OptimizerPage
+        from ui_qt.pages_search import SearchPage
 
         with tempfile.TemporaryDirectory() as temp_dir:
             context = AppContext(
                 SettingsStore(Path(temp_dir) / "config.json")
             )
-            optimizer = OptimizerPage(context)
-            online = OnlinePage(context)
+            search = SearchPage(context)
             options = (
                 ("Ace — Costume", 101, 1),
                 ("Parent — Costume", 202, 2),
                 ("Other — Costume", 303, 3),
             )
-            optimizer._card_to_chara = {
+            search._card_to_chara = {
                 card_id: chara_id
                 for _label, card_id, chara_id in options
             }
-            online._card_to_chara = dict(optimizer._card_to_chara)
-            for combo in (
-                optimizer.ace_combo,
-                optimizer.parent_combo,
-                online.ace_combo,
-                online.target_combo,
-            ):
+            for combo in (search.ace_combo, search.target_combo):
                 combo.blockSignals(True)
                 combo.clear()
                 for label, card_id, _chara_id in options:
                     combo.addItem(label, card_id)
                 combo.blockSignals(False)
 
-            optimizer.ace_combo.setCurrentIndex(
-                optimizer.ace_combo.findData(101)
-            )
-            optimizer.parent_combo.setCurrentIndex(
-                optimizer.parent_combo.findData(202)
-            )
-            self.assertEqual(online.ace_combo.currentData(), 101)
-            self.assertEqual(online.target_combo.currentData(), 202)
-
-            # The optimiser still enforces the domain rule when the shared
-            # target is edited from uma.moe.
-            online.target_combo.setCurrentIndex(
-                online.target_combo.findData(101)
-            )
+            search.ace_combo.setCurrentIndex(search.ace_combo.findData(101))
+            search.target_combo.setCurrentIndex(search.target_combo.findData(202))
+            self.assertEqual(context.lineage_state().ace_card_id, 101)
             self.assertEqual(context.lineage_state().future_parent_card_id, 202)
-            self.assertEqual(online.target_combo.currentData(), 202)
 
-            online.top_spin.setValue(77)
-            self.assertEqual(optimizer.top_n_spin.value(), 77)
+            # The single shared editor still enforces the domain rule.
+            search.target_combo.setCurrentIndex(search.target_combo.findData(101))
+            search._ensure_distinct_parent()
+            search._lineage_selection_changed()
+            self.assertEqual(context.lineage_state().future_parent_card_id, 202)
+            self.assertEqual(search.target_combo.currentData(), 202)
+
+            search.top_spin.setValue(77)
             self.assertEqual(context.lineage_state().top_n, 77)
 
-            dirt_index = online.surface_combo.findData("dirt")
-            online.surface_combo.setCurrentIndex(dirt_index)
-            online.surface_combo.activated.emit(dirt_index)
-            self.assertEqual(optimizer.surface_combo.currentData(), "dirt")
+            dirt_index = search.race_editor.surface_combo.findData("dirt")
+            search.race_editor.surface_combo.setCurrentIndex(dirt_index)
+            search.race_editor.surface_combo.activated.emit(dirt_index)
+            self.assertEqual(context.store.get("optimizer_surface"), "dirt")
+
             self.assertEqual(
-                context.store.get("optimizer_surface"), "dirt"
+                search._optimization_request("pairs").search_kind, "pairs"
+            )
+            self.assertEqual(
+                search._optimization_request("branches").search_kind, "branches"
+            )
+            self.assertEqual(
+                search._optimization_request("future").search_kind, "future"
             )
 
-            _dispose_widget(optimizer, self.application)
-            _dispose_widget(online, self.application)
+            _dispose_widget(search, self.application)
+
+    def test_search_workspace_loads_the_latest_remote_result_too(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "output"
+            output.mkdir()
+            (output / "uma_moe_parent_pairs.json").write_text(
+                json.dumps(
+                    {
+                        "metadata": {
+                            "profile": {
+                                "surface": "turf",
+                                "distance": "medium",
+                                "style": "pace_chaser",
+                            }
+                        },
+                        "ace": {"card_id": 101, "card_name": "Ace"},
+                        "results": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            store = SettingsStore(root / "config.json")
+            store.update({"output_dir": str(output)})
+            search = SearchPage(AppContext(store))
+            search._initial_refresh_timer.stop()
+            search._initial_result_timer.stop()
+            search.load_latest(show_errors=True)
+
+            self.assertEqual(search._active_result_kind, "uma.moe:online_parent")
+            self.assertIs(search.result_stack.currentWidget(), search.online_results)
+            self.assertEqual(search.online_results.mode, "parent")
+            _dispose_widget(search, self.application)
+
+    def test_uma_moe_integration_is_persisted_by_settings_context(self) -> None:
+        from unittest.mock import patch
+
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SettingsStore(Path(temp_dir) / "config.json")
+            with patch("ui_qt.context.resolve_api_key", return_value=""):
+                context = AppContext(store)
+            changes: list[bool] = []
+            context.integration_changed.connect(lambda: changes.append(True))
+            with patch("ui_qt.context.save_api_key") as save_key:
+                context.update_uma_moe_integration(
+                    api_base=" https://example.test/api ",
+                    api_key=" secret-token ",
+                    remember_api_key=True,
+                )
+
+            self.assertEqual(context.uma_moe_api_base, "https://example.test/api")
+            self.assertEqual(context.uma_moe_api_key, "secret-token")
+            self.assertTrue(context.uma_moe_remember_api_key)
+            self.assertEqual(store.get("uma_moe_base"), "https://example.test/api")
+            self.assertEqual(store.get("uma_moe_remember_api_key"), "1")
+            save_key.assert_called_once()
+            self.assertEqual(save_key.call_args.args[1], "secret-token")
+            self.assertEqual(changes, [True])
 
     def test_weights_and_lineage_share_scoring_sources_bidirectionally(self) -> None:
         from ui_qt.context import AppContext
@@ -408,7 +466,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                 ("Distance S", 0.29),
                 ("Other Pink Sparks", 0.07),
                 ("White Skills", 0.35),
-                ("Race/Scenario", 0.04),
+                ("Race Sparks", 0.04),
                 ("Blue Sparks", 0.20),
                 ("Unique", 0.05),
             ],
@@ -503,22 +561,16 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                     self.assertFalse(_text_overflow(weights.changed_only))
                     self.assertFalse(_text_overflow(weights.show_advanced))
 
-                    online = window._pages["online"]
-                    online.advanced.toggle.setChecked(True)
-                    window.show_page("online")
-                    for mode in ("parent", "grandparent"):
-                        online.mode_combo.setCurrentIndex(
-                            online.mode_combo.findData(mode)
-                        )
-                        self.application.processEvents()
-                        issues = audit_window(window)
-                        self.assertFalse(
-                            any(
-                                "hidden horizontal overflow" in issue
-                                for issue in issues
-                            ),
-                            f"{language}/{mode}: {issues}",
-                        )
+                    window.show_page("search")
+                    self.application.processEvents()
+                    issues = audit_window(window)
+                    self.assertFalse(
+                        any(
+                            "overflow" in issue
+                            for issue in issues
+                        ),
+                        f"{language}/search: {issues}",
+                    )
             finally:
                 _dispose_widget(window, self.application)
 

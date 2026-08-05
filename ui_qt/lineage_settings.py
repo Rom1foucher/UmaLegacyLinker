@@ -76,7 +76,7 @@ class LineageRaceEditor(QWidget):
     changed = Signal()
     layout_changed = Signal()
 
-    def __init__(self, context: AppContext, parent=None):
+    def __init__(self, context: AppContext, parent=None, *, compact: bool = False):
         super().__init__(parent)
         self.context = context
         self._syncing = False
@@ -105,24 +105,28 @@ class LineageRaceEditor(QWidget):
         self.course_label = QLabel("")
         self.course_combo = SearchableComboBox()
 
-        form.addWidget(self.shared_hint, 0, 0, 1, 2)
-        for row, controls in enumerate(
-            (
-                (
-                    (self.surface_label, self.surface_combo),
-                    (self.distance_label, self.distance_combo),
-                ),
-                (
-                    (self.style_label, self.style_combo),
-                    (self.course_label, self.course_combo),
-                ),
-            )
-        ):
-            label_row = 1 + row * 2
+        controls = (
+            (self.surface_label, self.surface_combo),
+            (self.distance_label, self.distance_combo),
+            (self.style_label, self.style_combo),
+            (self.course_label, self.course_combo),
+        )
+        if compact:
+            form.addWidget(self.shared_hint, 0, 0, 1, 4)
             for column, (label, combo) in enumerate(controls):
-                form.addWidget(label, label_row, column)
-                form.addWidget(combo, label_row + 1, column)
+                form.addWidget(label, 1, column)
+                form.addWidget(combo, 2, column)
                 form.setColumnStretch(column, 1)
+        else:
+            form.addWidget(self.shared_hint, 0, 0, 1, 2)
+            for row in range(2):
+                label_row = 1 + row * 2
+                for column, (label, combo) in enumerate(
+                    controls[row * 2 : row * 2 + 2]
+                ):
+                    form.addWidget(label, label_row, column)
+                    form.addWidget(combo, label_row + 1, column)
+                    form.setColumnStretch(column, 1)
         root.addWidget(self.panel)
 
         self.advanced = CollapsibleSection("")
@@ -208,8 +212,11 @@ class LineageRaceEditor(QWidget):
         )
         self.context.lineage_changed.connect(self.sync_from_context)
         self.context.configuration_changed.connect(self._configuration_changed)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
 
+        self.retranslate()
+
+    def _language_changed(self, _language: str) -> None:
         self.retranslate()
 
     @staticmethod

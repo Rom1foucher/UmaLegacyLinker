@@ -3321,7 +3321,12 @@ def rank_online_grandparent_pairs(
         def individual_score(member: dict[str, Any]) -> dict[str, Any]:
             members = [(member, "grandparent", "candidate")]
             triple_raw = resolver.triple(ace_chara, target_parent_chara, int(member.get("chara_id") or 0))
-            blue, _ = _blue_score(members, distance, config)
+            blue, _ = _blue_score(
+                members,
+                distance,
+                config,
+                inheritance_affinities={"candidate": float(triple_raw)},
+            )
             pink, pink_detail = _future_grandparent_pink_score(
                 members, ace, surface, distance, style, config
             )
@@ -3482,7 +3487,21 @@ def rank_online_grandparent_pairs(
                 (gp2, "grandparent", "online_gp2"),
             ]
             six_members = _lineage_members(gp1) + _lineage_members(gp2)
-            blue, blue_detail = _blue_score(direct_members, distance, config)
+            blue, blue_detail = _blue_score(
+                direct_members,
+                distance,
+                config,
+                inheritance_affinities={
+                    "local_gp1": float(
+                        (final_parent_affinity.get("projected_gp1_inheritance_modifier") or {}).get("total")
+                        or 0.0
+                    ),
+                    "online_gp2": float(
+                        (final_parent_affinity.get("projected_gp2_inheritance_modifier") or {}).get("total")
+                        or 0.0
+                    ),
+                },
+            )
             pink, pink_detail = _future_grandparent_pink_score(
                 direct_members, ace, surface, distance, style, config
             )

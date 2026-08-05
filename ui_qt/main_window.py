@@ -27,8 +27,7 @@ from ui_qt.components import ThemedComboBox
 from ui_qt.context import AppContext
 from ui_qt.core import APP_NAME, APP_VERSION
 from ui_qt.pages_home_data import DataPage, HomePage
-from ui_qt.pages_online import OnlinePage
-from ui_qt.pages_optimizer import OptimizerPage
+from ui_qt.pages_search import SearchPage
 from ui_qt.pages_tools import ToolsPage
 from ui_qt.pages_transfer import TransferPage
 from ui_qt.pages_weights import WeightsPage
@@ -44,7 +43,7 @@ class MainWindow(QMainWindow):
         self._active_worker: FunctionWorker | None = None
         self._busy = False
         self._status_source = "Prêt"
-        self._nav_order = ["home", "data", "optimizer", "online", "transfer", "weights", "tools"]
+        self._nav_order = ["home", "data", "search", "transfer", "weights", "tools"]
         self._nav_buttons: dict[str, QPushButton] = {}
         self._nav_sections: dict[str, QLabel] = {}
         self._pages: dict[str, QWidget] = {}
@@ -63,6 +62,7 @@ class MainWindow(QMainWindow):
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(252)
+        self.sidebar = sidebar
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(16, 15, 16, 13)
         sidebar_layout.setSpacing(4)
@@ -83,7 +83,7 @@ class MainWindow(QMainWindow):
         nav_sections = (
             ("overview", ("home",)),
             ("prepare", ("data",)),
-            ("analyse", ("optimizer", "online", "transfer")),
+            ("analyse", ("search", "transfer")),
             ("configure", ("weights", "tools")),
         )
         for section_key, page_keys in nav_sections:
@@ -168,16 +168,14 @@ class MainWindow(QMainWindow):
 
         home = HomePage(self.context)
         data = DataPage(self.context)
-        optimizer = OptimizerPage(self.context)
-        online = OnlinePage(self.context)
+        search = SearchPage(self.context)
         transfer = TransferPage(self.context)
         weights = WeightsPage(self.context)
         tools_page = ToolsPage(self.context)
         self._pages = {
             "home": home,
             "data": data,
-            "optimizer": optimizer,
-            "online": online,
+            "search": search,
             "transfer": transfer,
             "weights": weights,
             "tools": tools_page,
@@ -187,13 +185,15 @@ class MainWindow(QMainWindow):
 
         home.navigate_requested.connect(self.show_page)
         data.task_requested.connect(self.start_task)
-        optimizer.task_requested.connect(self.start_task)
-        online.task_requested.connect(self.start_task)
+        search.task_requested.connect(self.start_task)
         transfer.task_requested.connect(self.start_task)
         tools_page.task_requested.connect(self.start_task)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
         self.retranslate()
         self.show_page("home")
+
+    def _language_changed(self, _language: str) -> None:
+        self.retranslate()
 
     def retranslate(self) -> None:
         t = self.context.t
@@ -201,17 +201,15 @@ class MainWindow(QMainWindow):
         labels = {
             "home": "Accueil",
             "data": "Données locales",
-            "optimizer": "Optimisation de lignée",
-            "online": "Recherche uma.moe",
+            "search": "Recherche de lignées",
             "transfer": "Transfer Helper",
             "weights": "Pondérations",
-            "tools": "Outils et diagnostics",
+            "tools": "Paramètres",
         }
         prefixes = {
             "home": "⌂",
             "data": "◫",
-            "optimizer": "◇",
-            "online": "⌕",
+            "search": "⌕",
             "transfer": "⇄",
             "weights": "⚙",
             "tools": "⌘",
@@ -239,6 +237,9 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def show_page(self, key: str) -> None:
+        # Compatibility for home shortcuts and integrations saved by v1.7.x.
+        if key in {"optimizer", "online"}:
+            key = "search"
         if key not in self._pages:
             return
         self.stack.setCurrentWidget(self._pages[key])
@@ -351,7 +352,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if not self._busy:
-            self._pages["online"].persist_api_key()
             event.accept()
             return
         answer = QMessageBox.question(
@@ -362,7 +362,6 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            self._pages["online"].persist_api_key()
             event.accept()
         else:
             event.ignore()

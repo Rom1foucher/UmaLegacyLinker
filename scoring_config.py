@@ -149,6 +149,9 @@ def migrate_scoring_overrides(
 
     race_factor_overrides = migrated.get("race_factor")
     if isinstance(race_factor_overrides, dict):
+        # V20 scored every Scenario Spark through a generic flat value.  V21
+        # moves them into Blue using actual stat targets and expected procs.
+        race_factor_overrides.pop("scenario_per_star_quality", None)
         # Granted Race-Spark skills now use their actual 1/2/3% inheritance
         # rates inside the white-skill component; the former arbitrary
         # multiplier would otherwise remain visible but have no effect.
@@ -314,6 +317,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("mode_weights", "future_grandparent"),
         ("blue_star_quality",),
         ("blue_score_influence_by_distance",),
+        ("scenario_inheritance", "base_proc_rates"),
         ("aptitude_inheritance", "pink_base_proc_rates"),
         ("aptitude_inheritance", "dimension_weights_by_mode", "parent_branch"),
         ("aptitude_inheritance", "dimension_weights_by_mode", "parent_pair"),
@@ -379,6 +383,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
 
     for path in (
         ("blue_star_quality",),
+        ("scenario_inheritance", "base_proc_rates"),
         ("aptitude_inheritance", "pink_base_proc_rates"),
         ("white_inheritance", "base_proc_rates"),
         ("white_inheritance", "race_base_proc_rates"),
@@ -418,6 +423,25 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
     white_cap = white_inheritance.get("per_event_probability_cap", 1.0)
     if isinstance(white_cap, bool) or not isinstance(white_cap, (int, float)) or not 0 < float(white_cap) <= 1:
         raise ScoringConfigError("white_inheritance.per_event_probability_cap doit être compris entre 0 (exclu) et 1.")
+    scenario_inheritance = _require_dict(config, ("scenario_inheritance",))
+    scenario_event_count = scenario_inheritance.get("inspiration_event_count")
+    if (
+        isinstance(scenario_event_count, bool)
+        or not isinstance(scenario_event_count, int)
+        or scenario_event_count < 1
+    ):
+        raise ScoringConfigError(
+            "scenario_inheritance.inspiration_event_count doit être un entier strictement positif."
+        )
+    scenario_cap = scenario_inheritance.get("per_event_probability_cap", 1.0)
+    if (
+        isinstance(scenario_cap, bool)
+        or not isinstance(scenario_cap, (int, float))
+        or not 0 < float(scenario_cap) <= 1
+    ):
+        raise ScoringConfigError(
+            "scenario_inheritance.per_event_probability_cap doit être compris entre 0 (exclu) et 1."
+        )
     for index, (probability, utility) in enumerate(white_inheritance["distinct_skill_probability_curve"]):
         if float(probability) > 1:
             raise ScoringConfigError(

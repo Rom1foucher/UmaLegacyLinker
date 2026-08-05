@@ -49,6 +49,34 @@ class ScoringConfigTests(unittest.TestCase):
         with self.assertRaises(ScoringConfigError):
             validate_scoring_config(config)
 
+    def test_scenario_inheritance_rates_and_event_count_are_validated(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["scenario_inheritance"]["inspiration_event_count"] = 0
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        del config["scenario_inheritance"]["base_proc_rates"]["3"]
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+    def test_v20_flat_scenario_value_is_removed_from_overrides(self) -> None:
+        default = read_json_object(DEFAULT_SCORING)
+        migrated = migrate_scoring_overrides(
+            default,
+            {
+                "schema_version": 20,
+                "race_factor": {
+                    "base_per_star_quality": 0.04,
+                    "scenario_per_star_quality": 99.0,
+                },
+            },
+        )
+
+        self.assertEqual(migrated["schema_version"], 21)
+        self.assertEqual(migrated["race_factor"]["base_per_star_quality"], 0.04)
+        self.assertNotIn("scenario_per_star_quality", migrated["race_factor"])
+
     def test_default_parent_pair_weights_match_high_roll_profile(self) -> None:
         config = read_json_object(DEFAULT_SCORING)
         self.assertEqual(

@@ -223,7 +223,10 @@ class OnlineResultsPane(QWidget):
         self.lineage_button.clicked.connect(self.open_lineage)
         self.export_button.clicked.connect(self.export_selected_pair)
         self.copy_export_button.clicked.connect(self.copy_selected_pair_export)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
+        self.retranslate()
+
+    def _language_changed(self, _language: str) -> None:
         self.retranslate()
 
     def _columns(self) -> list[Column]:

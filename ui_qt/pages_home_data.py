@@ -69,13 +69,11 @@ class HomePage(QWidget):
         buttons = QHBoxLayout()
         self.data_button = QPushButton("")
         self.data_button.setObjectName("primary")
-        self.optimizer_button = QPushButton("")
-        self.online_button = QPushButton("")
+        self.search_button = QPushButton("")
         self.transfer_button = QPushButton("")
         self.refresh_button = QPushButton("")
         buttons.addWidget(self.data_button)
-        buttons.addWidget(self.optimizer_button)
-        buttons.addWidget(self.online_button)
+        buttons.addWidget(self.search_button)
         buttons.addWidget(self.transfer_button)
         buttons.addStretch(1)
         buttons.addWidget(self.refresh_button)
@@ -96,12 +94,11 @@ class HomePage(QWidget):
         root.addStretch(1)
 
         self.data_button.clicked.connect(lambda: self.navigate_requested.emit("data"))
-        self.optimizer_button.clicked.connect(lambda: self.navigate_requested.emit("optimizer"))
-        self.online_button.clicked.connect(lambda: self.navigate_requested.emit("online"))
+        self.search_button.clicked.connect(lambda: self.navigate_requested.emit("search"))
         self.transfer_button.clicked.connect(lambda: self.navigate_requested.emit("transfer"))
         self.refresh_button.clicked.connect(self.refresh)
         self.context.configuration_changed.connect(self._schedule_refresh)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self.refresh)
@@ -110,6 +107,9 @@ class HomePage(QWidget):
 
     def _schedule_refresh(self) -> None:
         self._refresh_timer.start(120)
+
+    def _language_changed(self, _language: str) -> None:
+        self.retranslate()
 
     def retranslate(self) -> None:
         t = self.context.t
@@ -122,13 +122,12 @@ class HomePage(QWidget):
             t("Prépare ta collection, optimise une lignée ou lance directement une analyse ciblée.")
         )
         self.data_button.setText(t("Configurer les données"))
-        self.optimizer_button.setText(t("Nouvelle optimisation"))
-        self.online_button.setText(t("Recherche uma.moe"))
+        self.search_button.setText(t("Rechercher une lignée"))
         self.transfer_button.setText(t("Transfer Helper"))
         self.refresh_button.setText(t("Actualiser"))
         self.preview_title.setText(t("Interface Qt complète"))
         self.preview_text.setText(
-            t("Tous les workflows principaux utilisent désormais les mêmes moteurs dans l’interface Qt : extraction, optimisation, recherche uma.moe, Transfer Helper, pondérations et outils de diagnostic.")
+            t("Les recherches locales et uma.moe partagent désormais le même contexte, le même espace de résultats et le même rendu de lignée.")
         )
         self.refresh()
 
@@ -307,9 +306,12 @@ class DataPage(QWidget):
             lambda: QDesktopServices.openUrl(QUrl("https://github.com/Werseter/umadump"))
         )
         self.context.configuration_changed.connect(self.sync_from_context)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
         self.retranslate()
         self.refresh_status()
+
+    def _language_changed(self, _language: str) -> None:
+        self.retranslate()
 
     def sync_from_context(self) -> None:
         self.master_picker.set_text(self.context.master_path)

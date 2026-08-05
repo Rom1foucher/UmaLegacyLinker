@@ -1,6 +1,6 @@
 {
-  "schema_version": 20,
-  "description": "Modern G1 parent scoring with probability-aware aptitude and white-skill inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Distinct white-skill inheritance uses a configurable diminishing-return utility curve; Blue Sparks remain affinity-independent.",
+  "schema_version": 21,
+  "description": "Modern G1 parent scoring with probability-aware aptitude, white-skill and Scenario-Spark inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Scenario Sparks add expected same-star Blue-equivalent value for their actual stat targets and can lift Blue above 100.",
   "mode_weights": {
     "parent_branch": {
       "distance_s": 0.22,
@@ -65,6 +65,16 @@
     "2": 0.78,
     "3": 1.0
   },
+  "scenario_inheritance": {
+    "base_proc_rates": {
+      "1": 0.03,
+      "2": 0.06,
+      "3": 0.09
+    },
+    "inspiration_event_count": 2,
+    "per_event_probability_cap": 1.0,
+    "blue_equivalent_per_proc": 1.0
+  },
   "unique_star_quality": {
     "1": 0.82,
     "2": 0.91,
@@ -89,8 +99,7 @@
     "parent_pair": 3.0
   },
   "race_factor": {
-    "base_per_star_quality": 0.025,
-    "scenario_per_star_quality": 0.06
+    "base_per_star_quality": 0.025
   },
   "affinity": {
     "g1_common_bonus": 3,
@@ -212,7 +221,7 @@
       "ground_condition": 0.14,
       "time": 0.12
     },
-    "description": "Season greens are valuable when active; left-handed is rarer and scores above right-handed. Weather and ground-condition greens are minor bonuses. Race sparks granting these skills remain discounted by race_factor.granted_skill_multiplier.",
+    "description": "Season greens are valuable when active; left-handed is rarer and scores above right-handed. Weather and ground-condition greens are minor bonuses. Race Sparks granting these skills use their lower 1/2/3% base inheritance rates and merge probabilistically with direct White copies.",
     "modes": {
       "season": "floor",
       "rotation_right": "override",

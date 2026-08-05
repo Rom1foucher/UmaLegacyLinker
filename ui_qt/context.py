@@ -6,9 +6,12 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from i18n import normalise_language, translate_text
+from secret_store import resolve_api_key, save_api_key
+from uma_moe import DEFAULT_API_BASE
 from ui_qt.core import (
     SettingsStore,
     active_course_overrides_path,
+    api_key_path,
     auto_detect_extractor,
     auto_detect_master,
     default_output_dir,
@@ -152,6 +155,7 @@ class LineageContextState:
 
 class AppContext(QObject):
     configuration_changed = Signal()
+    integration_changed = Signal()
     lineage_changed = Signal(object)
     language_changed = Signal(str)
 
@@ -172,6 +176,16 @@ class AppContext(QObject):
         resolved_course = active_course_overrides_path(configured_course)
         self.course_overrides_path = str(resolved_course) if resolved_course else ""
         self.language = normalise_language(self.store.get("ui_language"))
+        self.uma_moe_api_base = (
+            self.store.get("uma_moe_base", DEFAULT_API_BASE) or DEFAULT_API_BASE
+        ).strip()
+        self.uma_moe_remember_api_key = _stored_boolean(
+            self.store.get("uma_moe_remember_api_key")
+        )
+        self.uma_moe_api_key = resolve_api_key(
+            api_key_path(self.store.path),
+            remembered=self.uma_moe_remember_api_key,
+        )
 
     def lineage_state(self) -> LineageContextState:
         return LineageContextState.from_store(self.store)
@@ -237,6 +251,33 @@ class AppContext(QObject):
         self.store.update({"ui_language": normalized})
         self.language_changed.emit(normalized)
         self.configuration_changed.emit()
+
+    def update_uma_moe_integration(
+        self,
+        *,
+        api_base: str,
+        api_key: str,
+        remember_api_key: bool,
+    ) -> None:
+        """Update the long-lived uma.moe integration independently of scoring."""
+
+        resolved_base = api_base.strip() or DEFAULT_API_BASE
+        resolved_key = api_key.strip()
+        remember = bool(remember_api_key)
+        save_api_key(
+            api_key_path(self.store.path),
+            resolved_key if remember else "",
+        )
+        self.uma_moe_api_base = resolved_base
+        self.uma_moe_api_key = resolved_key
+        self.uma_moe_remember_api_key = remember
+        self.store.update(
+            {
+                "uma_moe_base": resolved_base,
+                "uma_moe_remember_api_key": int(remember),
+            }
+        )
+        self.integration_changed.emit()
 
     def path(self, value: str) -> Path:
         return Path(value).expanduser()

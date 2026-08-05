@@ -222,7 +222,7 @@ class QtUiCoreTests(unittest.TestCase):
             if not any(key in hidden or key.endswith("description") for key in path)
         ]
         sources = {weight_subcategory(path)[1] for path in paths}
-        self.assertEqual(len(sources), 51)
+        self.assertEqual(len(sources), 52)
         self.assertNotIn("Autres réglages", sources)
         for source in sources:
             with self.subTest(source=source):
@@ -267,7 +267,7 @@ class QtUiCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 216)
+        self.assertEqual(checked, 221)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -653,6 +653,7 @@ class QtUiCoreTests(unittest.TestCase):
             "Calcul du score global",
             "Sélectionne une ligne pour afficher le diagnostic.",
             "Interface Qt complète",
+            "Grand-parent distant",
         )
         for source in sources:
             with self.subTest(source=source):
@@ -702,9 +703,70 @@ class QtUiCoreTests(unittest.TestCase):
             weights.assert_called_once()
             self.assertEqual(optimise.call_args.kwargs["ace_card_id"], 1001)
             self.assertEqual(optimise.call_args.kwargs["course_key"], "test_course")
+            self.assertEqual(optimise.call_args.kwargs["search_kind"], "all")
             self.assertEqual(
                 optimise.call_args.kwargs["course_conditions"], {"weather": 1}
             )
+
+    def test_parent_only_search_does_not_require_a_future_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            master = root / "master.mdb"
+            veterans = root / "data.json"
+            master.touch()
+            veterans.write_text("[]", encoding="utf-8")
+            linked = SimpleNamespace(
+                json_path=root / "veterans_legacy_linked.json",
+                skills_catalog_path=root / "skills.json",
+                race_factor_skills_path=root / "race_skills.json",
+            )
+            manual = SimpleNamespace(
+                weights_path=root / "manual_skill_weights.json",
+                course_weights_path=root / "course_skill_weights.json",
+            )
+            request = OptimizationRequest(
+                master_path=master,
+                veterans_json_path=veterans,
+                output_dir=root,
+                ace_card_id=1001,
+                future_parent_card_id=0,
+                surface="turf",
+                distance="medium",
+                style="pace_chaser",
+                search_kind="branches",
+            )
+            progress = Mock()
+            with (
+                patch("ui_qt.core.link_veterans", return_value=linked),
+                patch("ui_qt.core.generate_manual_skill_weights", return_value=manual),
+                patch("ui_qt.core.optimize_parents", return_value=object()) as optimise,
+            ):
+                run_optimization(request, logger=Mock(), progress=progress)
+
+            self.assertEqual(optimise.call_args.kwargs["search_kind"], "branches")
+            self.assertEqual(optimise.call_args.kwargs["future_parent_card_id"], 0)
+            progress.assert_any_call(70, "Classement des parents locaux…")
+
+    def test_future_grandparent_search_still_requires_target_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            master = root / "master.mdb"
+            veterans = root / "data.json"
+            master.touch()
+            veterans.write_text("[]", encoding="utf-8")
+            request = OptimizationRequest(
+                master_path=master,
+                veterans_json_path=veterans,
+                output_dir=root,
+                ace_card_id=1001,
+                future_parent_card_id=0,
+                surface="turf",
+                distance="medium",
+                style="pace_chaser",
+                search_kind="future",
+            )
+            with self.assertRaisesRegex(OptimizerError, "parent à produire"):
+                run_optimization(request, logger=Mock(), progress=Mock())
 
     def test_transfer_page_uses_existing_analysis_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

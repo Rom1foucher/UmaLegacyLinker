@@ -494,8 +494,11 @@ class WeightsPage(QWidget):
         self.structured_edit.textChanged.connect(self._editor_value_changed)
         self.curve_edit.valueChanged.connect(self._editor_value_changed)
         self.context.lineage_changed.connect(self._sync_shared_settings)
-        self.context.language_changed.connect(lambda _language: self.retranslate())
+        self.context.language_changed.connect(self._language_changed)
         self.reload()
+        self.retranslate()
+
+    def _language_changed(self, _language: str) -> None:
         self.retranslate()
 
     def reload(self) -> None:
@@ -1656,8 +1659,8 @@ class WeightsPage(QWidget):
         self.empty_label.setText(t("Aucun réglage sélectionné."))
         self.current_label.setText(t("Valeur active"))
         self.default_label.setText(t("Valeur par défaut"))
-        self.apply_button.setText(t("Appliquer au brouillon"))
-        self.reset_button.setText(t("Rétablir le défaut"))
+        self.apply_button.setText(t("Appliquer"))
+        self.reset_button.setText(t("Rétablir la valeur"))
         self.reset_group_button.setText(t("Rétablir le bloc"))
         self.reset_group_button.setToolTip(
             t("Rétablit tous les réglages du bloc de calcul sélectionné.")

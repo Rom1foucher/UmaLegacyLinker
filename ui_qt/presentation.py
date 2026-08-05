@@ -17,7 +17,7 @@ COMPONENT_LABELS = {
     "pink": "Roses",
     "white_skill": "Whites propres",
     "white_generation": "Bonus de lignée white",
-    "race_scenario": "Race / scénario",
+    "race_scenario": "Race Sparks",
     "unique": "Vertes / uniques",
 }
 

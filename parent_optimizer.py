@@ -129,10 +129,19 @@ def lineage_preview_for_pair(
         result["g1_count"] = int(member.get("g1_count") or len(g1_names))
         return result
 
+    def resolve(member: object) -> dict[str, Any] | None:
+        if not isinstance(member, dict) or not member:
+            return None
+        trained_id = member.get("trained_chara_id")
+        if veteran_by_trained_id and trained_id is not None:
+            return veteran_by_trained_id.get(str(trained_id), member)
+        return member
+
     result: dict[str, dict[str, Any]] = {}
     direct = (("p1", parent_1), ("p2", parent_2))
-    for position, parent in direct:
-        if not isinstance(parent, dict) or not parent:
+    for position, raw_parent in direct:
+        parent = resolve(raw_parent)
+        if parent is None:
             continue
         parent_view = compact(parent)
         if parent_view is not None:
@@ -141,25 +150,88 @@ def lineage_preview_for_pair(
         if not isinstance(lineage, dict):
             lineage = {}
         for index, key in ((1, "grandparent_1"), (2, "grandparent_2")):
-            gp = lineage.get(key) or parent.get(key)
+            gp = resolve(lineage.get(key) or parent.get(key))
             gp_view = compact(gp)
             if gp_view is None:
                 continue
             gp_position = f"{position}-{index}"
             result[gp_position] = gp_view
 
-            full_gp = gp if isinstance(gp, dict) else {}
-            trained_id = full_gp.get("trained_chara_id")
-            if veteran_by_trained_id and trained_id is not None:
-                full_gp = veteran_by_trained_id.get(str(trained_id), full_gp)
-            gp_lineage = full_gp.get("when_used_as_parent") or {}
+            gp_lineage = gp.get("when_used_as_parent") or {}
             if not isinstance(gp_lineage, dict):
                 continue
             for ancestor_index, ancestor_key in ((1, "grandparent_1"), (2, "grandparent_2")):
-                ancestor_view = compact(gp_lineage.get(ancestor_key))
+                ancestor_view = compact(resolve(gp_lineage.get(ancestor_key)))
                 if ancestor_view is not None:
                     result[f"{gp_position}-{ancestor_index}"] = ancestor_view
     return result
+
+
+def _serialize_top_results(
+    branch_rows: list[dict[str, Any]],
+    pair_rows: list[dict[str, Any]],
+    future_rows: list[dict[str, Any]],
+    veterans: list[dict[str, Any]],
+    *,
+    top_n: int,
+    search_kind: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Strip scoring-only payloads and attach a complete local lineage preview."""
+
+    veteran_by_trained_id = {
+        str(veteran.get("trained_chara_id")): veteran
+        for veteran in veterans
+        if veteran.get("trained_chara_id") is not None
+    }
+
+    serializable_branches: list[dict[str, Any]] = []
+    if search_kind in {"all", "branches"}:
+        for row in branch_rows[:top_n]:
+            serialized = {
+                key: value for key, value in row.items() if key != "veteran"
+            }
+            veteran = (
+                row.get("veteran")
+                if isinstance(row.get("veteran"), dict)
+                else None
+            )
+            serialized["lineage_preview"] = lineage_preview_for_pair(
+                veteran,
+                None,
+                veteran_by_trained_id=veteran_by_trained_id,
+            )
+            serializable_branches.append(serialized)
+
+    serializable_pairs: list[dict[str, Any]] = []
+    if search_kind in {"all", "pairs"}:
+        for row in pair_rows[:top_n]:
+            serialized = dict(row)
+            parent_1 = veteran_by_trained_id.get(
+                str((row.get("parent_1") or {}).get("trained_chara_id"))
+            )
+            parent_2 = veteran_by_trained_id.get(
+                str((row.get("parent_2") or {}).get("trained_chara_id"))
+            )
+            serialized["lineage_preview"] = lineage_preview_for_pair(
+                parent_1,
+                parent_2,
+                veteran_by_trained_id=veteran_by_trained_id,
+            )
+            serializable_pairs.append(serialized)
+
+    serializable_future: list[dict[str, Any]] = []
+    if search_kind in {"all", "future"}:
+        for row in future_rows[:top_n]:
+            serialized = dict(row)
+            veteran = veteran_by_trained_id.get(str(row.get("trained_chara_id")))
+            serialized["lineage_preview"] = lineage_preview_for_pair(
+                veteran,
+                None,
+                veteran_by_trained_id=veteran_by_trained_id,
+            )
+            serializable_future.append(serialized)
+
+    return serializable_branches, serializable_pairs, serializable_future
 
 
 class OptimizerError(RuntimeError):
@@ -942,11 +1014,70 @@ def _white_generation_support_score(
         "skill_count": len(details),
     }
 
+
+_SCENARIO_EFFECT_STAT_NAMES = {
+    "speed": "Speed",
+    "stamina": "Stamina",
+    "power": "Power",
+    "guts": "Guts",
+    "wit": "Wit",
+}
+
+# Old linked exports do not contain succession_factor_effect rows.  Keep the
+# four Global-era names as a compatibility fallback; newly linked local and
+# uma.moe factors use the effects embedded from the current master.mdb instead.
+_SCENARIO_FALLBACK_STAT_TARGETS = {
+    "ura_finale": ("Speed", "Stamina"),
+    "ura_finale_scenario": ("Speed", "Stamina"),
+    "ura_finals": ("Speed", "Stamina"),
+    "ura_finals_scenario": ("Speed", "Stamina"),
+    "ura_scenario": ("Speed", "Stamina"),
+    "unity_cup": ("Power", "Wit"),
+    "unity_cup_scenario": ("Power", "Wit"),
+    "aoharu_cup_scenario": ("Power", "Wit"),
+    "aoharu_hai_scenario": ("Power", "Wit"),
+    "climax_scenario": ("Stamina", "Guts"),
+    "trackblazer_scenario": ("Stamina", "Guts"),
+    "make_a_new_track_scenario": ("Stamina", "Guts"),
+    "our_grand_concert": ("Speed", "Guts"),
+    "our_grand_concert_scenario": ("Speed", "Guts"),
+    "grand_concert": ("Speed", "Guts"),
+    "grand_concert_scenario": ("Speed", "Guts"),
+    "grand_live_scenario": ("Speed", "Guts"),
+}
+
+
+def _scenario_stat_targets(factor: dict[str, Any]) -> tuple[list[str], str]:
+    targets: list[str] = []
+    for effect in factor.get("effects") or []:
+        if not isinstance(effect, dict):
+            continue
+        label = str(effect.get("target_label") or "").lower()
+        stat = _SCENARIO_EFFECT_STAT_NAMES.get(label)
+        if stat and stat not in targets:
+            targets.append(stat)
+    if targets:
+        return targets, "master_mdb_effects"
+    fallback = _SCENARIO_FALLBACK_STAT_TARGETS.get(
+        slugify(str(factor.get("name") or ""))
+    )
+    return (list(fallback), "known_name_fallback") if fallback else ([], "unresolved")
+
+
 def _blue_score(
     members: list[tuple[dict[str, Any], str, str]],
     distance: str,
     config: dict[str, Any],
+    inheritance_affinities: dict[str, float] | None = None,
 ) -> tuple[float, dict[str, Any]]:
+    """Score guaranteed Blue Sparks plus expected Scenario-Spark stat value.
+
+    A Scenario Spark is a bonus source, not an additional mandatory Blue slot.
+    Each successful proc is treated as one same-star Blue-equivalent for every
+    stat it grants.  Its expected contribution uses the real per-event base
+    rate, individual affinity and both Inspiration Events.  Consequently the
+    combined Blue score can intentionally exceed 100.
+    """
     stat_weights = (config.get("blue_stat_weights_by_distance") or {}).get(distance) or {}
     quality_by_stars = config.get("blue_star_quality") or {"1": 0.12, "2": 0.78, "3": 1.0}
     influence_by_distance = config.get("blue_score_influence_by_distance") or {
@@ -957,7 +1088,24 @@ def _blue_score(
     }
     influence = max(0.0, float(influence_by_distance.get(distance, 1.0)))
     neutral_score = max(0.0, min(100.0, float(config.get("blue_neutral_score", 50.0))))
-    raw = 0.0
+    scenario_cfg = config.get("scenario_inheritance") or {}
+    scenario_base_rates = scenario_cfg.get("base_proc_rates") or {
+        "1": 0.03,
+        "2": 0.06,
+        "3": 0.09,
+    }
+    scenario_event_count = max(
+        1, int(scenario_cfg.get("inspiration_event_count", 2))
+    )
+    scenario_probability_cap = max(
+        0.0, min(1.0, float(scenario_cfg.get("per_event_probability_cap", 1.0)))
+    )
+    blue_equivalent_per_proc = max(
+        0.0, float(scenario_cfg.get("blue_equivalent_per_proc", 1.0))
+    )
+    affinities = inheritance_affinities or {}
+    blue_raw = 0.0
+    scenario_raw = 0.0
     slot_count = max(1, len(members))
     details: list[dict[str, Any]] = []
     for member, _position, role in members:
@@ -971,7 +1119,7 @@ def _blue_score(
             quality = float(quality_by_stars.get(str(stars), 0.0))
             relevance = float(stat_weights.get(name, 0.0))
             contribution = quality * relevance
-            raw += contribution
+            blue_raw += contribution
             details.append({
                 "role": role,
                 "name": name,
@@ -980,25 +1128,88 @@ def _blue_score(
                 "relevance": round(relevance, 4),
                 "contribution": round(contribution, 4),
             })
-    uncompressed_score = min(100.0, 100.0 * raw / slot_count)
+    scenario_details: list[dict[str, Any]] = []
+    for member, position, role in members:
+        affinity_value = max(0.0, float(affinities.get(role, 0.0)))
+        for factor in _factor_list(member, "scenario"):
+            stars = int(factor.get("stars") or 0)
+            name = str(factor.get("name") or "")
+            stat_targets, target_source = _scenario_stat_targets(factor)
+            quality = max(0.0, float(quality_by_stars.get(str(stars), 0.0)))
+            base_rate = max(0.0, float(scenario_base_rates.get(str(stars), 0.0)))
+            probability_per_event = min(
+                scenario_probability_cap,
+                base_rate * (1.0 + affinity_value / 100.0),
+            )
+            expected_proc_count = probability_per_event * scenario_event_count
+            stat_relevance = sum(
+                max(0.0, float(stat_weights.get(stat_name, 0.0)))
+                for stat_name in stat_targets
+            )
+            contribution = (
+                quality
+                * stat_relevance
+                * expected_proc_count
+                * blue_equivalent_per_proc
+            )
+            scenario_raw += contribution
+            scenario_details.append({
+                "role": role,
+                "position": position,
+                "name": name,
+                "stars": stars,
+                "stat_targets": stat_targets,
+                "stat_target_source": target_source,
+                "star_quality": round(quality, 6),
+                "stat_relevance_sum": round(stat_relevance, 6),
+                "inheritance_affinity": round(affinity_value, 4),
+                "base_proc_rate": round(base_rate, 8),
+                "affinity_multiplier": round(1.0 + affinity_value / 100.0, 6),
+                "proc_probability_per_event": round(probability_per_event, 8),
+                "proc_probability_over_run": round(
+                    1.0 - (1.0 - probability_per_event) ** scenario_event_count, 8
+                ),
+                "expected_proc_count": round(expected_proc_count, 8),
+                "blue_equivalent_per_proc": round(blue_equivalent_per_proc, 6),
+                "contribution": round(contribution, 8),
+                "scored": bool(stat_targets and contribution > 0.0),
+            })
+    raw = blue_raw + scenario_raw
+    uncompressed_score = max(0.0, 100.0 * raw / slot_count)
     # Shorter distances make the target stat line easier to reach, so lineage
     # blue quality should differentiate candidates less strongly. Blending
     # toward a neutral score preserves cross-profile comparability while
     # compressing the impact of good/bad blues where appropriate.
-    score = max(0.0, min(100.0, neutral_score + influence * (uncompressed_score - neutral_score)))
+    score = max(0.0, neutral_score + influence * (uncompressed_score - neutral_score))
     return score, {
         "raw": raw,
+        "blue_raw": blue_raw,
+        "scenario_blue_equivalent_raw": scenario_raw,
         "slot_count": slot_count,
         "uncompressed_score": round(uncompressed_score, 6),
         "distance_influence": round(influence, 6),
         "neutral_score": round(neutral_score, 6),
         "formula": (
-            "raw blue score = 100 × sum(star-tier quality × stat relevance) / lineage slots; "
+            "raw blue score = 100 × (Blue quality + expected Scenario-Spark Blue-equivalents) / lineage slots; "
+            "each Scenario contribution = same-star quality × granted-stat relevance × expected proc count; "
             "final score = neutral + distance influence × (raw score - neutral)"
         ),
+        "can_exceed_100": True,
         "star_tiers": quality_by_stars,
         "stat_weights": stat_weights,
         "factors": details,
+        "scenario_inheritance": {
+            "base_proc_rates": scenario_base_rates,
+            "inspiration_event_count": scenario_event_count,
+            "per_event_probability_cap": scenario_probability_cap,
+            "blue_equivalent_per_proc": blue_equivalent_per_proc,
+            "uses_individual_affinity": True,
+            "factors": scenario_details,
+            "factor_count": len(scenario_details),
+            "unresolved_factor_count": sum(
+                1 for row in scenario_details if row["stat_target_source"] == "unresolved"
+            ),
+        },
     }
 
 
@@ -1919,51 +2130,48 @@ def _race_scenario_score(
     config: dict[str, Any],
     saturation_key: str,
 ) -> tuple[float, dict[str, Any]]:
-    """Score only the stat/scenario side of Race and Scenario Sparks.
+    """Score the small generic stat side of Race Sparks.
 
     Skills granted by Race Sparks are scored in :func:`_white_score` with their
     actual 1/2/3% inheritance rates, preventing both an arbitrary multiplier and
-    double counting in this component.
+    double counting in this component.  The function keeps its historical name
+    and output key for export compatibility; Scenario Sparks now contribute to
+    :func:`_blue_score` from their actual stat targets and expected proc count.
     """
     position_weights = config.get("position_transmission") or {}
     star_quality = config.get("star_quality") or {}
     race_config = config.get("race_factor") or {}
     base_per_star = float(race_config.get("base_per_star_quality", 0.06))
-    scenario_per_star = float(race_config.get("scenario_per_star_quality", 0.10))
     raw = 0.0
     details: list[dict[str, Any]] = []
     for member, position, role in members:
         position_weight = float(position_weights.get(position, 1.0))
-        for factor_type in ("white_race", "scenario"):
-            for factor in _factor_list(member, factor_type):
-                stars = int(factor.get("stars") or 0)
-                name = str(factor.get("name") or "")
-                star_weight = float(star_quality.get(str(stars), 0.0))
-                if factor_type == "scenario":
-                    base = scenario_per_star * star_weight
-                    granted = []
-                else:
-                    base = base_per_star * star_weight
-                    granted = race_skill_map.get(name, [])
-                contribution = base * position_weight
-                raw += contribution
-                details.append(
-                    {
-                        "role": role,
-                        "type": factor_type,
-                        "name": name,
-                        "stars": stars,
-                        "granted_skill_keys": granted,
-                        "granted_skills_scored_in": "white_skill" if granted else None,
-                        "contribution": round(contribution, 6),
-                    }
-                )
+        for factor in _factor_list(member, "white_race"):
+            stars = int(factor.get("stars") or 0)
+            name = str(factor.get("name") or "")
+            star_weight = float(star_quality.get(str(stars), 0.0))
+            granted = race_skill_map.get(name, [])
+            contribution = base_per_star * star_weight * position_weight
+            raw += contribution
+            details.append(
+                {
+                    "role": role,
+                    "type": "white_race",
+                    "name": name,
+                    "stars": stars,
+                    "granted_skill_keys": granted,
+                    "granted_skills_scored_in": "white_skill" if granted else None,
+                    "contribution": round(contribution, 6),
+                }
+            )
     scale = float((config.get("race_saturation") or {}).get(saturation_key, 1.0))
     details.sort(key=lambda item: item["contribution"], reverse=True)
     return _saturating_score(raw, scale), {
         "raw": raw,
         "scale": scale,
-        "formula": "Race/Scenario Spark stat utility only; granted skills are probability-scored in white_skill",
+        "formula": "Race-Spark generic stat utility only; granted skills are probability-scored in white_skill; Scenario Sparks are expected-value bonuses in blue",
+        "legacy_component_key": "race_scenario",
+        "scenario_sparks_scored_in": "blue",
         "top_factors": details[:20],
         "factor_count": len(details),
     }
@@ -2174,7 +2382,12 @@ def evaluate_parent_branch(
     inheritance_affinities = _branch_inheritance_affinities(
         resolver, ace_chara, veteran, resolved_g1_bonus
     )
-    blue, blue_detail = _blue_score(members, distance, config)
+    blue, blue_detail = _blue_score(
+        members,
+        distance,
+        config,
+        inheritance_affinities=inheritance_affinities,
+    )
     pink, pink_detail = _pink_score(
         members, ace, surface, distance, style, config, mode="parent_branch",
         inheritance_affinities=inheritance_affinities,
@@ -2332,7 +2545,12 @@ def evaluate_parent_pair(
     }
 
     members = _lineage_members(parent_1, "parent_1") + _lineage_members(parent_2, "parent_2")
-    blue, blue_detail = _blue_score(members, distance, config)
+    blue, blue_detail = _blue_score(
+        members,
+        distance,
+        config,
+        inheritance_affinities=inheritance_affinity_detail["values"],
+    )
     pink, pink_detail = _pink_score(
         members, ace, surface, distance, style, config, mode="parent_pair",
         inheritance_affinities=inheritance_affinity_detail["values"],
@@ -2492,12 +2710,22 @@ def optimize_parents(
     course_conditions: dict[str, int | list[int] | tuple[int, ...] | set[int] | None] | None = None,
     scoring_config_path: str | Path | None = None,
     top_n: int = 30,
+    search_kind: str = "all",
     logger: Callable[[str], None] | None = None,
 ) -> OptimizerResult:
     log = logger or _logger_default
     if surface not in SURFACES or distance not in DISTANCES or style not in STYLES:
         raise OptimizerError(f"Profil invalide : {surface}/{distance}/{style}")
+    if search_kind not in {"all", "pairs", "branches", "future"}:
+        raise OptimizerError(f"Type de recherche locale invalide : {search_kind}")
     top_n = max(1, min(int(top_n), 500))
+    evaluate_branches = search_kind in {"all", "pairs", "branches"}
+    evaluate_pairs = search_kind in {"all", "pairs"}
+    evaluate_future = search_kind in {"all", "future"}
+    if evaluate_future and (
+        future_parent_card_id is None or int(future_parent_card_id) <= 0
+    ):
+        raise OptimizerError("Sélectionne le parent à produire.")
 
     master = Path(master_path).expanduser().resolve()
     linked_path = Path(linked_veterans_path).expanduser().resolve()
@@ -2532,10 +2760,12 @@ def optimize_parents(
         ace_chara = int(ace["chara_id"])
         future_parent = (
             resolver.card_details(int(future_parent_card_id))
-            if future_parent_card_id is not None
+            if evaluate_future and future_parent_card_id is not None
             else None
         )
-        if future_parent is not None and int(future_parent["chara_id"]) == ace_chara:
+        if evaluate_future and future_parent is None:
+            raise OptimizerError("Sélectionne le parent à produire.")
+        if evaluate_future and future_parent is not None and int(future_parent["chara_id"]) == ace_chara:
             raise OptimizerError("L'Ace et le parent à produire doivent être deux personnages différents.")
         normalized_conditions: dict[str, set[int]] = {}
         for key, raw_value in (course_conditions or {}).items():
@@ -2588,7 +2818,7 @@ def optimize_parents(
             for veteran in veterans
             if int(veteran.get("chara_id") or 0) != ace_chara
         ]
-        if not valid_veterans:
+        if evaluate_branches and not valid_veterans:
             raise OptimizerError("Aucun vétéran compatible après exclusion de l'Ace lui-même.")
 
         affinity_config = config.get("affinity") or {}
@@ -2598,73 +2828,76 @@ def optimize_parents(
         future_affinity_thresholds = affinity_config.get("future_branch_base_thresholds") or [[0, 0], [48, 100]]
         future_g1_thresholds = affinity_config.get("future_g1_thresholds") or [[0, 0], [20, 100]]
         branch_rows: list[dict[str, Any]] = []
-        log(f"Évaluation de {len(valid_veterans)} lignées candidates…")
-        for index, veteran in enumerate(valid_veterans, 1):
-            branch_rows.append(
-                evaluate_parent_branch(
-                    resolver,
-                    ace,
-                    veteran,
-                    surface=surface,
-                    distance=distance,
-                    style=style,
-                    weight_lookup=weight_lookup,
-                    race_skills=race_skills,
-                    config=config,
-                    g1_bonus_value=g1_bonus_value,
-                    affinity_thresholds=branch_affinity_thresholds,
-                )
-            )
-            if index % 50 == 0 or index == len(valid_veterans):
-                log(f"Lignées : {index}/{len(valid_veterans)}")
-
-        branch_p95 = _quantile((row["affinity"]["total"] for row in branch_rows), 0.95)
-        branch_rows.sort(key=lambda row: (row["score"], row["affinity"]["total"]), reverse=True)
-
-        log("Recherche des meilleures paires de parents…")
-        pair_rows: list[dict[str, Any]] = []
-        # Full search is cheap for the current 259-veteran export (~33k pairs).
-        for left_index, left in enumerate(branch_rows):
-            v1 = left["veteran"]
-            for right in branch_rows[left_index + 1 :]:
-                v2 = right["veteran"]
-                if int(v1.get("chara_id") or 0) == int(v2.get("chara_id") or 0):
-                    continue
-                pair_rows.append(
-                    evaluate_parent_pair(
+        if evaluate_branches:
+            log(f"Évaluation de {len(valid_veterans)} lignées candidates…")
+            for index, veteran in enumerate(valid_veterans, 1):
+                branch_rows.append(
+                    evaluate_parent_branch(
                         resolver,
                         ace,
-                        v1,
-                        v2,
+                        veteran,
                         surface=surface,
                         distance=distance,
                         style=style,
                         weight_lookup=weight_lookup,
                         race_skills=race_skills,
                         config=config,
-                        parent_1_branch=left,
-                        parent_2_branch=right,
                         g1_bonus_value=g1_bonus_value,
-                        affinity_thresholds=pair_affinity_thresholds,
+                        affinity_thresholds=branch_affinity_thresholds,
                     )
                 )
+                if index % 50 == 0 or index == len(valid_veterans):
+                    log(f"Lignées : {index}/{len(valid_veterans)}")
+
+        branch_p95 = _quantile((row["affinity"]["total"] for row in branch_rows), 0.95)
+        branch_rows.sort(key=lambda row: (row["score"], row["affinity"]["total"]), reverse=True)
+
+        pair_rows: list[dict[str, Any]] = []
+        if evaluate_pairs:
+            log("Recherche des meilleures paires de parents…")
+            # Full search is cheap for the current 259-veteran export (~33k pairs).
+            for left_index, left in enumerate(branch_rows):
+                v1 = left["veteran"]
+                for right in branch_rows[left_index + 1 :]:
+                    v2 = right["veteran"]
+                    if int(v1.get("chara_id") or 0) == int(v2.get("chara_id") or 0):
+                        continue
+                    pair_rows.append(
+                        evaluate_parent_pair(
+                            resolver,
+                            ace,
+                            v1,
+                            v2,
+                            surface=surface,
+                            distance=distance,
+                            style=style,
+                            weight_lookup=weight_lookup,
+                            race_skills=race_skills,
+                            config=config,
+                            parent_1_branch=left,
+                            parent_2_branch=right,
+                            g1_bonus_value=g1_bonus_value,
+                            affinity_thresholds=pair_affinity_thresholds,
+                        )
+                    )
 
         pair_p95 = _quantile((row["affinity"]["total"] for row in pair_rows), 0.95)
         pair_rows.sort(key=parent_pair_sort_key, reverse=True)
 
-        log("Évaluation des futurs grands-parents…")
         future_rows: list[dict[str, Any]] = []
         future_parent_chara = int(future_parent["chara_id"]) if future_parent else None
         future_candidates = [
             veteran
             for veteran in veterans
             if _valid_grandparent_for_target_parent(veteran, future_parent_chara)
-        ]
+        ] if evaluate_future else []
         future_branch_base = (
             resolver.pair(ace_chara, future_parent_chara)
             if future_parent_chara is not None
             else None
         )
+        if evaluate_future:
+            log("Évaluation des futurs grands-parents…")
         for veteran in future_candidates:
             members = [(veteran, "grandparent", "candidate")]
             candidate_chara = int(veteran.get("chara_id") or 0)
@@ -2675,7 +2908,12 @@ def optimize_parents(
                 affinity_raw = resolver.pair(ace_chara, candidate_chara)
                 affinity_mode = "ace_candidate_pair_fallback"
             g1_count = len(_member_g1(veteran))
-            blue, blue_detail = _blue_score(members, distance, config)
+            blue, blue_detail = _blue_score(
+                members,
+                distance,
+                config,
+                inheritance_affinities={"candidate": float(affinity_raw)},
+            )
             pink, pink_detail = _future_grandparent_pink_score(
                 members, ace, surface, distance, style, config
             )
@@ -2747,19 +2985,29 @@ def optimize_parents(
             row["score_breakdown"] = _score_breakdown(row["components"], future_weights)
         future_rows.sort(key=lambda row: (row["score"], row["g1_count"]), reverse=True)
 
-        # Remove the embedded source veteran before serialization.
-        serializable_branches = []
-        for row in branch_rows[:top_n]:
-            copy = {key: value for key, value in row.items() if key != "veteran"}
-            serializable_branches.append(copy)
-        serializable_pairs = pair_rows[:top_n]
-        serializable_future = future_rows[:top_n]
+        # Remove the embedded source veteran before serialization.  Every top
+        # row also receives the same compact visual snapshot used by uma.moe
+        # results; otherwise the local dialog only knows names and cannot show
+        # Sparks or the complete ancestry.
+        (
+            serializable_branches,
+            serializable_pairs,
+            serializable_future,
+        ) = _serialize_top_results(
+            branch_rows,
+            pair_rows,
+            future_rows,
+            veterans,
+            top_n=top_n,
+            search_kind=search_kind,
+        )
 
         generated_at = datetime.now(timezone.utc).isoformat()
         payload = {
             "metadata": {
                 "schema_version": 8,
                 "generated_at_utc": generated_at,
+                "search_kind": search_kind,
                 "purpose": "Rank final parent pairs, parent branches and future grandparents for a target Ace profile.",
                 "source_master": {"filename": master.name, "sha256": _sha256(master)},
                 "source_veterans": {"filename": linked_path.name, "sha256": _sha256(linked_path)},
@@ -2768,7 +3016,11 @@ def optimize_parents(
                 "source_skill_catalog": {"filename": skill_catalog_path_resolved.name, "sha256": _sha256(skill_catalog_path_resolved)},
                 "source_course_weights": ({"filename": course_path.name, "sha256": _sha256(course_path)} if course_path and course_path.is_file() else None),
                 "source_scoring_config": {"filename": config_path.name, "sha256": _sha256(config_path)},
-                "candidate_count": len(valid_veterans),
+                "candidate_count": (
+                    len(future_candidates)
+                    if search_kind == "future"
+                    else len(valid_veterans)
+                ),
                 "pair_count": len(pair_rows),
                 "top_n": top_n,
                 "notes": [

@@ -64,19 +64,25 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
         return ("blue.influence", "Influence des Blues par distance", 60)
     if root == "blue_neutral_score":
         return ("blue.neutral", "Point neutre des Blues", 70)
+    if root == "scenario_inheritance":
+        return (
+            "blue.scenario_inheritance",
+            "Scenario Sparks · valeur attendue dans les Blues",
+            80,
+        )
 
     if root == "unique_star_quality":
         return ("unique.star_quality", "Qualité par étoiles", 10)
     if root in {"star_quality", "race_factor"}:
         return (
             "affinity.race_quality",
-            "Race/Scenario Sparks · qualité par étoiles",
+            "Race Sparks · qualité par étoiles",
             10,
         )
     if root == "race_saturation":
         return (
             "affinity.race_saturation",
-            "Race/Scenario Sparks · saturation",
+            "Race Sparks · saturation",
             20,
         )
     if root == "affinity" and leaf in {"g1_common_bonus", "same_character_compatibility"}:
@@ -370,6 +376,7 @@ def weight_category(path: Sequence[str]) -> str:
         "blue_star_quality",
         "blue_score_influence_by_distance",
         "blue_neutral_score",
+        "scenario_inheritance",
     }:
         return "blue"
     if root in {
@@ -415,6 +422,7 @@ def is_percentage_setting(path: Sequence[str], value: object) -> bool:
         "star_quality",
         "blue_score_influence_by_distance",
         "race_factor",
+        "scenario_inheritance",
     }:
         return True
     if root == "course_conditions":

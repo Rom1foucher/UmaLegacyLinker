@@ -78,7 +78,7 @@ ranked against that fixed branch with the same six-member engine as a final pare
 future parent's own unknown Sparks remain empty; the selected GPs, the opposing branch and a
 projected G1 plan are evaluated exactly. Leaving the field empty preserves the generic future-GP model.
 
-The active Ace, target parent, profile, course preset, exact conditions and scoring files form one live shared context. They are displayed and editable from both **Lineage Optimisation** and **uma.moe**; changing either page updates the other immediately.
+The active Ace, target parent, profile, course preset, exact conditions and scoring files form one live shared context at the top of **Search**. Local and uma.moe searches sit side by side beneath it and write into the same result area. Stable integration values (API URL and key) live separately under **Settings**.
 
 Friend IDs can be copied directly from result tables. Online retrieval is capped at **2,000 candidates per search**.
 For final-parent searches, this budget is divided between a Distance cohort, a target-surface
@@ -86,7 +86,7 @@ cohort when the Ace needs it, and a broad White-preferred cohort. The cohorts ar
 deduplicated before exact local × remote pair scoring; they guide sampling rather than acting
 as final hard constraints.
 
-The target-surface cohort can be disabled per search in the uma.moe panel, or by setting
+The target-surface cohort can be disabled per search in the uma.moe filter dialog, or by setting
 `uma_moe_parent_search.retrieval.surface_cohort_enabled` to `false` in the active scoring
 profile. This only changes API sampling; target-surface scoring remains active. In manual
 pair mode, the locked local parent/GP is resolved before retrieval. If the already-known
@@ -193,12 +193,12 @@ Then select:
 2. the exported `data.json` or `trained_chara_data.json`;
 3. an output directory.
 
-Run **Link collection** before using the lineage optimiser, Transfer Helper or
+Run **Link collection** before using lineage search, Transfer Helper or
 local × online pair calculation.
 
 ### Desktop interface
 
-The PySide6 interface covers the full workflow: dashboard, extraction and linking, lineage optimisation, uma.moe search (including the fixed opposing-parent context and offline local GP-pair ranking), Transfer Helper, scoring-profile editing, diagnostic tools, sortable embedded results, a visual lineage inspector and Lineage Planner export. Long-running tasks can be cancelled from the status bar.
+The PySide6 interface covers the full workflow: dashboard, extraction and linking, one unified local/uma.moe Search workspace (including fixed opposing-parent context and offline local GP-pair ranking), Transfer Helper, scoring-profile editing, Settings and diagnostics, sortable embedded results, a visual lineage inspector and Lineage Planner export. The three local buttons calculate final pairs, parent branches or future grandparents independently. Long-running tasks can be cancelled from the status bar.
 
 Preferences live in `%APPDATA%\UmaLegacyLinker\config.json` and the interface renders in French and English. The Windows workflow also renders every page at three viewport sizes in both languages and rejects detected text overflow. See [`docs/QT_UI.md`](docs/QT_UI.md) for the UI architecture and build instructions.
 
@@ -227,8 +227,8 @@ The effective profiles used by a run are exported as:
 - `active_parent_scoring.json`;
 - `active_skill_priorities.json`.
 
-The White Skill priority selector shown in **Lineage Optimisation**, **uma.moe**
-and the advanced section of **Weights** is one live shared setting. Its input
+The White Skill priority selector used by **Search** and shown in the advanced
+section of **Weights** is one live shared setting. Its input
 may be a complete profile or a minimal recursive override of
 `default_skill_priorities.json`; see
 [`docs/SKILL_PRIORITIES.md`](docs/SKILL_PRIORITIES.md) for the exact schema,

@@ -10,7 +10,9 @@ The PySide6 interface is the desktop application. It shares the engines, configu
   `trained_chara_data.json`, and skill-catalogue generation;
 - searchable Ace, target-parent, course and racecourse selection with contains-based autocomplete;
 - course presets and advanced static race conditions;
-- local lineage optimisation in a background worker;
+- one Search workspace with a persistent Ace, target-parent, race, course and scoring context;
+- clearly separated local and uma.moe source cards feeding one shared result area;
+- independent background actions for final pairs, parent branches and future grandparents, so a local request computes only the requested result family;
 - sortable final-pair, parent-branch and future-grandparent tables;
 - an embedded diagnostics pane instead of separate result windows;
 - a top-down visual lineage inspector for every local and uma.moe ranking: final pairs, parent branches, future-grandparent candidates and grandparent pairs;
@@ -22,12 +24,13 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - rich, colour-coded Spark chips ordered Blue → Pink → Green → White, with resolved skill icons, the existing full-run White inheritance probability and gold emphasis for the three strongest White score contributions;
 - loading the latest generated ranking;
 - export of a selected final pair to the uma.moe Lineage Planner format;
-- live and imported uma.moe parent/grandparent searches, platform-aware API-key persistence, costume filters and Friend ID copy;
+- live and imported uma.moe parent/grandparent searches, explicit per-mode filter/import menus, costume filters and Friend ID copy;
+- stable uma.moe API URL/key configuration under Settings, separate from scoring weights and per-search filters;
 - Transfer Helper with verdict/search filters and an embedded replacement diagnostic;
 - a two-pane scoring-profile editor with search, 51 gameplay subcategories, plain-language help for every setting, hover summaries and visible draft/default states;
 - unambiguous probability, threshold, multiplier and 100%-budget controls, including live donut charts for all nine genuinely normalised scoring groups;
-- live shared White Skill priority-file management across Lineage Optimisation,
-  uma.moe and Weights, plus the diagnostic Umalator importer;
+- live shared White Skill priority-file management across Search and Weights,
+  plus the diagnostic Umalator importer under Settings;
 - live French/English switching;
 - cooperative cancellation of long-running tasks from the status bar;
 - a fixed opposing-parent context and offline local GP-pair ranking in the uma.moe search.
@@ -36,7 +39,7 @@ Pair ranking and every scoring formula remain unchanged. The lineage view retain
 
 ## Visual QA
 
-The Windows workflow renders every page, the embedded local and uma.moe result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and uploads the 108 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
+The Windows workflow renders every page, the Search conditions and per-mode uma.moe option dialogs, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 102 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
 
 ## Artwork and offline behaviour
 
@@ -70,11 +73,12 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/core.py` | GUI-independent configuration and workflow orchestration |
 | `ui_qt/main_window.py` | application shell, navigation, progress and log drawer |
 | `ui_qt/pages_home_data.py` | dashboard and local linking workflow |
-| `ui_qt/pages_optimizer.py` | optimisation form and embedded result explorer |
-| `ui_qt/pages_online.py` | uma.moe search, filters, secure key controls and results |
+| `ui_qt/pages_search.py` | unified context, local/uma.moe actions, static filter dialogs and shared results workspace |
+| `ui_qt/pages_optimizer.py` | reusable local result explorer and diagnostics |
+| `ui_qt/pages_online.py` | reusable uma.moe result explorer and costume-filter dialog |
 | `ui_qt/pages_transfer.py` | Transfer Helper analysis and diagnostics |
 | `ui_qt/pages_weights.py` | scoring and White Skill priority editor |
-| `ui_qt/pages_tools.py` | diagnostic Umalator import |
+| `ui_qt/pages_tools.py` | Settings: uma.moe integration and diagnostic Umalator import |
 | `ui_qt/models.py` | sortable Qt table model |
 | `ui_qt/presentation.py` | safe HTML diagnostics rendering |
 | `ui_qt/asset_catalog.py` | validated GameTora trainee, support, skill and race-banner asset URLs |

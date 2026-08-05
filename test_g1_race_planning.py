@@ -354,6 +354,10 @@ def test_master_resolver_enriches_g1_with_calendar_slots() -> None:
                 factor_id INTEGER, factor_group_id INTEGER, rarity INTEGER,
                 factor_type INTEGER, effect_group_id INTEGER
             );
+            CREATE TABLE succession_factor_effect (
+                id INTEGER, factor_group_id INTEGER, effect_id INTEGER,
+                target_type INTEGER, value_1 INTEGER, value_2 INTEGER
+            );
             CREATE TABLE single_mode_wins_saddle (
                 id INTEGER, win_saddle_type INTEGER,
                 race_instance_id_1 INTEGER, race_instance_id_2 INTEGER,
@@ -367,6 +371,10 @@ def test_master_resolver_enriches_g1_with_calendar_slots() -> None:
                 id INTEGER, race_instance_id INTEGER, race_permission INTEGER
             );
             INSERT INTO text_data VALUES (28, 2001, 'Example G1');
+            INSERT INTO text_data VALUES (147, 6003, 'Example Scenario');
+            INSERT INTO succession_factor VALUES (6003, 600, 3, 6, 3);
+            INSERT INTO succession_factor_effect VALUES (1, 600, 3, 2, 10, 30);
+            INSERT INTO succession_factor_effect VALUES (2, 600, 3, 4, 10, 30);
             INSERT INTO race VALUES (1022, 100, 1);
             INSERT INTO race_instance VALUES (2001, 1022, 1028);
             INSERT INTO single_mode_program VALUES (1, 2001, 3);
@@ -381,6 +389,7 @@ def test_master_resolver_enriches_g1_with_calendar_slots() -> None:
         resolver = MasterResolver(path)
         try:
             resolved = resolver.resolve_g1_saddles([88])
+            scenario_factor = resolver.factors[6003]
         finally:
             resolver.close()
 
@@ -388,6 +397,10 @@ def test_master_resolver_enriches_g1_with_calendar_slots() -> None:
     assert detail["race_id"] == 1022
     assert detail["date"] == 1028
     assert detail["years"] == [2, 3]
+    assert scenario_factor["effects"] == [
+        {"target_type": 2, "target_label": "stamina", "value_1": 10, "value_2": 30},
+        {"target_type": 4, "target_label": "guts", "value_1": 10, "value_2": 30},
+    ]
     assert detail["schedule_slots"] == [
         {"year": 2, "month": 10, "half": 2},
         {"year": 3, "month": 10, "half": 2},

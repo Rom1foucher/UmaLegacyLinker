@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import traceback
 from typing import Any, Callable
 
@@ -39,13 +40,22 @@ class FunctionWorker(QRunnable):
 
     @Slot()
     def run(self) -> None:
+        def yield_to_ui() -> None:
+            # CPU-bound Python scoring runs in a Qt pool thread.  Explicitly
+            # yield at backend checkpoints so the GUI thread can process the
+            # Cancel click promptly even under sustained scoring load.
+            time.sleep(0)
+            self._checkpoint()
+
         def log(message: str) -> None:
             self._checkpoint()
             self.signals.log.emit(message)
+            yield_to_ui()
 
         def progress(value: int, message: str) -> None:
             self._checkpoint()
             self.signals.progress.emit(value, message)
+            yield_to_ui()
 
         try:
             result = self.function(logger=log, progress=progress)

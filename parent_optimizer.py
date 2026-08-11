@@ -13,7 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from g1_race_planning import build_pair_g1_diagnostic, schedule_export_summary
+from g1_race_planning import (
+    build_pair_g1_diagnostic,
+    distance_type_for_meters,
+    schedule_export_summary,
+    surface_for_ground,
+)
 
 
 SURFACES = ("turf", "dirt")
@@ -522,7 +527,33 @@ class AffinityResolver:
             "uma_name": self.chara_names.get(chara_id, f"Chara {chara_id}"),
             "card_name": self.card_names.get(card_id, f"Card {card_id}"),
             "costume_name": self.costume_names.get(card_id, ""),
+            "training_aptitudes": self.training_aptitudes(card_id),
         }
+
+    def training_aptitudes(self, card_id: int) -> dict[str, dict[str, dict[str, Any]]]:
+        row = self.connection.execute(
+            "SELECT * FROM card_rarity_data WHERE card_id = ? ORDER BY rarity DESC LIMIT 1",
+            (int(card_id),),
+        ).fetchone()
+        if row is None:
+            return {"surface": {}, "distance": {}}
+        result: dict[str, dict[str, dict[str, Any]]] = {
+            "surface": {},
+            "distance": {},
+        }
+        for dimension in ("surface", "distance"):
+            for key, column in APTITUDE_COLUMNS[dimension].items():
+                try:
+                    rank = int(row[column])
+                except (IndexError, KeyError, TypeError, ValueError):
+                    continue
+                result[dimension][key] = {
+                    "base_rank": rank,
+                    "base_rank_label": APTITUDE_LABELS.get(rank, str(rank)),
+                    "initial_rank": rank,
+                    "initial_rank_label": APTITUDE_LABELS.get(rank, str(rank)),
+                }
+        return result
 
     def card_details_for_chara(self, chara_id: int) -> dict[str, Any]:
         resolved_chara = int(chara_id)
@@ -534,21 +565,15 @@ class AffinityResolver:
             ),
             None,
         )
+        if card_id is not None:
+            return self.card_details(card_id)
         return {
-            "card_id": card_id,
+            "card_id": None,
             "chara_id": resolved_chara,
-            "uma_name": self.chara_names.get(
-                resolved_chara,
-                f"Chara {resolved_chara}",
-            ),
-            "card_name": (
-                self.card_names.get(card_id, f"Card {card_id}")
-                if card_id is not None
-                else self.chara_names.get(
-                    resolved_chara,
-                    f"Chara {resolved_chara}",
-                )
-            ),
+            "uma_name": self.chara_names.get(resolved_chara, f"Chara {resolved_chara}"),
+            "card_name": self.chara_names.get(resolved_chara, f"Chara {resolved_chara}"),
+            "costume_name": "",
+            "training_aptitudes": {"surface": {}, "distance": {}},
         }
 
     def objective_races(self, chara_id: int) -> list[dict[str, Any]]:
@@ -581,6 +606,17 @@ class AffinityResolver:
             if "date" in race_instance_columns
             else "NULL AS race_date"
         )
+        has_course_details = "race_course_set" in self.available_tables
+        course_selection = (
+            ", cs.distance AS race_distance, cs.ground AS race_ground"
+            if has_course_details
+            else ", NULL AS race_distance, NULL AS race_ground"
+        )
+        course_join = (
+            "LEFT JOIN race_course_set cs ON cs.id = r.course_set"
+            if has_course_details
+            else ""
+        )
         rows = self.connection.execute(
             f"""
             SELECT rr.id AS objective_id,
@@ -592,6 +628,7 @@ class AffinityResolver:
                    r.grade AS grade,
                    r."group" AS race_group,
                    {date_selection}
+                   {course_selection}
             FROM single_mode_route route
             JOIN single_mode_route_race rr
               ON rr.race_set_id = route.race_set_id
@@ -601,6 +638,7 @@ class AffinityResolver:
               ON ri.id = p.race_instance_id
             JOIN race r
               ON r.id = ri.race_id
+            {course_join}
             WHERE route.scenario_id = 0
               AND route.chara_id = ?
               AND rr.target_type = 1
@@ -615,7 +653,7 @@ class AffinityResolver:
         for row in rows:
             turn = int(row["turn"])
             phase = (turn - 1) % 24
-            slot = {
+            turn_slot = {
                 "year": (turn - 1) // 24 + 1,
                 "month": phase // 2 + 1,
                 "half": phase % 2 + 1,
@@ -624,8 +662,14 @@ class AffinityResolver:
             race_date = (
                 int(row["race_date"])
                 if row["race_date"] is not None
-                else slot["month"] * 100 + (1 if slot["half"] == 1 else 16)
+                else turn_slot["month"] * 100
+                + (1 if turn_slot["half"] == 1 else 16)
             )
+            # ``race_instance.date`` is a real-world calendar date, not the
+            # game's early/late-month slot.  For example Shuka Sho is dated
+            # October 13 but occupies late October in career mode.  The fixed
+            # objective turn is authoritative here.
+            slot = turn_slot
             grade = int(row["grade"])
             race_group = int(row["race_group"])
             required_position = max(0, int(row["required_position"] or 0))
@@ -644,6 +688,18 @@ class AffinityResolver:
                         ),
                     ),
                     "date": race_date,
+                    "distance": (
+                        int(row["race_distance"])
+                        if row["race_distance"] is not None
+                        else None
+                    ),
+                    "distance_type": distance_type_for_meters(row["race_distance"]),
+                    "ground": (
+                        int(row["race_ground"])
+                        if row["race_ground"] is not None
+                        else None
+                    ),
+                    "surface": surface_for_ground(row["race_ground"]),
                     "grade": grade,
                     "race_group": race_group,
                     "is_g1": grade == 100 and race_group == 1,
@@ -1008,7 +1064,9 @@ def _white_generation_support_score(
         "scale": saturation,
         "formula": "100 × (1 - exp(-sum(profile weight × lineage-copy bonus) / saturation))",
         "assumption": "Only the incremental lineage bonus is valued. Basic/◎/gold learned form and base gene-generation chance are intentionally ignored.",
-        "scope": "Only white skill Sparks from the candidate and its two current parents. Race/scenario Sparks are excluded.",
+        "scope": "Only white skill Sparks from the evaluated lineage members. Race/scenario Sparks are excluded.",
+        "lineage_member_count": len(lineage_members),
+        "lineage_roles": [role for _member, _position, role in lineage_members],
         "bonus_per_lineage_copy": bonus_per_copy,
         "skills": details[:30],
         "skill_count": len(details),
@@ -2682,13 +2740,15 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> Non
             writer.writerow({field: row.get(field, "") for field in fields})
 
 
-def _g1_schedule_csv_fields(plan: dict[str, Any] | None) -> dict[str, int]:
+def _g1_schedule_csv_fields(plan: dict[str, Any] | None) -> dict[str, Any]:
     metrics = schedule_export_summary(plan)
     return {
         "optimal_g1_plan_bonus": metrics["standard_optimal_bonus"],
         "trackblazer_g1_plan_bonus": metrics["trackblazer_optimal_bonus"],
         "objective_race_count": metrics["objective_race_count"],
         "objective_conflict_count": metrics["objective_conflict_count"],
+        "g1_win_probability_cutoff": metrics.get("g1_win_probability_cutoff"),
+        "g1_below_win_cutoff_count": metrics.get("below_win_cutoff_race_count", 0),
     }
 
 
@@ -2856,9 +2916,12 @@ def optimize_parents(
         if evaluate_pairs:
             log("Recherche des meilleures paires de parents…")
             # Full search is cheap for the current 259-veteran export (~33k pairs).
+            total_pairs = len(branch_rows) * max(0, len(branch_rows) - 1) // 2
+            processed_pairs = 0
             for left_index, left in enumerate(branch_rows):
                 v1 = left["veteran"]
                 for right in branch_rows[left_index + 1 :]:
+                    processed_pairs += 1
                     v2 = right["veteran"]
                     if int(v1.get("chara_id") or 0) == int(v2.get("chara_id") or 0):
                         continue
@@ -2880,6 +2943,17 @@ def optimize_parents(
                             affinity_thresholds=pair_affinity_thresholds,
                         )
                     )
+                # The Qt worker's logger is also a cooperative cancellation
+                # checkpoint.  Keep the batch coarse enough to avoid flooding
+                # the UI while ensuring the O(n²) search can be interrupted.
+                if (
+                    (left_index + 1) % 8 == 0
+                    or left_index + 1 == len(branch_rows)
+                ):
+                    log(
+                        f"Paires évaluées : {processed_pairs}/{total_pairs} — "
+                        f"{len(pair_rows)} valides."
+                    )
 
         pair_p95 = _quantile((row["affinity"]["total"] for row in pair_rows), 0.95)
         pair_rows.sort(key=parent_pair_sort_key, reverse=True)
@@ -2898,7 +2972,7 @@ def optimize_parents(
         )
         if evaluate_future:
             log("Évaluation des futurs grands-parents…")
-        for veteran in future_candidates:
+        for future_index, veteran in enumerate(future_candidates, 1):
             members = [(veteran, "grandparent", "candidate")]
             candidate_chara = int(veteran.get("chara_id") or 0)
             if future_parent_chara is not None:
@@ -2958,6 +3032,10 @@ def optimize_parents(
                     },
                 }
             )
+            if future_index % 25 == 0 or future_index == len(future_candidates):
+                log(
+                    f"Grands-parents: {future_index}/{len(future_candidates)}"
+                )
         future_affinity_p95 = _quantile((row["affinity_raw"] for row in future_rows), 0.95)
         future_g1_p95 = max(1.0, _quantile((row["g1_count"] for row in future_rows), 0.95))
         future_weights = _mode_weights(config, "future_grandparent")
@@ -3175,7 +3253,7 @@ def optimize_parents(
         _write_csv(
             parent_pairs_csv,
             pair_csv_rows,
-            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "parent_1_only_g1", "parent_2_only_g1", "optimal_g1_plan_bonus", "trackblazer_g1_plan_bonus", "objective_race_count", "objective_conflict_count", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
+            ["rank", "score", "parent_1_id", "parent_1_rank_score", "parent_1", "parent_2_id", "parent_2_rank_score", "parent_2", "affinity_total", "affinity_base", "affinity_g1_bonus", "affinity_component_score", "parent_parent_common_g1", "parent_1_only_g1", "parent_2_only_g1", "optimal_g1_plan_bonus", "trackblazer_g1_plan_bonus", "objective_race_count", "objective_conflict_count", "g1_win_probability_cutoff", "g1_below_win_cutoff_count", "distance_status", "distance_tier", "distance_stars", "distance_carriers", "distance_parent_carriers", "distance_support", "distance_initial_required", "distance_initial_met", "distance_initial_rank", "distance_probability_a", "distance_probability_s", "surface_status", "surface_tier", "surface_stars", "surface_carriers", "surface_initial_rank", "surface_probability_a", "surface_probability_s", "style_initial_rank", "style_probability_a", "style_probability_s", "blue", "distance_s", "surface_aptitude", "pink_other", "pink", "white_skill", "race_scenario", "unique"],
         )
 
         future_csv_rows = [

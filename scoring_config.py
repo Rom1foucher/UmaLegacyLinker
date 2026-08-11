@@ -442,6 +442,16 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         raise ScoringConfigError(
             "scenario_inheritance.per_event_probability_cap doit être compris entre 0 (exclu) et 1."
         )
+    future_gp = _require_dict(config, ("future_grandparent_heuristics",))
+    g1_cutoff = future_gp.get("g1_win_probability_cutoff")
+    if (
+        isinstance(g1_cutoff, bool)
+        or not isinstance(g1_cutoff, (int, float))
+        or not 0.0 <= float(g1_cutoff) <= 1.0
+    ):
+        raise ScoringConfigError(
+            "future_grandparent_heuristics.g1_win_probability_cutoff doit être compris entre 0 et 1."
+        )
     for index, (probability, utility) in enumerate(white_inheritance["distinct_skill_probability_curve"]):
         if float(probability) > 1:
             raise ScoringConfigError(

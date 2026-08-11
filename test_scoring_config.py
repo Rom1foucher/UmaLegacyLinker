@@ -73,7 +73,7 @@ class ScoringConfigTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(migrated["schema_version"], 21)
+        self.assertEqual(migrated["schema_version"], 22)
         self.assertEqual(migrated["race_factor"]["base_per_star_quality"], 0.04)
         self.assertNotIn("scenario_per_star_quality", migrated["race_factor"])
 

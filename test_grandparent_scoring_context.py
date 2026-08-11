@@ -8,6 +8,7 @@ from parent_optimizer import (
 )
 from uma_moe import (
     _final_parent_affinity_potential,
+    _future_parent_training_aptitudes,
     _full_production_affinity,
     _opposing_white_coverage,
     _prune_locked_surface_hard_filter,
@@ -127,14 +128,45 @@ def test_projected_final_and_production_affinity_remain_distinct_gp_diagnostics(
 
     # These values remain useful as separate affinity diagnostics even though the
     # simple future-GP factor score no longer converts either one into proc odds.
-    assert gp1_final == 11.0
-    assert gp2_final == 11.0
+    assert gp1_final == 15.0
+    assert gp2_final == 10.0
     assert final["race_affinity_plan"]["common_g1_names"] == ["B"]
     assert final["race_affinity_plan"]["left_only_g1_names"] == ["A", "C"]
     assert final["race_affinity_plan"]["right_only_g1_names"] == ["D"]
     assert final["race_affinity_plan"]["exact_bonus_if_all_won"] == 15
     assert gp1_production > gp1_final
     assert gp2_production > gp2_final
+
+
+def test_future_parent_training_aptitudes_include_selected_gp_lineage_sparks():
+    target = {
+        "training_aptitudes": {
+            "surface": {
+                "turf": {"base_rank": 7, "initial_rank": 7},
+                "dirt": {"base_rank": 1, "initial_rank": 1},
+            },
+            "distance": {
+                "sprint": {"base_rank": 1, "initial_rank": 1},
+                "mile": {"base_rank": 5, "initial_rank": 5},
+                "medium": {"base_rank": 7, "initial_rank": 7},
+                "long": {"base_rank": 2, "initial_rank": 2},
+            },
+        }
+    }
+    gp1 = member(3, [])
+    gp2 = member(4, [])
+    gp1["factors"] = {
+        "by_type": {"red_aptitude": [{"name": "Dirt", "stars": 3}]}
+    }
+    gp2["factors"] = {
+        "by_type": {"red_aptitude": [{"name": "Dirt", "stars": 3}]}
+    }
+
+    profile = _future_parent_training_aptitudes(target, gp1, gp2)
+
+    assert profile["surface"]["dirt"]["inherited_stars"] == 6
+    assert profile["surface"]["dirt"]["initial_rank_label"] == "E"
+    assert profile["distance"]["medium"]["initial_rank_label"] == "A"
 
 
 def test_future_gp_pink_uses_simple_quality_model_without_s_probability():
@@ -387,3 +419,6 @@ def test_external_parent_pair_output_exposes_complete_selectable_branches():
 class GrandparentG1DiagnosticTests(unittest.TestCase):
     def test_shared_and_one_sided_g1_diagnostic(self):
         test_projected_final_and_production_affinity_remain_distinct_gp_diagnostics()
+
+    def test_training_aptitudes(self):
+        test_future_parent_training_aptitudes_include_selected_gp_lineage_sparks()

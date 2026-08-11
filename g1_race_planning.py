@@ -11,6 +11,139 @@ RACE_PERMISSION_YEARS: dict[int, tuple[int, ...]] = {
     4: (3,),
 }
 
+INDEPENDENT_TRAINING_STREAK_PENALTIES: dict[int, float] = {
+    3: 0.10,
+    4: 0.25,
+    5: 0.35,
+    6: 0.50,
+}
+
+
+def distance_type_for_meters(distance: Any) -> str | None:
+    try:
+        meters = int(distance)
+    except (TypeError, ValueError):
+        return None
+    if meters <= 0:
+        return None
+    if meters <= 1400:
+        return "sprint"
+    if meters <= 1800:
+        return "mile"
+    if meters <= 2400:
+        return "medium"
+    return "long"
+
+
+def surface_for_ground(ground: Any) -> str | None:
+    try:
+        value = int(ground)
+    except (TypeError, ValueError):
+        return None
+    return {1: "turf", 2: "dirt"}.get(value)
+
+
+def independent_training_win_probability(
+    distance_rank: Any,
+    surface_rank: Any,
+) -> float | None:
+    """Return the Independent Training win table value for two aptitudes.
+
+    The source table treats A and S identically and deliberately reaches 110%
+    for A/A.  Keeping that headroom matters because race-streak penalties are
+    subtracted afterwards.
+    """
+
+    try:
+        distance = min(7, max(1, int(distance_rank)))
+        surface = min(7, max(1, int(surface_rank)))
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(1.10, (distance + surface - 3) * 0.10))
+
+
+def independent_training_streak_penalty(consecutive_race_index: Any) -> float:
+    try:
+        count = max(1, int(consecutive_race_index))
+    except (TypeError, ValueError):
+        count = 1
+    if count >= 6:
+        return INDEPENDENT_TRAINING_STREAK_PENALTIES[6]
+    return INDEPENDENT_TRAINING_STREAK_PENALTIES.get(count, 0.0)
+
+
+def _race_win_probability(
+    race: dict[str, Any],
+    training_aptitudes: dict[str, Any] | None,
+) -> float | None:
+    if not isinstance(training_aptitudes, dict):
+        return None
+    distance = str(race.get("distance_type") or "").strip().lower()
+    surface = str(race.get("surface") or "").strip().lower()
+    if not distance or not surface:
+        return None
+    distance_payload = (training_aptitudes.get("distance") or {}).get(distance)
+    surface_payload = (training_aptitudes.get("surface") or {}).get(surface)
+
+    def rank(value: Any) -> Any:
+        if isinstance(value, dict):
+            return value.get("initial_rank", value.get("rank"))
+        return value
+
+    return independent_training_win_probability(
+        rank(distance_payload),
+        rank(surface_payload),
+    )
+
+
+def apply_independent_training_cutoff(
+    races: list[dict[str, Any]],
+    *,
+    training_aptitudes: dict[str, Any] | None,
+    win_probability_cutoff: float | None,
+) -> None:
+    """Annotate races for binary Independent Training G1 eligibility.
+
+    Missing course metadata keeps the legacy behaviour instead of silently
+    deleting old/imported G1 records that cannot yet be resolved through MDB.
+    """
+
+    cutoff = (
+        None
+        if win_probability_cutoff is None
+        else max(0.0, min(1.10, float(win_probability_cutoff)))
+    )
+    for race in races:
+        base_probability = _race_win_probability(race, training_aptitudes)
+        race["independent_training_base_win_probability"] = base_probability
+        race["independent_training_win_probability_cutoff"] = cutoff
+        race["independent_training_probability_known"] = base_probability is not None
+        base_passed = (
+            None
+            if base_probability is None or cutoff is None
+            else base_probability + 1e-12 >= cutoff
+        )
+        race["independent_training_base_cutoff_passed"] = base_passed
+        if base_passed is not None:
+            race["effective_affinity_bonus"] = (
+                int(race.get("affinity_bonus") or 0) if base_passed else 0
+            )
+
+
+def _effective_race_value(
+    race: dict[str, Any],
+    consecutive_race_index: int,
+) -> tuple[int, float | None, float, bool]:
+    bonus = max(0, int(race.get("affinity_bonus") or 0))
+    base = race.get("independent_training_base_win_probability")
+    cutoff = race.get("independent_training_win_probability_cutoff")
+    penalty = independent_training_streak_penalty(consecutive_race_index)
+    if base is None or cutoff is None:
+        return bonus, None, penalty, True
+    effective = max(0.0, float(base) - penalty)
+    eligible = effective + 1e-12 >= float(cutoff)
+    return bonus if eligible else 0, effective, penalty, eligible
+
 
 def years_for_race_permissions(values: Any) -> list[int]:
     """Translate MDB ``race_permission`` values into career years.
@@ -180,41 +313,41 @@ def _phase_options(
             index,
         ),
     )
-    best_by_mask: dict[int, dict[str, Any]] = {}
+    options: list[dict[str, Any]] = []
+    empty_profile = (0, 0, 0, 0, 0, 0)
+    race_value_profiles = {
+        index: tuple(
+            _effective_race_value(races[index], run_position)[0]
+            for run_position in range(1, 7)
+        )
+        for index in ordered
+    }
 
     def visit(
         position: int,
         used_years: set[int],
         assignments: list[tuple[int, int]],
-        bonus: int,
     ) -> None:
         if position >= len(ordered):
             mask = sum(1 << (year - 1) for year in used_years)
-            candidate = {
+            options.append({
                 "mask": mask,
                 "assignments": tuple(sorted(assignments)),
-                "bonus": bonus,
                 "race_count": len(assignments),
-            }
-            previous = best_by_mask.get(mask)
-            candidate_score = (bonus, -len(assignments))
-            previous_score = (
-                (int(previous["bonus"]), -int(previous["race_count"]))
-                if previous is not None
-                else None
-            )
-            if previous_score is None or candidate_score > previous_score:
-                best_by_mask[mask] = candidate
+                "affinity_race_count": sum(
+                    int(races[index].get("affinity_bonus") or 0) > 0
+                    for _year, index in assignments
+                ),
+            })
             return
 
         race_index = ordered[position]
         available_years = sorted(
             {year for year, _month, _half in slot_keys[race_index]}
         )
-        race_bonus = int(races[race_index].get("affinity_bonus") or 0)
         mandatory = bool(races[race_index].get("mandatory_objective"))
         if not mandatory:
-            visit(position + 1, used_years, assignments, bonus)
+            visit(position + 1, used_years, assignments)
         for year in available_years:
             if year in used_years:
                 continue
@@ -224,14 +357,37 @@ def _phase_options(
                 position + 1,
                 used_years,
                 assignments,
-                bonus + race_bonus,
             )
             assignments.pop()
             used_years.remove(year)
 
-    visit(0, set(), [], 0)
+    visit(0, set(), [])
+    # Many assignments differ only by the concrete race chosen for a year but
+    # produce exactly the same value for every possible incoming streak. Keep
+    # one representative per value profile so the 24-phase DP stays fast while
+    # preserving the binary cutoff semantics.
+    compact: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for option in options:
+        assignments_by_year = {
+            year: race_index for year, race_index in option["assignments"]
+        }
+        value_profile = tuple(
+            race_value_profiles.get(race_index, empty_profile)
+            for race_index in (
+                assignments_by_year.get(1),
+                assignments_by_year.get(2),
+                assignments_by_year.get(3),
+            )
+        )
+        key = (
+            int(option["mask"]),
+            int(option["affinity_race_count"]),
+            int(option["race_count"]),
+            value_profile,
+        )
+        compact.setdefault(key, option)
     return sorted(
-        best_by_mask.values(),
+        compact.values(),
         key=lambda option: (
             int(option["mask"]),
             tuple(option["assignments"]),
@@ -284,7 +440,30 @@ def _streak_lengths(
     return result
 
 
-def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
+def _streak_positions(
+    planned_slots: set[tuple[int, int, int]],
+) -> dict[tuple[int, int, int], int]:
+    """Map each race turn to its ordinal position inside the current streak."""
+
+    result: dict[tuple[int, int, int], int] = {}
+    for year in (1, 2, 3):
+        current = 0
+        for month in range(1, 13):
+            for half in (1, 2):
+                slot = (year, month, half)
+                if slot in planned_slots:
+                    current += 1
+                    result[slot] = current
+                else:
+                    current = 0
+    return result
+
+
+def optimize_race_schedule(
+    races: list[dict[str, Any]],
+    *,
+    max_affinity_races: int | None = None,
+) -> dict[str, Any]:
     """Build an optimal, executable three-year G1 schedule.
 
     The objective is lexicographic: maximise obtainable affinity, minimise
@@ -311,18 +490,30 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
         phases[next(iter(phase_values))].append(index)
 
     # state -> (bonus, 4+ turns, 3+ turns, 2+ turns, race count, choices)
+    budget = (
+        None
+        if max_affinity_races is None
+        else max(0, int(max_affinity_races))
+    )
     states: dict[
-        tuple[int, int, int],
+        tuple[int, int, int, int],
         tuple[int, int, int, int, int, tuple[tuple[tuple[int, int], ...], ...]],
-    ] = {(0, 0, 0): (0, 0, 0, 0, 0, ())}
+    ] = {(0, 0, 0, 0): (0, 0, 0, 0, 0, ())}
     for phase in range(24):
         options = _phase_options(phases[phase], races, slot_keys)
         next_states: dict[
-            tuple[int, int, int],
+            tuple[int, int, int, int],
             tuple[int, int, int, int, int, tuple[tuple[tuple[int, int], ...], ...]],
         ] = {}
-        for runs, current in states.items():
+        for state, current in states.items():
+            runs = state[:3]
+            affinity_race_count = state[3]
             for option in options:
+                new_affinity_race_count = affinity_race_count + int(
+                    option["affinity_race_count"]
+                )
+                if budget is not None and new_affinity_race_count > budget:
+                    continue
                 new_runs: list[int] = []
                 added_four = 0
                 added_three = 0
@@ -337,15 +528,19 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
                     else:
                         new_run = 0
                     new_runs.append(new_run)
+                effective_bonus = sum(
+                    _effective_race_value(races[race_index], new_runs[year - 1])[0]
+                    for year, race_index in option["assignments"]
+                )
                 candidate = (
-                    current[0] + int(option["bonus"]),
+                    current[0] + effective_bonus,
                     current[1] + added_four,
                     current[2] + added_three,
                     current[3] + added_two,
                     current[4] + int(option["race_count"]),
                     current[5] + (tuple(option["assignments"]),),
                 )
-                state_key = tuple(new_runs)
+                state_key = (*new_runs, new_affinity_race_count)
                 previous = next_states.get(state_key)
                 candidate_score = (
                     candidate[0],
@@ -413,6 +608,8 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
                 if index in incompatible_phase_indexes
                 else "objective_conflict"
                 if any(key in objective_slots for key in slot_keys[index])
+                else "below_win_cutoff"
+                if race.get("independent_training_base_cutoff_passed") is False
                 else "calendar_conflict"
             )
             excluded_races.append(race)
@@ -422,6 +619,7 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
             missing_calendar_races.append(race)
 
     streak_lengths = _streak_lengths(planned_slots)
+    streak_positions = _streak_positions(planned_slots)
     for race in scheduled_races:
         planned = race.get("planned_slot") or {}
         slot = (
@@ -430,11 +628,20 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
             int(planned.get("half") or 0),
         )
         length = streak_lengths.get(slot, 1)
+        position = streak_positions.get(slot, 1)
+        effective_bonus, effective_probability, penalty, eligible = _effective_race_value(
+            race, position
+        )
         race["consecutive_race_count"] = length
+        race["consecutive_race_index"] = position
         race["long_streak_warning"] = length >= 4
+        race["independent_training_streak_penalty"] = penalty
+        race["independent_training_effective_win_probability"] = effective_probability
+        race["independent_training_cutoff_passed"] = eligible
+        race["effective_affinity_bonus"] = effective_bonus
 
     optimal_bonus = sum(
-        int(race.get("affinity_bonus") or 0)
+        int(race.get("effective_affinity_bonus") or 0)
         for race in scheduled_races
     )
     theoretical_bonus = sum(
@@ -444,7 +651,7 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
     scheduled_affinity_races = [
         race
         for race in scheduled_races
-        if int(race.get("affinity_bonus") or 0) > 0
+        if int(race.get("effective_affinity_bonus") or 0) > 0
     ]
     scheduled_objectives = [
         race
@@ -459,6 +666,7 @@ def optimize_race_schedule(races: list[dict[str, Any]]) -> dict[str, Any]:
         "lost_bonus": max(0, theoretical_bonus - optimal_bonus),
         "optimal_race_count": len(scheduled_races),
         "optimal_affinity_race_count": len(scheduled_affinity_races),
+        "max_affinity_races": budget,
         "scheduled_objective_race_count": len(scheduled_objectives),
         "excluded_race_count": len(excluded_races),
         "missing_calendar_race_count": len(missing_calendar_races),
@@ -504,6 +712,7 @@ def _schedule_variant(
     objective_races: list[dict[str, Any]],
     *,
     include_objectives: bool,
+    max_affinity_races: int | None = None,
 ) -> dict[str, Any]:
     races = copy.deepcopy(affinity_races)
     objectives = copy.deepcopy(objective_races) if include_objectives else []
@@ -560,7 +769,10 @@ def _schedule_variant(
             }
         )
 
-    schedule = optimize_race_schedule(races)
+    schedule = optimize_race_schedule(
+        races,
+        max_affinity_races=max_affinity_races,
+    )
     return {
         "mode": "standard" if include_objectives else "trackblazer",
         "considers_objectives": include_objectives,
@@ -582,6 +794,9 @@ def build_pair_g1_diagnostic(
     target: dict[str, Any] | None = None,
     objective_races: list[dict[str, Any]] | None = None,
     bonus_per_link: int = 3,
+    training_aptitudes: dict[str, Any] | None = None,
+    win_probability_cutoff: float | None = None,
+    max_affinity_races: int | None = None,
 ) -> dict[str, Any]:
     """Describe the optimal G1 plan for a trainee built from two legacies.
 
@@ -650,6 +865,11 @@ def build_pair_g1_diagnostic(
         for name in right_only_names
     ]
     races = sorted(common + left_only + right_only, key=_race_sort_key)
+    apply_independent_training_cutoff(
+        races,
+        training_aptitudes=training_aptitudes,
+        win_probability_cutoff=win_probability_cutoff,
+    )
     exact_bonus = sum(int(item["affinity_bonus"]) for item in races)
     resolved_objectives = [
         dict(race)
@@ -660,11 +880,13 @@ def build_pair_g1_diagnostic(
         races,
         resolved_objectives,
         include_objectives=True,
+        max_affinity_races=max_affinity_races,
     )
     trackblazer_schedule = _schedule_variant(
         races,
         resolved_objectives,
         include_objectives=False,
+        max_affinity_races=max_affinity_races,
     )
     scheduled_count = int(standard_schedule["optimal_affinity_race_count"])
     target_identity = {
@@ -683,6 +905,9 @@ def build_pair_g1_diagnostic(
         "bonus_per_link": resolved_bonus,
         "shared_race_bonus": 2 * resolved_bonus,
         "one_side_race_bonus": resolved_bonus,
+        "independent_training_aptitudes": copy.deepcopy(training_aptitudes),
+        "g1_win_probability_cutoff": win_probability_cutoff,
+        "max_affinity_races": max_affinity_races,
         "common_g1_names": common_names,
         "left_only_g1_names": left_only_names,
         "right_only_g1_names": right_only_names,
@@ -706,12 +931,14 @@ def build_pair_g1_diagnostic(
         **standard_schedule,
         "formula": (
             "new trainee wins × selected legacy wins: "
-            "two matching legacies create two links; one matching legacy creates one link"
+            "two matching legacies create two links; one matching legacy creates one link; "
+            "a race contributes its full link value only when its Independent Training win "
+            "probability after streak penalty reaches the configured cutoff"
         ),
     }
 
 
-def schedule_export_summary(plan: dict[str, Any] | None) -> dict[str, int]:
+def schedule_export_summary(plan: dict[str, Any] | None) -> dict[str, Any]:
     """Return stable scalar metrics for CSV and compact diagnostic exports."""
 
     resolved = plan if isinstance(plan, dict) else {}
@@ -732,7 +959,8 @@ def schedule_export_summary(plan: dict[str, Any] | None) -> dict[str, int]:
         for race in standard.get("races") or []
         if isinstance(race, dict)
     )
-    return {
+    races = [race for race in standard.get("races") or [] if isinstance(race, dict)]
+    summary: dict[str, Any] = {
         "standard_optimal_bonus": int(standard.get("optimal_bonus") or 0),
         "trackblazer_optimal_bonus": int(
             trackblazer.get("optimal_bonus")
@@ -746,3 +974,14 @@ def schedule_export_summary(plan: dict[str, Any] | None) -> dict[str, int]:
         ),
         "objective_conflict_count": objective_conflicts,
     }
+    if resolved.get("g1_win_probability_cutoff") is not None:
+        summary.update({
+            "g1_win_probability_cutoff": resolved.get("g1_win_probability_cutoff"),
+            "known_win_probability_race_count": sum(
+                bool(race.get("independent_training_probability_known")) for race in races
+            ),
+            "below_win_cutoff_race_count": sum(
+                race.get("planning_status") == "below_win_cutoff" for race in races
+            ),
+        })
+    return summary

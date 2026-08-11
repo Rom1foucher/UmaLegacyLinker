@@ -285,7 +285,7 @@ class OnlineSearchRequest:
     uql_options: dict[str, object] | None = None
     limit: int = 500
     planned_g1_budget: int = 20
-    single_g1_weight: float = 0.6
+    g1_win_probability_cutoff: float = 0.6
     required_parent_card_id: int | None = None
     allowed_parent_card_ids: tuple[int, ...] = ()
     excluded_parent_card_ids: tuple[int, ...] = ()
@@ -703,7 +703,9 @@ def run_online_search(
             course_conditions=request.course_conditions or {},
             scoring_config_path=scoring_config,
             planned_g1_budget=max(0, min(int(request.planned_g1_budget), 40)),
-            single_g1_weight=max(0.0, min(float(request.single_g1_weight), 1.0)),
+            g1_win_probability_cutoff=max(
+                0.0, min(float(request.g1_win_probability_cutoff), 1.0)
+            ),
             top_n=max(1, int(request.top_n)),
             local_pair_mode=True,
             lineage_blue_filter=request.lineage_blue_filter,
@@ -887,7 +889,9 @@ def run_online_search(
             opposing_parent_trained_id=request.opposing_parent_trained_id,
             opposing_parent=request.opposing_parent_payload,
             planned_g1_budget=max(0, min(int(request.planned_g1_budget), 40)),
-            single_g1_weight=max(0.0, min(float(request.single_g1_weight), 1.0)),
+            g1_win_probability_cutoff=max(
+                0.0, min(float(request.g1_win_probability_cutoff), 1.0)
+            ),
             **common,
         )
     progress(100, "Recherche uma.moe terminée.")

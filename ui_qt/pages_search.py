@@ -398,7 +398,12 @@ class OnlineSearchOptionsDialog(QDialog):
             self.g1_weight.setDecimals(2)
             try:
                 self.g1_weight.setValue(
-                    float(context.store.get("uma_moe_single_g1_weight", "0.6"))
+                    float(
+                        context.store.get(
+                            "uma_moe_g1_win_probability_cutoff",
+                            context.store.get("uma_moe_single_g1_weight", "0.6"),
+                        )
+                    )
                 )
             except ValueError:
                 self.g1_weight.setValue(0.6)
@@ -592,7 +597,7 @@ class OnlineSearchOptionsDialog(QDialog):
             "planned_g1_budget": (
                 self.g1_budget.value() if self.mode == "grandparent" else 20
             ),
-            "single_g1_weight": (
+            "g1_win_probability_cutoff": (
                 self.g1_weight.value() if self.mode == "grandparent" else 0.6
             ),
             "required_parent_card_id": required,
@@ -641,7 +646,9 @@ class OnlineSearchOptionsDialog(QDialog):
                 "uma_moe_limit": values["limit"],
                 "uma_moe_response_path": values["response_path"],
                 "uma_moe_parent_g1_budget": values["planned_g1_budget"],
-                "uma_moe_single_g1_weight": values["single_g1_weight"],
+                "uma_moe_g1_win_probability_cutoff": values[
+                    "g1_win_probability_cutoff"
+                ],
                 "uma_moe_required_parent_card_id": required or 0,
                 "uma_moe_parent_allowed_card_ids": ",".join(
                     map(str, sorted(self._allowed_ids))
@@ -725,7 +732,9 @@ class OnlineSearchOptionsDialog(QDialog):
             self.opposing_extract_button.setText(t("Extraire les candidats"))
             self.opposing_picker.set_button_text(t("Parcourir…"))
             self.g1_budget_label.setText(t("G1 prévues sur le parent"))
-            self.g1_weight_label.setText(t("Valeur d’une G1 non commune"))
+            self.g1_weight_label.setText(
+                t("Chance de victoire minimale (Independent Training)")
+            )
             self._refresh_opposing_options()
         self.import_label.setText(t("Réponse JSON à classer hors ligne"))
         self.import_picker.set_button_text(t("Parcourir…"))
@@ -1333,7 +1342,7 @@ class SearchPage(QWidget):
                 uql_options=options["uql_options"],
                 limit=options["limit"],
                 planned_g1_budget=options["planned_g1_budget"],
-                single_g1_weight=options["single_g1_weight"],
+                g1_win_probability_cutoff=options["g1_win_probability_cutoff"],
                 required_parent_card_id=required,
                 allowed_parent_card_ids=options["allowed_parent_card_ids"],
                 excluded_parent_card_ids=options["excluded_parent_card_ids"],

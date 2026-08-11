@@ -20,9 +20,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from g1_race_planning import build_pair_g1_diagnostic, schedule_export_summary
+from g1_race_planning import (
+    apply_independent_training_cutoff,
+    build_pair_g1_diagnostic,
+    optimize_race_schedule,
+    schedule_export_summary,
+)
 from legacy_linker import MasterResolver, grouped_factors
 from parent_optimizer import (
+    APTITUDE_LABELS,
     AffinityResolver,
     DISTANCE_FACTOR_NAMES,
     STYLE_FACTOR_NAMES,
@@ -111,6 +117,55 @@ def _future_gp_pair_g1_score(final_parent_affinity: dict[str, Any]) -> float:
         return 0.0
     planned_bonus = max(0.0, float(final_parent_affinity.get("planned_g1_bonus") or 0.0))
     return min(100.0, 100.0 * planned_bonus / maximum_bonus)
+
+
+def _future_parent_training_aptitudes(
+    target_parent: dict[str, Any],
+    gp1: dict[str, Any],
+    gp2: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve the trainee's Independent Training aptitudes for every G1 type."""
+
+    base = copy.deepcopy(target_parent.get("training_aptitudes") or {})
+    result: dict[str, Any] = {
+        "surface": dict(base.get("surface") or {}),
+        "distance": dict(base.get("distance") or {}),
+    }
+    factor_names = {
+        "surface": {"turf": "Turf", "dirt": "Dirt"},
+        "distance": {
+            "sprint": "Sprint",
+            "mile": "Mile",
+            "medium": "Medium",
+            "long": "Long",
+        },
+    }
+    members = _lineage_members(gp1, "gp1") + _lineage_members(gp2, "gp2")
+    for dimension, names in factor_names.items():
+        for key, factor_name in names.items():
+            payload = result[dimension].get(key)
+            if not isinstance(payload, dict):
+                continue
+            base_rank = int(payload.get("base_rank", payload.get("initial_rank", 0)) or 0)
+            total_stars = sum(
+                max(0, int(factor.get("stars") or 0))
+                for member, _position, _role in members
+                for factor in ((member.get("factors") or {}).get("by_type") or {}).get(
+                    "red_aptitude", []
+                )
+                if str(factor.get("name") or "") == factor_name
+            )
+            initial_rank = _initial_aptitude_rank(base_rank, total_stars)
+            result[dimension][key] = {
+                **payload,
+                "factor_name": factor_name,
+                "base_rank": base_rank,
+                "base_rank_label": APTITUDE_LABELS.get(base_rank, str(base_rank)),
+                "inherited_stars": total_stars,
+                "initial_rank": initial_rank,
+                "initial_rank_label": APTITUDE_LABELS.get(initial_rank, str(initial_rank)),
+            }
+    return result
 
 
 def _matching_factor_stars(
@@ -367,66 +422,130 @@ def _planned_future_parent_g1(
     opposing_parent: dict[str, Any],
     *,
     budget: int,
-    single_g1_weight: float,
+    training_aptitudes: dict[str, Any] | None = None,
+    win_probability_cutoff: float | None = None,
+    objective_races: Iterable[dict[str, Any]] | None = None,
+    bonus_per_link: int = 3,
 ) -> dict[str, Any]:
-    """Build a deterministic projected G1 history for an untrained parent.
-
-    Races overlapping two or three visible relatives are always selected first.
-    Single-link races are retained only in proportion to the configured
-    realization factor.  This turns the former fractional G1 heuristic into a
-    concrete branch that the canonical six-member evaluator can consume.
-    """
+    """Build an executable cutoff-aware G1 history for an untrained parent."""
     capped_budget = max(0, min(int(budget), 40))
-    single_weight = max(0.0, min(float(single_g1_weight), 1.0))
-    sources = {
-        "gp1": _member_g1(gp1),
-        "gp2": _member_g1(gp2),
-        "opposing_parent": _member_g1(opposing_parent),
-    }
-    races: dict[str, list[str]] = {}
-    for source, names in sources.items():
-        for name in names:
-            races.setdefault(str(name), []).append(source)
+    sources = {"gp1": gp1, "gp2": gp2, "opposing_parent": opposing_parent}
+    races_by_name: dict[str, dict[str, Any]] = {}
+    for source, member in sources.items():
+        wins = member.get("g1_wins") or {}
+        details = {
+            str(detail.get("name") or ""): detail
+            for detail in wins.get("details") or []
+            if isinstance(detail, dict) and str(detail.get("name") or "")
+        }
+        for raw_name in wins.get("names") or []:
+            name = str(raw_name)
+            race = races_by_name.setdefault(
+                name,
+                {**copy.deepcopy(details.get(name) or {}), "name": name, "owners": []},
+            )
+            race["owners"].append(source)
+            slots = {
+                (int(slot["year"]), int(slot["month"]), int(slot["half"]))
+                for detail in (race, details.get(name) or {})
+                for slot in detail.get("schedule_slots") or []
+                if isinstance(slot, dict)
+                and all(key in slot for key in ("year", "month", "half"))
+            }
+            race["schedule_slots"] = [
+                {"year": year, "month": month, "half": half}
+                for year, month, half in sorted(slots)
+            ]
 
-    shared = sorted(
-        ((name, owners) for name, owners in races.items() if len(owners) >= 2),
-        key=lambda item: (-len(item[1]), item[0]),
+    races = []
+    for race in races_by_name.values():
+        race["owner_count"] = len(race["owners"])
+        race["affinity_bonus"] = len(race["owners"]) * max(0, int(bonus_per_link))
+        races.append(race)
+    apply_independent_training_cutoff(
+        races,
+        training_aptitudes=training_aptitudes,
+        win_probability_cutoff=win_probability_cutoff,
     )
-    selected_shared = shared[:capped_budget]
-    remaining = max(0, capped_budget - len(selected_shared))
 
-    single_buckets: dict[str, list[str]] = {key: [] for key in sources}
-    for name, owners in races.items():
-        if len(owners) == 1:
-            single_buckets[owners[0]].append(name)
-    for names in single_buckets.values():
-        names.sort()
-    single_available = sum(len(names) for names in single_buckets.values())
-    single_target = min(remaining, int(round(single_available * single_weight)))
-    selected_single: list[tuple[str, list[str]]] = []
-    while len(selected_single) < single_target:
-        progressed = False
-        for owner in ("gp1", "gp2", "opposing_parent"):
-            bucket = single_buckets[owner]
-            if bucket and len(selected_single) < single_target:
-                selected_single.append((bucket.pop(0), [owner]))
-                progressed = True
-        if not progressed:
-            break
+    for objective in objective_races or []:
+        if not isinstance(objective, dict):
+            continue
+        objective_name = str(objective.get("name") or "")
+        match = next(
+            (
+                race
+                for race in races
+                if (
+                    objective.get("race_id") not in (None, 0, "0")
+                    and race.get("race_id") == objective.get("race_id")
+                )
+                or (objective_name and race.get("name") == objective_name)
+            ),
+            None,
+        )
+        if match is None:
+            match = {
+                **copy.deepcopy(objective),
+                "name": objective_name,
+                "owners": [],
+                "owner_count": 0,
+                "affinity_bonus": 0,
+            }
+            races.append(match)
+        match["mandatory_objective"] = True
+        match["objective"] = True
+        match["objective_slot"] = copy.deepcopy(objective.get("objective_slot"))
+        match["schedule_slots"] = copy.deepcopy(objective.get("schedule_slots") or [])
 
-    selected = selected_shared + selected_single
+    schedule = optimize_race_schedule(
+        races,
+        max_affinity_races=capped_budget,
+    )
+    selected_races = [
+        race
+        for race in schedule["scheduled_races"]
+        if int(race.get("effective_affinity_bonus") or 0) > 0
+    ]
+    remaining_budget = max(0, capped_budget - len(selected_races))
+    unresolved_fallback = sorted(
+        (
+            race
+            for race in schedule["missing_calendar_races"]
+            if int(race.get("affinity_bonus") or 0) > 0
+            and race.get("independent_training_base_win_probability") is None
+        ),
+        key=lambda race: (
+            -int(race.get("affinity_bonus") or 0),
+            str(race.get("name") or ""),
+        ),
+    )[:remaining_budget]
+    for race in unresolved_fallback:
+        race["planning_status"] = "assumed_eligible_missing_mdb_metadata"
+        race["independent_training_cutoff_passed"] = True
+        race["effective_affinity_bonus"] = int(race.get("affinity_bonus") or 0)
+    selected_races.extend(unresolved_fallback)
+    selected_shared = [race for race in selected_races if int(race.get("owner_count") or 0) >= 2]
+    selected_single = [race for race in selected_races if int(race.get("owner_count") or 0) == 1]
+    single_available = sum(int(race.get("owner_count") or 0) == 1 for race in races)
     return {
-        "names": [name for name, _owners in selected],
+        "names": [str(race.get("name") or "") for race in selected_races],
         "details": [
-            {"name": name, "matching_members": owners, "link_count": len(owners)}
-            for name, owners in selected
+            {
+                **copy.deepcopy(race),
+                "matching_members": list(race.get("owners") or []),
+                "link_count": int(race.get("owner_count") or 0),
+            }
+            for race in selected_races
         ],
         "budget": capped_budget,
-        "single_g1_weight": single_weight,
+        "single_g1_weight": None,
+        "g1_win_probability_cutoff": win_probability_cutoff,
         "shared_selected": len(selected_shared),
         "single_available": single_available,
         "single_selected": len(selected_single),
-        "selected_count": len(selected),
+        "selected_count": len(selected_races),
+        "schedule": schedule,
     }
 
 
@@ -437,7 +556,10 @@ def _project_future_parent_branch(
     opposing_parent: dict[str, Any],
     *,
     planned_g1_budget: int,
-    single_g1_weight: float,
+    training_aptitudes: dict[str, Any] | None = None,
+    g1_win_probability_cutoff: float | None = None,
+    objective_races: Iterable[dict[str, Any]] | None = None,
+    single_g1_weight: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Create the known portion of the future parent branch.
 
@@ -449,7 +571,13 @@ def _project_future_parent_branch(
         gp2,
         opposing_parent,
         budget=planned_g1_budget,
-        single_g1_weight=single_g1_weight,
+        training_aptitudes=training_aptitudes,
+        win_probability_cutoff=(
+            g1_win_probability_cutoff
+            if g1_win_probability_cutoff is not None
+            else single_g1_weight
+        ),
+        objective_races=objective_races,
     )
     projected = {
         **copy.deepcopy(target_parent),
@@ -2764,9 +2892,11 @@ def _final_parent_affinity_potential(
     gp2: dict[str, Any],
     g1_bonus_value: int,
     planned_g1_budget: int,
-    single_g1_weight: float = 0.6,
+    single_g1_weight: float | None = None,
     fixed_origin: str = "local",
     candidate_origin: str = "remote",
+    target_parent: dict[str, Any] | None = None,
+    g1_win_probability_cutoff: float | None = None,
 ) -> dict[str, Any]:
     """Estimate the future parent branch in the final Ace run.
 
@@ -2774,11 +2904,10 @@ def _final_parent_affinity_potential(
     parents of those grandparents are deliberately excluded: they help generate
     the future parent, but are no longer present in the Ace's visible lineage.
 
-    The future parent's actual race list does not exist yet. We therefore expose
-    a budgeted optimistic estimate: common GP1/GP2 G1s are selected first because
-    one target-parent win would create two +3 links; remaining race slots create
-    one +3 link each. The other final parent and its cross-link are unknown and
-    are not included.
+    The future parent's actual race list does not exist yet. We therefore build
+    an executable budgeted schedule. Each eligible race keeps its full +3/+6
+    link value, but only if the trainee's Independent Training win probability,
+    after the applicable consecutive-race penalty, reaches the configured cutoff.
     """
     budget = max(0, min(int(planned_g1_budget), 40))
     fixed_chara = int(gp1.get("chara_id") or 0)
@@ -2790,6 +2919,29 @@ def _final_parent_affinity_potential(
 
     fixed_g1 = _member_g1(gp1)
     candidate_g1 = _member_g1(gp2)
+    target_payload = (
+        copy.deepcopy(target_parent)
+        if isinstance(target_parent, dict)
+        else (
+            resolver.card_details_for_chara(target_parent_chara)
+            if hasattr(resolver, "card_details_for_chara")
+            else {"chara_id": target_parent_chara}
+        )
+    )
+    training_aptitudes = _future_parent_training_aptitudes(
+        target_payload,
+        gp1,
+        gp2,
+    )
+    cutoff_source = (
+        g1_win_probability_cutoff
+        if g1_win_probability_cutoff is not None
+        else single_g1_weight
+    )
+    resolved_cutoff = max(
+        0.0,
+        min(1.10, float(0.60 if cutoff_source is None else cutoff_source)),
+    )
     race_affinity_plan = build_pair_g1_diagnostic(
         gp1,
         gp2,
@@ -2797,52 +2949,73 @@ def _final_parent_affinity_potential(
         right_label="gp_2",
         left_origin=fixed_origin,
         right_origin=candidate_origin,
-        target=(
-            resolver.card_details_for_chara(target_parent_chara)
-            if hasattr(resolver, "card_details_for_chara")
-            else {"chara_id": target_parent_chara}
-        ),
+        target=target_payload,
         objective_races=(
             resolver.objective_races(target_parent_chara)
             if hasattr(resolver, "objective_races")
             else []
         ),
         bonus_per_link=g1_bonus_value,
+        training_aptitudes=training_aptitudes,
+        win_probability_cutoff=resolved_cutoff,
+        max_affinity_races=budget,
     )
     common = list(race_affinity_plan["common_g1_names"])
     fixed_only = list(race_affinity_plan["left_only_g1_names"])
     candidate_only = list(race_affinity_plan["right_only_g1_names"])
 
-    double_count = min(len(common), budget)
-    remaining = max(0, budget - double_count)
-    single_pool_count = len(fixed_only) + len(candidate_only)
-    single_count = min(single_pool_count, remaining)
-    single_weight = max(0.0, min(float(single_g1_weight), 1.0))
-
+    standard_schedule = (
+        (race_affinity_plan.get("schedule_variants") or {}).get("standard")
+        or race_affinity_plan
+    )
+    selected_races = [
+        race
+        for race in standard_schedule.get("scheduled_races") or []
+        if int(race.get("effective_affinity_bonus") or 0) > 0
+    ]
+    remaining_budget = max(0, budget - len(selected_races))
+    unresolved_fallback = sorted(
+        (
+            race
+            for race in standard_schedule.get("missing_calendar_races") or []
+            if int(race.get("affinity_bonus") or 0) > 0
+            and race.get("independent_training_base_win_probability") is None
+        ),
+        key=lambda race: (
+            -int(race.get("affinity_bonus") or 0),
+            str(race.get("name") or ""),
+        ),
+    )[:remaining_budget]
+    for race in unresolved_fallback:
+        race["planning_status"] = "assumed_eligible_missing_mdb_metadata"
+        race["independent_training_cutoff_passed"] = True
+        race["effective_affinity_bonus"] = int(race.get("affinity_bonus") or 0)
+    selected_races.extend(unresolved_fallback)
+    double_count = sum(int(race.get("owner_count") or 0) >= 2 for race in selected_races)
+    single_count = sum(int(race.get("owner_count") or 0) == 1 for race in selected_races)
     # The selected GP1/GP2 remain visible grandparents in the final Ace lineage.
     # Their direct pink/white inheritance odds therefore use their projected
     # final GP coefficients, not the compatibility of the intermediate run that
-    # creates the target parent. Common races benefit both GP links; one-sided
-    # races are distributed proportionally across the available unique pools.
-    if single_pool_count > 0:
-        fixed_single_share = single_count * len(fixed_only) / single_pool_count
-        candidate_single_share = single_count * len(candidate_only) / single_pool_count
-    else:
-        fixed_single_share = 0.0
-        candidate_single_share = 0.0
-    fixed_projected_g1_links = double_count + fixed_single_share * single_weight
-    candidate_projected_g1_links = double_count + candidate_single_share * single_weight
+    # creates the target parent. Common races benefit both GP links; each
+    # one-sided race benefits only the GP that already owns it.
+    fixed_single_share = sum(
+        (race.get("source_sides") or []) == ["left"] for race in selected_races
+    )
+    candidate_single_share = sum(
+        (race.get("source_sides") or []) == ["right"] for race in selected_races
+    )
+    fixed_projected_g1_links = double_count + fixed_single_share
+    candidate_projected_g1_links = double_count + candidate_single_share
     fixed_projected_inheritance = fixed_triple + fixed_projected_g1_links * g1_bonus_value
     candidate_projected_inheritance = candidate_triple + candidate_projected_g1_links * g1_bonus_value
 
     common_bonus = double_count * 2 * g1_bonus_value
     single_bonus_exact = single_count * g1_bonus_value
-    single_bonus_weighted = single_bonus_exact * single_weight
-    planned_bonus = common_bonus + single_bonus_weighted
+    planned_bonus = common_bonus + single_bonus_exact
     planned_bonus_exact_if_all_won = common_bonus + single_bonus_exact
     theoretical_unbounded_bonus = (
         len(common) * 2 * g1_bonus_value
-        + (len(fixed_only) + len(candidate_only)) * g1_bonus_value * single_weight
+        + (len(fixed_only) + len(candidate_only)) * g1_bonus_value
     )
     theoretical_unbounded_bonus_exact = (len(fixed_g1) + len(candidate_g1)) * g1_bonus_value
 
@@ -2861,10 +3034,12 @@ def _final_parent_affinity_potential(
         "race_affinity_plan": race_affinity_plan,
         "planned_double_overlap_races": double_count,
         "planned_single_overlap_races": single_count,
-        "single_g1_weight": single_weight,
+        "single_g1_weight": None,
+        "g1_win_probability_cutoff": resolved_cutoff,
+        "independent_training_aptitudes": training_aptitudes,
         "planned_common_g1_bonus": common_bonus,
         "planned_single_g1_bonus_exact": single_bonus_exact,
-        "planned_single_g1_bonus_weighted": single_bonus_weighted,
+        "planned_single_g1_bonus_weighted": single_bonus_exact,
         "planned_g1_bonus": planned_bonus,
         "planned_g1_bonus_exact_if_all_won": planned_bonus_exact_if_all_won,
         "potential_total": base + planned_bonus,
@@ -2876,20 +3051,21 @@ def _final_parent_affinity_potential(
         "projected_gp1_inheritance_modifier": {
             "base_triple": fixed_triple,
             "planned_common_links": double_count,
-            "planned_single_links_weighted": fixed_single_share * single_weight,
+            "planned_single_links_weighted": fixed_single_share,
             "total": fixed_projected_inheritance,
         },
         "projected_gp2_inheritance_modifier": {
             "base_triple": candidate_triple,
             "planned_common_links": double_count,
-            "planned_single_links_weighted": candidate_single_share * single_weight,
+            "planned_single_links_weighted": candidate_single_share,
             "total": candidate_projected_inheritance,
         },
         "g1_bonus_per_link": g1_bonus_value,
         "other_final_parent_links_included": False,
         "formula": (
             "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2) "
-            "+ budgeted G1(parent,GP1/GP2), with one-sided G1 discounted by the configured realization factor; "
+            "+ budgeted G1(parent,GP1/GP2), retaining full +3/+6 value only above the "
+            "Independent Training win-probability cutoff after streak penalties; "
             "GP ancestors and the unknown other final parent are excluded"
         ),
     }
@@ -2910,13 +3086,15 @@ def _identity(member: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _g1_schedule_csv_fields(plan: dict[str, Any] | None) -> dict[str, int]:
+def _g1_schedule_csv_fields(plan: dict[str, Any] | None) -> dict[str, Any]:
     metrics = schedule_export_summary(plan)
     return {
         "optimal_g1_plan_bonus": metrics["standard_optimal_bonus"],
         "trackblazer_g1_plan_bonus": metrics["trackblazer_optimal_bonus"],
         "objective_race_count": metrics["objective_race_count"],
         "objective_conflict_count": metrics["objective_conflict_count"],
+        "g1_win_probability_cutoff": metrics.get("g1_win_probability_cutoff"),
+        "g1_below_win_cutoff_count": metrics.get("below_win_cutoff_race_count", 0),
     }
 
 
@@ -2964,7 +3142,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "local_id", "local_candidate", "local_rank_score",
         "friend_code", "trainer_name", "candidate", "rank_score",
         "final_parent_base", "planned_g1_budget", "planned_g1_bonus",
-        "planned_g1_bonus_exact", "single_g1_weight", "final_parent_potential",
+        "planned_g1_bonus_exact", "g1_win_probability_cutoff",
+        "g1_below_win_cutoff_count", "final_parent_potential",
         "affinity_component", "g1_potential_component", "production_run_affinity",
         "production_run_scored_value", "common_gp_g1_count", "local_only_g1_count",
         "remote_only_g1_count", "common_gp_g1_races", "local_only_g1_races",
@@ -3010,7 +3189,8 @@ def rank_online_grandparent_pairs(
     course_conditions: dict[str, int | list[int] | tuple[int, ...] | set[int] | None] | None = None,
     scoring_config_path: str | Path | None = None,
     planned_g1_budget: int = 24,
-    single_g1_weight: float = 0.6,
+    single_g1_weight: float | None = None,
+    g1_win_probability_cutoff: float | None = None,
     top_n: int = 50,
     api_operation: dict[str, Any] | None = None,
     required_main_factors: Iterable[dict[str, Any]] | None = None,
@@ -3247,7 +3427,24 @@ def rank_online_grandparent_pairs(
         production_thresholds = online_cfg.get("production_run_affinity_thresholds") or affinity_cfg.get("parent_pair_thresholds") or [[0, 0], [151, 100]]
         triple_thresholds = online_cfg.get("gp_triple_preselection_thresholds") or [[0, 0], [8, 35], [16, 70], [24, 100]]
         g1_thresholds = online_cfg.get("candidate_g1_thresholds") or [[0, 0], [6, 30], [12, 65], [16, 85], [20, 100]]
-        single_g1_weight = max(0.0, min(float(single_g1_weight), 1.0))
+        configured_win_cutoff = float(
+            (config.get("future_grandparent_heuristics") or {}).get(
+                "g1_win_probability_cutoff", 0.60
+            )
+        )
+        resolved_g1_win_probability_cutoff = max(
+            0.0,
+            min(
+                1.10,
+                float(g1_win_probability_cutoff)
+                if g1_win_probability_cutoff is not None
+                else (
+                    configured_win_cutoff
+                    if single_g1_weight is None
+                    else float(single_g1_weight)
+                ),
+            ),
+        )
 
         def full_score_threshold(points: Any) -> float | None:
             candidates: list[float] = []
@@ -3452,10 +3649,11 @@ def rank_online_grandparent_pairs(
                 gp1,
                 gp2,
                 g1_bonus_value,
-                planned_g1_budget,
-                single_g1_weight,
+                planned_g1_budget=planned_g1_budget,
                 fixed_origin="local",
                 candidate_origin=("local" if local_pair_mode else "remote"),
+                target_parent=target_parent,
+                g1_win_probability_cutoff=resolved_g1_win_probability_cutoff,
             )
             final_parent_affinity["base_full_score_at"] = final_full_score_at
             production_affinity = _full_production_affinity(
@@ -3544,7 +3742,11 @@ def rank_online_grandparent_pairs(
                     gp2,
                     contextual_opposing_parent,
                     planned_g1_budget=planned_g1_budget,
-                    single_g1_weight=single_g1_weight,
+                    training_aptitudes=final_parent_affinity.get(
+                        "independent_training_aptitudes"
+                    ),
+                    g1_win_probability_cutoff=resolved_g1_win_probability_cutoff,
+                    objective_races=resolver.objective_races(target_parent_chara),
                 )
                 contextual_pair = evaluate_parent_pair(
                     resolver,
@@ -3728,7 +3930,7 @@ def rank_online_grandparent_pairs(
     rankings_json_path = output_dir / "uma_moe_grandparent_pairs.json"
     payload = {
         "metadata": {
-            "schema_version": 8,
+            "schema_version": 9,
             "generated_at_utc": generated,
             "source": (
                 "local veterans (both pools)"
@@ -3753,7 +3955,8 @@ def rank_online_grandparent_pairs(
                 "course_key": course_key,
                 "course_conditions": {key: sorted(value) for key, value in normalized_conditions.items()},
                 "planned_parent_g1_budget": max(0, min(int(planned_g1_budget), 40)),
-                "single_g1_weight": single_g1_weight,
+                "single_g1_weight": None,
+                "g1_win_probability_cutoff": resolved_g1_win_probability_cutoff,
             },
             "normalization": normalization_diag,
             "condition_diagnostics": condition_diag,
@@ -3820,7 +4023,7 @@ def rank_online_grandparent_pairs(
             "planned_g1_budget": final_aff["planned_g1_budget"],
             "planned_g1_bonus": round(float(final_aff["planned_g1_bonus"]), 3),
             "planned_g1_bonus_exact": final_aff["planned_g1_bonus_exact_if_all_won"],
-            "single_g1_weight": final_aff["single_g1_weight"],
+            "g1_win_probability_cutoff": final_aff["g1_win_probability_cutoff"],
             "final_parent_potential": round(float(final_aff["potential_total"]), 3),
             "affinity_component": round(row["components"]["affinity"], 2),
             "g1_potential_component": round(float(row["components"].get("g1_potential") or 0.0), 2),

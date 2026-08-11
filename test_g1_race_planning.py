@@ -6,6 +6,7 @@ from pathlib import Path
 from g1_race_planning import (
     build_pair_g1_diagnostic,
     calendar_slots,
+    independent_training_win_probability,
     optimize_race_schedule,
     schedule_export_summary,
     years_for_race_permissions,
@@ -40,6 +41,80 @@ def test_calendar_slots_use_early_and_late_half_months() -> None:
         {"year": 3, "month": 10, "half": 2},
     ]
     assert calendar_slots(race_date=0, race_permissions=[1]) == []
+
+
+def test_independent_training_win_table_matches_documented_values() -> None:
+    assert independent_training_win_probability(7, 7) == 1.10
+    assert independent_training_win_probability(6, 6) == 0.90
+    assert independent_training_win_probability(7, 1) == 0.50
+    assert independent_training_win_probability(1, 1) == 0.0
+
+
+def test_g1_value_uses_binary_win_cutoff_instead_of_linear_weighting() -> None:
+    slot_a = {"year": 2, "month": 4, "half": 1}
+    slot_b = {"year": 2, "month": 5, "half": 1}
+    strong = {
+        "name": "Strong G1",
+        "distance_type": "medium",
+        "surface": "turf",
+        "schedule_slots": [slot_a],
+    }
+    weak = {
+        "name": "Weak G1",
+        "distance_type": "sprint",
+        "surface": "dirt",
+        "schedule_slots": [slot_b],
+    }
+    result = build_pair_g1_diagnostic(
+        member(strong, weak),
+        member(strong, weak),
+        left_label="GP1",
+        right_label="GP2",
+        training_aptitudes={
+            "distance": {"medium": {"initial_rank": 7}, "sprint": {"initial_rank": 1}},
+            "surface": {"turf": {"initial_rank": 7}, "dirt": {"initial_rank": 7}},
+        },
+        win_probability_cutoff=0.60,
+    )
+
+    scheduled = {race["name"]: race for race in result["scheduled_races"]}
+    assert result["optimal_bonus"] == 6
+    assert scheduled["Strong G1"]["effective_affinity_bonus"] == 6
+    assert scheduled["Strong G1"]["independent_training_effective_win_probability"] == 1.10
+    weak_race = next(race for race in result["races"] if race["name"] == "Weak G1")
+    assert weak_race["independent_training_base_win_probability"] == 0.50
+    assert weak_race["planning_status"] == "below_win_cutoff"
+
+
+def test_consecutive_penalty_can_push_a_g1_below_the_cutoff() -> None:
+    races = [
+        {
+            "name": f"Race {index}",
+            "affinity_bonus": 3,
+            "schedule_slots": [{"year": 2, "month": 3, "half": index}],
+            "independent_training_base_win_probability": 0.65,
+            "independent_training_win_probability_cutoff": 0.60,
+        }
+        for index in (1, 2)
+    ]
+    races.append(
+        {
+            "name": "Race 3",
+            "affinity_bonus": 3,
+            "schedule_slots": [{"year": 2, "month": 4, "half": 1}],
+            "independent_training_base_win_probability": 0.65,
+            "independent_training_win_probability_cutoff": 0.60,
+        }
+    )
+
+    result = optimize_race_schedule(races)
+
+    assert result["optimal_bonus"] == 6
+    assert len(result["scheduled_races"]) == 2
+    assert all(
+        race["independent_training_effective_win_probability"] >= 0.60
+        for race in result["scheduled_races"]
+    )
 
 
 def test_pair_diagnostic_keeps_shared_and_one_sided_races_with_details() -> None:
@@ -366,18 +441,25 @@ def test_master_resolver_enriches_g1_with_calendar_slots() -> None:
                 race_instance_id_7 INTEGER, race_instance_id_8 INTEGER
             );
             CREATE TABLE race_instance (id INTEGER, race_id INTEGER, date INTEGER);
-            CREATE TABLE race (id INTEGER, grade INTEGER, "group" INTEGER);
+            CREATE TABLE race (
+                id INTEGER, grade INTEGER, "group" INTEGER, course_set INTEGER
+            );
+            CREATE TABLE race_course_set (
+                id INTEGER, distance INTEGER, ground INTEGER
+            );
             CREATE TABLE single_mode_program (
-                id INTEGER, race_instance_id INTEGER, race_permission INTEGER
+                id INTEGER, race_instance_id INTEGER, race_permission INTEGER,
+                month INTEGER, half INTEGER
             );
             INSERT INTO text_data VALUES (28, 2001, 'Example G1');
             INSERT INTO text_data VALUES (147, 6003, 'Example Scenario');
             INSERT INTO succession_factor VALUES (6003, 600, 3, 6, 3);
             INSERT INTO succession_factor_effect VALUES (1, 600, 3, 2, 10, 30);
             INSERT INTO succession_factor_effect VALUES (2, 600, 3, 4, 10, 30);
-            INSERT INTO race VALUES (1022, 100, 1);
-            INSERT INTO race_instance VALUES (2001, 1022, 1028);
-            INSERT INTO single_mode_program VALUES (1, 2001, 3);
+            INSERT INTO race VALUES (1022, 100, 1, 77);
+            INSERT INTO race_course_set VALUES (77, 2000, 1);
+            INSERT INTO race_instance VALUES (2001, 1022, 1013);
+            INSERT INTO single_mode_program VALUES (1, 2001, 3, 10, 2);
             INSERT INTO single_mode_wins_saddle VALUES (
                 88, 3, 2001, 0, 0, 0, 0, 0, 0, 0
             );
@@ -395,7 +477,10 @@ def test_master_resolver_enriches_g1_with_calendar_slots() -> None:
 
     detail = resolved["details"][0]
     assert detail["race_id"] == 1022
-    assert detail["date"] == 1028
+    assert detail["date"] == 1013
+    assert detail["distance"] == 2000
+    assert detail["distance_type"] == "medium"
+    assert detail["surface"] == "turf"
     assert detail["years"] == [2, 3]
     assert scenario_factor["effects"] == [
         {"target_type": 2, "target_label": "stamina", "value_1": 10, "value_2": 30},
@@ -474,7 +559,77 @@ def test_affinity_resolver_reads_only_fixed_race_objectives() -> None:
     assert cached_objectives[0]["required_position"] == 1
 
 
+def test_objective_uses_career_turn_instead_of_real_world_race_date() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir) / "master.mdb"
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            """
+            CREATE TABLE succession_relation (
+                relation_type INTEGER, relation_point INTEGER
+            );
+            CREATE TABLE succession_relation_member (
+                relation_type INTEGER, chara_id INTEGER
+            );
+            CREATE TABLE card_data (id INTEGER, chara_id INTEGER);
+            CREATE TABLE card_rarity_data (card_id INTEGER);
+            CREATE TABLE text_data (category INTEGER, "index" INTEGER, text TEXT);
+            CREATE TABLE single_mode_route (
+                scenario_id INTEGER, chara_id INTEGER, race_set_id INTEGER
+            );
+            CREATE TABLE single_mode_route_race (
+                id INTEGER, race_set_id INTEGER, target_type INTEGER,
+                race_type INTEGER, condition_type INTEGER, condition_id INTEGER,
+                condition_value_1 INTEGER, turn INTEGER, sort_id INTEGER
+            );
+            CREATE TABLE single_mode_program (
+                id INTEGER, race_instance_id INTEGER
+            );
+            CREATE TABLE race_instance (
+                id INTEGER, race_id INTEGER, date INTEGER
+            );
+            CREATE TABLE race (
+                id INTEGER, grade INTEGER, "group" INTEGER
+            );
+            INSERT INTO card_data VALUES (100101, 10);
+            INSERT INTO text_data VALUES (4, 100101, 'Target Card');
+            INSERT INTO text_data VALUES (6, 10, 'Target Uma');
+            INSERT INTO text_data VALUES (28, 2001, 'Shuka Sho');
+            INSERT INTO single_mode_route VALUES (0, 10, 77);
+            INSERT INTO single_mode_route_race VALUES
+                (1, 77, 1, 0, 1, 501, 1, 44, 1);
+            INSERT INTO single_mode_program VALUES (501, 2001);
+            INSERT INTO race_instance VALUES (2001, 1022, 1013);
+            INSERT INTO race VALUES (1022, 100, 1);
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        resolver = AffinityResolver(path)
+        try:
+            objective = resolver.objective_races(10)[0]
+        finally:
+            resolver.close()
+
+    assert objective["turn"] == 44
+    assert objective["objective_slot"] == {
+        "year": 2,
+        "month": 10,
+        "half": 2,
+    }
+
+
 class G1RacePlanningTests(unittest.TestCase):
+    def test_independent_training_table(self) -> None:
+        test_independent_training_win_table_matches_documented_values()
+
+    def test_independent_training_cutoff(self) -> None:
+        test_g1_value_uses_binary_win_cutoff_instead_of_linear_weighting()
+
+    def test_independent_training_streak_cutoff(self) -> None:
+        test_consecutive_penalty_can_push_a_g1_below_the_cutoff()
+
     def test_race_permission_mapping(self) -> None:
         test_race_permission_mapping_matches_the_three_career_years()
 
@@ -513,3 +668,6 @@ class G1RacePlanningTests(unittest.TestCase):
 
     def test_fixed_objective_resolution(self) -> None:
         test_affinity_resolver_reads_only_fixed_race_objectives()
+
+    def test_objective_canonical_period(self) -> None:
+        test_objective_uses_career_turn_instead_of_real_world_race_date()

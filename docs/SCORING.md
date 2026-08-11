@@ -571,9 +571,20 @@ base = pair(A, P) + triple(A, P, GP1) + triple(A, P, GP2)
 Les propres parents de GP1/GP2 sont exclus de cette base : ils servent pendant le run de
 fabrication de `P` mais ne figurent plus dans la future lignée visible de l'Ace.
 
-Le futur parent n'existant pas encore, un budget configurable de G1 (24 par défaut) estime le
-bonus. Les G1 communes à GP1 et GP2 sont retenues d'abord (une victoire crée deux liens, +6),
-puis les G1 d'un seul côté (+3, pondérées par un coefficient de réalisation, 60 % par défaut).
+Le futur parent n'existant pas encore, un budget configurable de G1 (24 par défaut) borne le
+bonus. Chaque G1 commune à GP1 et GP2 vaut `+6` lorsqu'elle est réalisable ; une G1 d'un seul
+côté vaut `+3`. Il n'existe plus de pondération linéaire des G1 unilatérales.
+
+La faisabilité utilise le modèle d'**Independent Training**. Pour chaque course, le moteur combine
+l'aptitude Distance et l'aptitude Turf/Dirt initiales du futur parent. Celles-ci partent des
+aptitudes naturelles du costume sélectionné et incluent les gains initiaux produits par les Pink
+Sparks des six membres visibles de la lignée GP1 + GP2. Le style de course est ignoré.
+
+Une G1 conserve toute sa valeur si sa chance de victoire effective atteint le cutoff configurable
+`future_grandparent_heuristics.g1_win_probability_cutoff` (`60 %` par défaut), sinon elle vaut
+zéro. La chance effective soustrait la pénalité de série : `−10` points à la 3e course
+consécutive, `−25` à la 4e, `−35` à la 5e et `−50` à partir de la 6e. Le solveur peut déplacer
+une course entre Classic et Senior ou espacer le planning pour rester au-dessus du cutoff.
 
 ```text
 potentiel final de la branche = base + bonus G1 prévu

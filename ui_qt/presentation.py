@@ -417,6 +417,27 @@ def _g1_plan_block(
         for race in standard.get("races") or []
         if isinstance(race, dict)
     )
+    below_cutoff = [
+        str(race.get("name") or "")
+        for race in standard.get("races") or []
+        if isinstance(race, dict)
+        and race.get("planning_status") == "below_win_cutoff"
+        and str(race.get("name") or "").strip()
+    ]
+    if below_cutoff:
+        rows += (
+            (
+                _t("G1 exclues par le seuil de victoire", language),
+                " · ".join(below_cutoff),
+            ),
+        )
+        body = "".join(
+            "<tr>"
+            f"<th>{escape(label)}</th>"
+            f"<td>{escape(value)}</td>"
+            "</tr>"
+            for label, value in rows
+        )
     facts: list[tuple[str, object]] = [
         (
             _t("Bonus optimal avec objectifs", language),
@@ -443,6 +464,14 @@ def _g1_plan_block(
             int((standard.get("streaks") or {}).get("max_consecutive") or 0),
         ),
     ]
+    cutoff = plan.get("g1_win_probability_cutoff")
+    if cutoff is not None:
+        facts.append(
+            (
+                _t("Seuil de victoire Independent Training", language),
+                f"{100.0 * float(cutoff):.0f}%",
+            )
+        )
     if trackblazer:
         facts.append(
             (
@@ -862,6 +891,102 @@ def _top_factors(row: dict[str, Any], language: str) -> str:
     )
 
 
+def _white_generation_block(row: dict[str, Any], language: str) -> str:
+    """Render the engine's incremental White-generation diagnostics.
+
+    ``lineage_generation_bonus`` is deliberately displayed as a gain in
+    percentage points, not as an absolute generation chance and not as a final
+    inheritance probability.
+    """
+
+    details = (row.get("component_details") or {}).get("white_generation") or {}
+    if not isinstance(details, dict):
+        return ""
+    skills = [item for item in details.get("skills") or [] if isinstance(item, dict)]
+    if not skills:
+        return ""
+
+    breakdown_components = ((row.get("score_breakdown") or {}).get("components") or {})
+    included = "white_generation" in breakdown_components
+    if details.get("included_in_weighted_score") is False:
+        included = False
+    score = (row.get("components") or {}).get("white_generation")
+    if score is None:
+        score = details.get("score")
+    facts = [
+        (_t("Support global de génération", language), f"{_number(score, 2)} / 100"),
+        (_t("Sparks distinctes concernées", language), int(details.get("skill_count") or len(skills))),
+        (_t("Inclus dans le score global", language), _t("Oui" if included else "Non", language)),
+    ]
+
+    rows = []
+    for item in skills:
+        name = str(item.get("name") or item.get("catalog_key") or "—")
+        copies = max(0, int(item.get("lineage_copy_count") or 0))
+        try:
+            bonus = max(0.0, float(item.get("lineage_generation_bonus") or 0.0))
+        except (TypeError, ValueError):
+            bonus = 0.0
+        rows.append(
+            "<tr>"
+            f"<td><b>{escape(name)}</b></td>"
+            f"<td align='right'>×{copies}</td>"
+            f"<td align='right' class='generation-gain'>+{100 * bonus:.2f} pts</td>"
+            "</tr>"
+        )
+
+    try:
+        per_copy = 100.0 * max(
+            0.0, float(details.get("bonus_per_lineage_copy") or 0.0)
+        )
+    except (TypeError, ValueError):
+        per_copy = 0.0
+    explanation = _t(
+        "Gain incrémental estimé pendant la run qui produit le parent : +{gain} points par porteur de la même White Skill. Ce n’est ni la probabilité totale de générer la Spark, ni sa probabilité de proc dans la run finale.",
+        language,
+    ).replace("{gain}", f"{per_copy:.2f}")
+
+    return (
+        _facts_table(facts)
+        + "<table class='factor-table generation-table' width='100%' cellspacing='0' cellpadding='0'>"
+        + "<thead><tr>"
+        + f"<th>{escape(_t('Spark white', language).upper())}</th>"
+        + f"<th align='right'>{escape(_t('Porteurs', language).upper())}</th>"
+        + f"<th align='right'>{escape(_t('Gain de génération', language).upper())}</th>"
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+        + "<p class='diagnostic-note'>"
+        + escape(explanation)
+        + "</p>"
+    )
+
+
+def _production_affinity_block(row: dict[str, Any], language: str) -> str:
+    production = row.get("production_affinity") or {}
+    if not isinstance(production, dict) or not production:
+        return ""
+    gp1 = production.get("gp1_inheritance_modifier") or {}
+    gp2 = production.get("gp2_inheritance_modifier") or {}
+    facts = [
+        (_t("Affinité totale de la run", language), _number(production.get("total"), 1)),
+        (_t("Coefficient individuel GP1", language), _number(gp1.get("total"), 1)),
+        (_t("Coefficient individuel GP2", language), _number(gp2.get("total"), 1)),
+        (_t("Valeur équilibrée", language), _number(production.get("scored_value"), 1)),
+    ]
+    return (
+        _facts_table(facts)
+        + "<p class='diagnostic-note'>"
+        + escape(
+            _t(
+                "Diagnostic de la run intermédiaire qui fabrique le parent. Cette affinité n’est pas ajoutée au score de la lignée finale.",
+                language,
+            )
+        )
+        + "</p>"
+    )
+
+
 def _detail_styles() -> str:
     text = PANEL["text"]
     soft = PANEL["text_soft"]
@@ -951,6 +1076,8 @@ def _detail_styles() -> str:
       .spark-stars {{ white-space:nowrap; font-size:10px; }}
       .spark-name {{ font-size:11px; font-weight:650; text-align:left; }}
       .spark-meta {{ color:{muted}; white-space:nowrap; font-size:10px; }}
+      .generation-gain {{ color:{accent}; font-weight:750; }}
+      .diagnostic-note {{ color:{muted}; font-size:10px; margin:6px 1px 9px 1px; }}
       .spark-legend {{ margin:2px 0 7px 0; color:{muted}; font-size:10px; }}
       .parent-marker {{ color:#140e02; background-color:#ffd36b; padding:1px 5px; font-size:11px; font-weight:900; }}
     </style>
@@ -1031,13 +1158,32 @@ def result_detail_html(
                 html += _section(_t("Planning G1 d’affinité", language))
                 html += g1_html
     elif kind == "future":
-        html += _facts_table(
-            [
-                (_t("Contribution d’affinité", language), _number(row.get("affinity_raw"), 1)),
-                (_t("G1 différentes", language), int(row.get("g1_count") or 0)),
-            ]
+        affinity_items = [
+            (_t("Contribution du candidat", language), _number(row.get("affinity_raw"), 1)),
+        ]
+        if row.get("future_parent_base_affinity") is not None:
+            affinity_items.append(
+                (
+                    _t("Base Ace × parent ciblé", language),
+                    _number(row.get("future_parent_base_affinity"), 1),
+                )
+            )
+        if row.get("future_branch_base_total") is not None:
+            affinity_items.append(
+                (
+                    _t("Total de branche projeté", language),
+                    _number(row.get("future_branch_base_total"), 1),
+                )
+            )
+        affinity_items.append(
+            (_t("G1 différentes", language), int(row.get("g1_count") or 0))
         )
+        html += _facts_table(affinity_items)
     html += _spark_recap(row, kind, language)
+    generation_html = _white_generation_block(row, language)
+    if generation_html:
+        html += _section(_t("Gains de génération des White Sparks", language))
+        html += generation_html
     html += f"{_section(_t('Calcul du score global', language))}{_component_table(row, language)}"
     factor_html = _top_factors(row, language)
     if factor_html:
@@ -1139,7 +1285,39 @@ def online_detail_html(
         if g1_html:
             html += _section(_t("Planning G1 d’affinité", language))
             html += g1_html
+        aptitude_html = _aptitude_block(row, language, profile)
+        if aptitude_html:
+            html += _section(_t("Projection de la paire finale", language))
+            context_items = []
+            if row.get("projected_future_parent"):
+                context_items.append(
+                    (
+                        _t("Parent projeté", language),
+                        _identity_name(row.get("projected_future_parent")),
+                    )
+                )
+            if row.get("opposing_parent"):
+                context_items.append(
+                    (
+                        _t("Parent opposé", language),
+                        _identity_name(row.get("opposing_parent")),
+                    )
+                )
+            if context_items:
+                html += _facts_table(context_items)
+            html += aptitude_html
+            distance_html = _distance_block(row, language)
+            if distance_html:
+                html += distance_html
+        production_html = _production_affinity_block(row, language)
+        if production_html:
+            html += _section(_t("Affinité de la run de production", language))
+            html += production_html
     html += _spark_recap(row, visual_mode, language)
+    generation_html = _white_generation_block(row, language)
+    if generation_html:
+        html += _section(_t("Gains de génération des White Sparks", language))
+        html += generation_html
     html += f"{_section(_t('Calcul du score global', language))}{_component_table(row, language)}"
     factors = _top_factors(row, language)
     if factors:

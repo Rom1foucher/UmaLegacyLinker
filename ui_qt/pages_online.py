@@ -789,7 +789,14 @@ class OnlinePage(QWidget):
         self.g1_weight.setSingleStep(0.1)
         self.g1_weight.setDecimals(2)
         try:
-            self.g1_weight.setValue(float(context.store.get("uma_moe_single_g1_weight", "0.6")))
+            self.g1_weight.setValue(
+                float(
+                    context.store.get(
+                        "uma_moe_g1_win_probability_cutoff",
+                        context.store.get("uma_moe_single_g1_weight", "0.6"),
+                    )
+                )
+            )
         except ValueError:
             self.g1_weight.setValue(0.6)
         g1.addWidget(self.g1_budget_label, 0, 0)
@@ -984,7 +991,9 @@ class OnlinePage(QWidget):
         )
         self.required_label.setText(t("Costume requis dans la paire"))
         self.g1_budget_label.setText(t("G1 prévues sur le parent"))
-        self.g1_weight_label.setText(t("Valeur d’une G1 non commune"))
+        self.g1_weight_label.setText(
+            t("Chance de victoire minimale (Independent Training)")
+        )
         self.uql_label.setText(t("UQL de référence — non envoyée comme texte libre à l’API"))
         self.api_label.setText(t("Base API"))
         self.key_label.setText(t("Clé API"))
@@ -1395,7 +1404,7 @@ class OnlinePage(QWidget):
                 },
                 limit=self.fetch_spin.value(),
                 planned_g1_budget=self.g1_budget.value(),
-                single_g1_weight=self.g1_weight.value(),
+                g1_win_probability_cutoff=self.g1_weight.value(),
                 required_parent_card_id=(int(required) if required is not None else None),
                 allowed_parent_card_ids=tuple(sorted(self._allowed_ids)),
                 excluded_parent_card_ids=tuple(sorted(self._excluded_ids)),
@@ -1432,7 +1441,7 @@ class OnlinePage(QWidget):
                 "uma_moe_base": request.api_base,
                 "uma_moe_response_path": response_text,
                 "uma_moe_parent_g1_budget": request.planned_g1_budget,
-                "uma_moe_single_g1_weight": request.single_g1_weight,
+                "uma_moe_g1_win_probability_cutoff": request.g1_win_probability_cutoff,
                 "uma_moe_required_parent_card_id": required or 0,
                 "uma_moe_parent_allowed_card_ids": ",".join(map(str, sorted(self._allowed_ids))),
                 "uma_moe_parent_excluded_card_ids": ",".join(map(str, sorted(self._excluded_ids))),

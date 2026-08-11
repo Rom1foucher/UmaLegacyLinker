@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from g1_race_planning import calendar_slots, years_for_race_permissions
+from g1_race_planning import (
+    calendar_slots,
+    distance_type_for_meters,
+    surface_for_ground,
+    years_for_race_permissions,
+)
 
 from skill_catalog import FACTOR_TARGET_LABELS, generate_skill_catalogs
 
@@ -265,6 +270,12 @@ class MasterResolver:
 
     def _load_g1_saddles(self) -> dict[int, dict[str, Any]]:
         result: dict[int, dict[str, Any]] = {}
+        available_tables = {
+            str(row[0])
+            for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
         race_instance_columns = {
             str(row["name"])
             for row in self.connection.execute("PRAGMA table_info(race_instance)")
@@ -277,6 +288,17 @@ class MasterResolver:
             "ri.date AS race_date"
             if "date" in race_instance_columns
             else "NULL AS race_date"
+        )
+        has_course_details = "race_course_set" in available_tables
+        course_selection = (
+            ", cs.distance AS race_distance, cs.ground AS race_ground"
+            if has_course_details
+            else ", NULL AS race_distance, NULL AS race_ground"
+        )
+        course_join = (
+            "LEFT JOIN race_course_set cs ON cs.id = r.course_set"
+            if has_course_details
+            else ""
         )
         query = """
             SELECT id, race_instance_id_1, race_instance_id_2,
@@ -299,8 +321,10 @@ class MasterResolver:
                     f"""
                     SELECT ri.id AS race_instance_id, r.id AS race_id,
                            r.grade, r."group" AS race_group, {date_selection}
+                           {course_selection}
                     FROM race_instance ri
                     JOIN race r ON r.id = ri.race_id
+                    {course_join}
                     WHERE ri.id = ?
                     """,
                     (instance_id,),
@@ -311,26 +335,61 @@ class MasterResolver:
                     and int(race["race_group"]) == 1
                 ):
                     race_permissions: list[int] = []
+                    schedule_slots: list[dict[str, int]] = []
                     if "race_permission" in program_columns:
+                        has_program_period = {"month", "half"}.issubset(
+                            program_columns
+                        )
+                        selected_columns = "race_permission"
+                        if has_program_period:
+                            selected_columns += ", month, half"
+                        program_rows = list(
+                            self.connection.execute(
+                                f"""
+                                SELECT DISTINCT {selected_columns}
+                                FROM single_mode_program
+                                WHERE race_instance_id = ?
+                                """,
+                                (instance_id,),
+                            )
+                        )
                         race_permissions = sorted(
                             {
-                                int(permission_row["race_permission"])
-                                for permission_row in self.connection.execute(
-                                    """
-                                    SELECT DISTINCT race_permission
-                                    FROM single_mode_program
-                                    WHERE race_instance_id = ?
-                                    """,
-                                    (instance_id,),
-                                )
-                                if permission_row["race_permission"] is not None
+                                int(program_row["race_permission"])
+                                for program_row in program_rows
+                                if program_row["race_permission"] is not None
                             }
                         )
+                        if has_program_period:
+                            schedule_slots = [
+                                {"year": year, "month": month, "half": half}
+                                for year, month, half in sorted(
+                                    {
+                                        (year, month, half)
+                                        for program_row in program_rows
+                                        for year in years_for_race_permissions(
+                                            [program_row["race_permission"]]
+                                        )
+                                        for month, half in [
+                                            (
+                                                int(program_row["month"]),
+                                                int(program_row["half"]),
+                                            )
+                                        ]
+                                        if 1 <= month <= 12 and half in (1, 2)
+                                    }
+                                )
+                            ]
                     race_date = (
                         int(race["race_date"])
                         if race["race_date"] is not None
                         else None
                     )
+                    if not schedule_slots:
+                        schedule_slots = calendar_slots(
+                            race_date=race_date,
+                            race_permissions=race_permissions,
+                        )
                     selected = {
                         "saddle_id": saddle_id,
                         "race_instance_id": instance_id,
@@ -340,12 +399,23 @@ class MasterResolver:
                             self.race_short_names.get(instance_id, f"G1 {instance_id}"),
                         ),
                         "date": race_date,
+                        "distance": (
+                            int(race["race_distance"])
+                            if race["race_distance"] is not None
+                            else None
+                        ),
+                        "distance_type": distance_type_for_meters(
+                            race["race_distance"]
+                        ),
+                        "ground": (
+                            int(race["race_ground"])
+                            if race["race_ground"] is not None
+                            else None
+                        ),
+                        "surface": surface_for_ground(race["race_ground"]),
                         "race_permissions": race_permissions,
                         "years": years_for_race_permissions(race_permissions),
-                        "schedule_slots": calendar_slots(
-                            race_date=race_date,
-                            race_permissions=race_permissions,
-                        ),
+                        "schedule_slots": schedule_slots,
                     }
                     break
             if selected:

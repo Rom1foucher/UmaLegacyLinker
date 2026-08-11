@@ -1269,7 +1269,9 @@ class RaceCalendarWidget(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(rect.adjusted(1.0, 1.0, -1.0, -1.0), 4.0, 4.0)
 
-        bonus_value = int(race.get("affinity_bonus") or 0)
+        bonus_value = int(
+            race.get("effective_affinity_bonus", race.get("affinity_bonus")) or 0
+        )
         bonus = f"+{bonus_value}"
         badge_font = QFont(self.font())
         badge_font.setPointSizeF(7.2)
@@ -1370,7 +1372,9 @@ class RaceCalendarWidget(QWidget):
             if not rect.contains(point):
                 continue
             sources = ", ".join(str(value) for value in race.get("sources") or [])
-            bonus = int(race.get("affinity_bonus") or 0)
+            bonus = int(
+                race.get("effective_affinity_bonus", race.get("affinity_bonus")) or 0
+            )
             lines = [
                 str(race.get("name") or "G1"),
                 self.context.t("Bonus d’affinité planifié : +{bonus}")
@@ -1398,6 +1402,28 @@ class RaceCalendarWidget(QWidget):
                         self.context.t("Origine de la G1 : {origin}")
                         .replace("{origin}", origin_label)
                     )
+            base_win = race.get("independent_training_base_win_probability")
+            cutoff = race.get("independent_training_win_probability_cutoff")
+            effective_win = race.get("independent_training_effective_win_probability")
+            if base_win is not None and cutoff is not None:
+                lines.append(
+                    self.context.t(
+                        "Independent Training : {chance}% de victoire de base · seuil {cutoff}%."
+                    )
+                    .replace("{chance}", f"{100.0 * float(base_win):.0f}")
+                    .replace("{cutoff}", f"{100.0 * float(cutoff):.0f}")
+                )
+            if effective_win is not None:
+                penalty = float(
+                    race.get("independent_training_streak_penalty") or 0.0
+                )
+                lines.append(
+                    self.context.t(
+                        "Chance effective : {chance}% après pénalité de série de {penalty} points."
+                    )
+                    .replace("{chance}", f"{100.0 * float(effective_win):.0f}")
+                    .replace("{penalty}", f"{100.0 * penalty:.0f}")
+                )
             if race.get("mandatory_objective"):
                 required = int(race.get("required_position") or 0)
                 objective_line = self.context.t(
@@ -1419,6 +1445,12 @@ class RaceCalendarWidget(QWidget):
                 lines.append(
                     self.context.t(
                         "G1 possible et utile pour l’affinité, mais une course plus rentable occupe déjà ce tour."
+                    )
+                )
+            elif status == "below_win_cutoff":
+                lines.append(
+                    self.context.t(
+                        "G1 ignorée dans le score : sa chance de victoire est sous le seuil configuré."
                     )
                 )
             elif status in {"missing_calendar", "unsupported_calendar"}:

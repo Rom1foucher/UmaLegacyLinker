@@ -228,6 +228,12 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
         )
 
     if root == "future_grandparent_heuristics":
+        if leaf == "g1_win_probability_cutoff":
+            return (
+                "future_gp.race_viability",
+                "G1 · Entraînement indépendant",
+                5,
+            )
         if "pink_dimension_weights" in path:
             return (
                 "future_gp.dimensions",
@@ -470,12 +476,14 @@ def is_percentage_setting(path: Sequence[str], value: object) -> bool:
             or leaf == "per_event_probability_cap"
         )
     if root == "future_grandparent_heuristics":
-        return len(path) > 1 and path[1] in {
+        return leaf == "g1_win_probability_cutoff" or (
+            len(path) > 1 and path[1] in {
             "pink_dimension_weights",
             "pink_star_quality",
             "pink_need_multiplier",
             "white_star_quality",
-        }
+            }
+        )
     return False
 
 

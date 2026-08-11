@@ -1,5 +1,5 @@
 {
-  "schema_version": 21,
+  "schema_version": 22,
   "description": "Modern G1 parent scoring with probability-aware aptitude, white-skill and Scenario-Spark inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Scenario Sparks add expected same-star Blue-equivalent value for their actual stat targets and can lift Blue above 100.",
   "mode_weights": {
     "parent_branch": {
@@ -331,7 +331,7 @@
     },
     "formula_notes": {
       "final_parent": "pair(Ace,parent) + triple(Ace,parent,GP1) + triple(Ace,parent,GP2) + planned G1(parent↔GP1/GP2). The unknown other final parent is excluded.",
-      "planned_g1": "Within the race budget, G1s shared by both grandparents count at full double-link value. One-sided G1s remain useful but are discounted by the configurable realization factor (default 60%).",
+      "planned_g1": "Within the race budget, eligible shared G1s count at full double-link value and eligible one-sided G1s at full single-link value. Eligibility is a binary Independent Training win-probability cutoff after consecutive-race penalties (default 60%).",
       "production_run": "The deeper GP ancestors only affect the run that creates the future parent; they do not remain in the final Ace lineage.",
       "weighting_priority": "The weighted score uses mode_weights.future_grandparent for both preselection and final pair ranking. Production-run compatibility is only a balanced diagnostic/tie-breaker."
     },
@@ -654,6 +654,7 @@
   },
   "future_grandparent_heuristics": {
     "description": "Simple future-GP model. No Inspiration proc probability or final Ace P(S) is calculated. The candidate is one of six final factors, so acceptable direct pink/blue/white quality is valued alongside affinity, G1 overlap and lineage white-generation support.",
+    "g1_win_probability_cutoff": 0.6,
     "pink_dimension_weights": {
       "distance": 1.0,
       "surface": 0.72,

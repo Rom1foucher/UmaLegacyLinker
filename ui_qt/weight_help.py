@@ -497,6 +497,23 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
         )
         return WeightHelp(summary, _component_impact(component, language), scope, low, high)
 
+    if root == "future_grandparent_heuristics" and leaf == "g1_win_probability_cutoff":
+        return WeightHelp(
+            _pick(
+                language,
+                "Chance de victoire minimale requise pour compter une G1 pendant l’Independent Training du futur parent.",
+                "Minimum win chance required for a G1 to count during the future parent’s Independent Training run.",
+            ),
+            _pick(
+                language,
+                "La G1 conserve toute sa valeur au-dessus du seuil et vaut zéro en dessous, après pénalité de courses consécutives.",
+                "The G1 keeps its full value above the cutoff and is worth zero below it, after consecutive-race penalties.",
+            ),
+            scope,
+            low,
+            high,
+        )
+
     if root == "blue_stat_weights_by_distance" and len(path) == 3:
         distance = _label(path[1], language)
         stat = _label(path[2], language)

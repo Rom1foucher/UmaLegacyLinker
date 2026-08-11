@@ -286,10 +286,10 @@ def _attach_existing_visual_diagnostics(
     row: dict[str, Any],
     position_to_role: dict[str, str],
 ) -> None:
-    """Attach existing affinity and White inheritance diagnostics.
+    """Attach existing affinity, White and Scenario inheritance diagnostics.
 
     The UI deliberately performs no inheritance formula here. It only matches
-    each visible White Spark to rows already emitted by :func:`_white_score`.
+    each visible Spark to rows already emitted by the scoring engine.
     """
 
     affinities = _inheritance_affinity_values(row)
@@ -304,6 +304,19 @@ def _attach_existing_visual_diagnostics(
         factor_details = []
     skill_ranks = _white_skill_ranks(white_details)
     event_count = max(1, _integer(white_details.get("inspiration_event_count")) or 2)
+    blue_details = component_details.get("blue") or {}
+    if not isinstance(blue_details, dict):
+        blue_details = {}
+    scenario_inheritance = blue_details.get("scenario_inheritance") or {}
+    if not isinstance(scenario_inheritance, dict):
+        scenario_inheritance = {}
+    scenario_details = scenario_inheritance.get("factors") or []
+    if not isinstance(scenario_details, list):
+        scenario_details = []
+    scenario_event_count = max(
+        1,
+        _integer(scenario_inheritance.get("inspiration_event_count")) or 2,
+    )
 
     for position, role in position_to_role.items():
         node = nodes.get(position)
@@ -313,6 +326,34 @@ def _attach_existing_visual_diagnostics(
             node["inheritance_affinity"] = affinities[role]
         for factor in node.get("sparks") or []:
             factor_type = str(factor.get("type") or "")
+            if factor_type == "scenario":
+                name = str(factor.get("name") or "").casefold()
+                stars = max(0, _integer(factor.get("stars")) or 0)
+                matches = [
+                    detail
+                    for detail in scenario_details
+                    if isinstance(detail, dict)
+                    and str(detail.get("role") or "") == role
+                    and str(detail.get("name") or "").casefold() == name
+                    and max(0, _integer(detail.get("stars")) or 0) == stars
+                ]
+                run_probability = next(
+                    (
+                        value
+                        for value in (
+                            _float(detail.get("proc_probability_over_run"))
+                            for detail in matches
+                        )
+                        if value is not None
+                    ),
+                    None,
+                )
+                if run_probability is not None:
+                    factor["proc_probability_over_run"] = max(
+                        0.0, min(run_probability, 1.0)
+                    )
+                    factor["inspiration_event_count"] = scenario_event_count
+                continue
             if factor_type not in {"white_skill", "white_race"}:
                 continue
             name = str(factor.get("name") or "").casefold()

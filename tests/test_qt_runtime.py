@@ -571,6 +571,24 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                         ),
                         f"{language}/search: {issues}",
                     )
+
+                    transfer = window._pages["transfer"]
+                    window.show_page("transfer")
+                    for width in (1120, 1366):
+                        window.resize(width, 720 if width == 1120 else 768)
+                        self.application.processEvents()
+                        issues = audit_window(window)
+                        self.assertFalse(
+                            any("overflow" in issue for issue in issues),
+                            f"{language}/transfer/{width}: {issues}",
+                        )
+                        for control in (
+                            transfer.upcoming_cm_check,
+                            transfer.run_button,
+                            transfer.load_button,
+                            transfer.open_button,
+                        ):
+                            self.assertFalse(_text_overflow(control))
             finally:
                 _dispose_widget(window, self.application)
 

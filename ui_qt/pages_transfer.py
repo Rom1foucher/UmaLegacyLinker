@@ -78,9 +78,13 @@ class TransferPage(QWidget):
         safety_layout.addWidget(self.team_trials_check, 2, 0, 1, 2)
         safety_layout.addWidget(self.generic_profiles_check, 2, 2, 1, 2)
         safety_layout.setColumnStretch(4, 1)
-        safety_layout.addWidget(self.run_button, 2, 5)
-        safety_layout.addWidget(self.load_button, 2, 6)
-        safety_layout.addWidget(self.open_button, 2, 7)
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.addStretch(1)
+        action_layout.addWidget(self.run_button)
+        action_layout.addWidget(self.load_button)
+        action_layout.addWidget(self.open_button)
+        safety_layout.addLayout(action_layout, 3, 0, 1, 8)
         root.addWidget(safety)
 
         self.upcoming_cm_check.setChecked(

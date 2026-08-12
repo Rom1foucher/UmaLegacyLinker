@@ -17,7 +17,7 @@ from manual_weights import generate_manual_skill_weights
 from transfer_helper import _build_profile_contexts
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_PRESETS = PROJECT_DIR / "default_course_overrides.json"
 
 
@@ -74,36 +74,31 @@ class CoursePresetTests(unittest.TestCase):
         self.assertEqual(normalize_racecourse_name("Ohi (10009)"), "ohi")
         self.assertTrue(racecourse_names_match("Ooi", "Ohi (10009)"))
 
-    def test_transfer_helper_uses_only_five_next_cms_and_team_trials(self) -> None:
+    def test_transfer_helper_uses_permanent_archetypes_by_default(self) -> None:
         payload = load_course_preset_payload(DEFAULT_PRESETS)
         contexts = _build_profile_contexts(payload, include_course_presets=True)
         course_keys = list(dict.fromkeys(context.course_key for context in contexts))
 
-        self.assertEqual(len(contexts), 40)
-        self.assertEqual(
-            course_keys[:5],
-            [
-                "cm16_nakayama_1200_turf",
-                "cm17_ooi_2000_dirt",
-                "cm18_hanshin_1600_turf",
-                "cm19_kyoto_2200_turf",
-                "cm20_nakayama_2500_turf",
-            ],
+        self.assertEqual(len(contexts), 21)
+        self.assertEqual(course_keys, [None])
+        self.assertEqual({context.scope for context in contexts}, {"permanent"})
+        self.assertIn("permanent:turf:long:late_surger", {context.key for context in contexts})
+        self.assertIn("permanent:dirt:sprint:front_runner", {context.key for context in contexts})
+        self.assertFalse(any(context.style == "end_closer" for context in contexts))
+
+    def test_upcoming_cm_is_optional_evidence_above_permanent_baseline(self) -> None:
+        payload = load_course_preset_payload(DEFAULT_PRESETS)
+        contexts = _build_profile_contexts(
+            payload,
+            include_course_presets=True,
+            include_upcoming_cm_context=True,
+            upcoming_cm_limit=1,
         )
-        self.assertEqual(
-            course_keys[5:],
-            [
-                "team_trials_turf_sprint",
-                "team_trials_turf_mile",
-                "team_trials_turf_medium",
-                "team_trials_turf_long",
-                "team_trials_dirt_mile",
-            ],
-        )
-        self.assertFalse(any(context.key.startswith("generic:") for context in contexts))
-        self.assertFalse(any(context.key.startswith("course:cm21_") for context in contexts))
-        cm17 = next(context for context in contexts if context.key.startswith("course:cm17_"))
-        self.assertEqual(cm17.course_conditions["ground_condition"], 2)
+        self.assertEqual(len(contexts), 24)
+        self.assertEqual(sum(context.scope == "permanent" for context in contexts), 21)
+        upcoming = [context for context in contexts if context.scope == "upcoming_cm"]
+        self.assertEqual(len(upcoming), 3)
+        self.assertTrue(all(context.course_key == "cm16_nakayama_1200_turf" for context in upcoming))
 
 
 class ManualWeightsCourseMetadataTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 {
-  "schema_version": 22,
-  "description": "Modern G1 parent scoring with probability-aware aptitude, white-skill and Scenario-Spark inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Scenario Sparks add expected same-star Blue-equivalent value for their actual stat targets and can lift Blue above 100.",
+  "schema_version": 23,
+  "description": "Modern G1 parent scoring with probability-aware aptitude, white-skill and Scenario-Spark inheritance. Parent/final-pair modes evaluate all six visible members in the Ace run. Pink, White/Race and Scenario proc rates combine their type/star base rate with the carrier's individual affinity; GP rates are lower only insofar as GP individual affinity is lower. Generic future-GP mode keeps the simpler direct-factor heuristic; when an opposing parent is supplied, online GP pairs use the exact projected six-member final-pair engine. Distance-S remains the primary pair constraint; target-surface aptitude is scored separately with a configurable B minimum / A preferred policy. Scenario Sparks add expected same-star Blue-equivalent value for their actual stat targets and can lift Blue above 100.",
   "mode_weights": {
     "parent_branch": {
       "distance_s": 0.22,
@@ -378,24 +378,29 @@
     }
   },
   "transfer_helper": {
-    "description": "Distribution-aware local-veteran cleanup analysis. Utility combines absolute score, proximity to the context leader, and a small percentile component. Keep requires elite utility or repeated competitive utility across multiple contexts and course profiles.",
+    "description": "Collection-portfolio cleanup analysis. Fast mode covers a permanent matrix of useful surface/distance/style archetypes with naturally viable Aces, then retains the smallest same-costume set that stays within the configured score regret and collectively preserves strategic inheritance assets. Upcoming CM profiles are optional extra evidence, never the long-term safety baseline.",
+    "analysis_mode": "fast",
     "competitive_score_floor": 67.5,
+    "competitive_utility_floor": 0.78,
+    "portfolio_regret_tolerance": 2.5,
+    "minimum_ace_aptitude_rank": 6,
+    "include_permanent_archetypes": true,
+    "include_course_presets": true,
+    "include_upcoming_cm_context": true,
+    "upcoming_cm_limit": 5,
+    "include_team_trials": false,
+    "include_generic_profiles": false,
     "dominance_tolerance": 0.75,
     "dominance_mean_margin": 1.0,
-    "include_course_presets": true,
-    "upcoming_cm_limit": 5,
-    "include_team_trials": true,
-    "include_generic_profiles": false,
     "minimum_competitive_contexts": 3,
     "minimum_distinct_profiles": 2,
-    "competitive_utility_floor": 0.82,
     "elite_utility_floor": 0.92,
     "minimum_absolute_floor_ratio": 0.8,
     "utility_absolute_weight": 0.5,
     "utility_leader_weight": 0.4,
     "utility_percentile_weight": 0.1,
     "spark_protection": {
-      "description": "Independent verdict floor for strategically useful inheritance assets. It never changes the primary score: it only prevents safe_transfer when the selected replacement does not preserve a repeated, hard-to-obtain, direct future-GP or configured package signal.",
+      "description": "Collective portfolio coverage for strategically useful inheritance assets. It never changes the primary score. A single retained copy can cover a signal for the whole costume group; a strict one-to-one transfer still requires the proposed replacement to preserve the candidate's protected heritage by itself.",
       "enabled": true,
       "minimum_context_weight": 0.55,
       "hard_to_obtain_minimum_context_weight": 0.6,
@@ -407,6 +412,8 @@
       "repeated_strong_min_probability": 0.28,
       "direct_future_gp_minimum_context_weight": 0.8,
       "direct_future_gp_min_stars": 3,
+      "portfolio_direct_white_minimum_context_weight": 1.0,
+      "portfolio_direct_white_min_stars": 2,
       "replacement_probability_ratio": 0.9,
       "replacement_probability_tolerance": 0.01,
       "support_hint_count_overrides": {},
@@ -596,7 +603,7 @@
   },
   "blue_neutral_score": 50.0,
   "white_inheritance": {
-    "description": "White Skill Spark model reserved for Ace-parent branches and final pairs. Direct white skills use 3/6/9% base rates; skills granted by Race Sparks use 1/2/3% and merge into the same per-skill inheritance probability. Copies of the same skill are combined into P(inherited at least once), then converted through a distinct-skill utility curve.",
+    "description": "White Skill Spark model reserved for Ace-parent branches and final pairs. Direct white skills use 3/6/9% base rates; skills granted by Race Sparks use 1/2/3%. Each rate is multiplied by the carrier's individual-affinity modifier before copies of the same skill are combined into P(inherited at least once) and converted through a distinct-skill utility curve.",
     "base_proc_rates": {
       "1": 0.03,
       "2": 0.06,

@@ -45,24 +45,35 @@ Final pairs use the complete visible lineage: both parents and all four grandpar
 
 ### Transfer Helper
 
-Evaluates every local veteran as both a parent and a future grandparent across the configured Champion Meeting and Team Trials profiles.
+Evaluates every local veteran as both a parent and a future grandparent against a stable baseline:
+Turf Sprint/Mile/Medium/Long and Dirt Sprint/Mile/Medium, each split into Front, Pace and Backline.
+The default fast mode only tests Aces with natural B or better in surface, distance and style.
+The bundled profile adds up to five upcoming Champion Meetings as optional extra evidence; they
+can be disabled, and a temporary calendar gap can never make a permanent archetype disappear from
+the cleanup baseline. The Transfer Helper panel exposes Fast (recommended) and Exhaustive (slow)
+modes, the upcoming-CM limit, Team Trials and generic profiles; selections persist between runs.
+Team Trials and generic profiles are disabled by default.
 
-Verdicts are deliberately conservative:
+The helper builds the smallest same-costume portfolio that remains within 2.5 score points of the
+best copy in every globally competitive niche. It also covers direct 3-star Distance/Surface
+Sparks, high-value direct White Sparks from 2 stars, repeated/hard-to-obtain skills and configured
+packages collectively across the retained copies.
 
-- **Keep** — strong or repeatedly competitive role;
-- **Likely keep** — narrow but plausible role, or a strong non-preserved Spark signal;
-- **Review** — no clear role without a strict replacement, or a replacement that degrades a protected Spark signal;
-- **Safe transfer** — a same-costume, same-Unique replacement is no worse in every viable context, retains G1 pair support and preserves every protected Spark signal.
+Verdicts are:
 
-Before confirming a safe transfer, an independent Spark-protection floor compares the candidate
-and replacement by effective inherited skill. Direct White Sparks and Race Sparks granting the
-same skill are merged; repeated carriers, total stars, neutral inheritance probability, direct
-future-grandparent placement, current-MDB support-hint availability and configurable skill
-packages are then compared. A non-preserved strategic signal raises the result to **Review** or
-**Likely keep** without changing the primary score. The detail pane and JSON/CSV reports show the
-exact Spark or package deficit.
+- **Protected** — locked in game or carrying a memo;
+- **Keep** — required by the collection portfolio;
+- **Strictly safe transfer** — in exhaustive mode only, one retained same-costume, same-Unique replacement is no worse in every viable profile envelope, retains G1 pair support and individually preserves protected heritage;
+- **Recommended transfer** — redundant at collection level, possibly covered by several retained copies rather than one universal replacement;
+- **Review** — incomplete or insufficiently modelled coverage requiring manual inspection.
 
-The tool never edits the collection and never transfers or deletes anything automatically.
+The detail pane and JSON/CSV reports expose the retained coverage, portfolio reasons, lock/memo
+metadata, exact strict replacement when one exists and the permanent/dynamic context split.
+
+The tool never edits the collection and never transfers or deletes anything automatically. An
+optional exhaustive audit restores all four styles and unfiltered Ace variants for occasional
+cross-checking; it is intentionally much slower than the default mode and is the only mode allowed
+to issue the **Strictly safe transfer** verdict. Fast-mode redundancies remain recommendations.
 
 ### uma.moe search
 
@@ -244,15 +255,17 @@ structural scoring settings stored in `parent_scoring_overrides.json`.
 | `ui_qt/` | Qt shell, pages, visual lineage/artwork system, table model and shared workflow orchestration |
 | `legacy_linker.py` | Links veteran exports to `master.mdb` |
 | `parent_optimizer.py` | Local branch, pair and future-GP scoring |
-| `transfer_helper.py` | Collection cleanup analysis and dominance checks |
-| `spark_protection.py` | Independent Spark-heritage verdict floor and replacement comparison |
+| `transfer_helper.py` | Collection-portfolio cleanup analysis and exhaustive strict-replacement checks |
+| `spark_protection.py` | Strategic Spark-heritage coverage and strict replacement comparison |
 | `uma_moe.py` | uma.moe API discovery, normalisation and online pairing |
 | `lineage_planner.py` | Native uma.moe Lineage Planner JSON export |
 | `scoring_config.py` | Scoring profile loading, migration and validation |
 | `default_parent_scoring.json` | Bundled structural scoring defaults |
 | `default_skill_priorities.json` | Bundled per-skill White Spark priorities |
+| `tests/` | Automated engine, UI, release, documentation and i18n checks |
 
-Test modules are part of the source tree and are intentionally versioned.
+Test modules are project source code, intentionally versioned and kept outside the application
+root so the runtime files remain easy to scan.
 
 ## Main outputs
 
@@ -277,6 +290,20 @@ The GUI is the recommended workflow. Local linking, catalogue generation, lineag
 py cli.py --help
 ```
 
+## Tests
+
+Install the build dependencies, then run the portable suite and bilingual audit:
+
+```powershell
+py -m pip install -r requirements-build-qt.txt
+py -m pytest -q tests --ignore=tests/test_qt_runtime.py
+py tests/check_i18n.py
+```
+
+`build_windows_qt.ps1` additionally discovers every Qt runtime test and executes each one in a
+fresh process before the visual layout audit and packaging. This avoids native Qt teardown issues
+without silently omitting newly added runtime tests.
+
 ## Windows build
 
 ```powershell
@@ -292,8 +319,8 @@ The uma.moe API key can be remembered from the application. On Windows it is enc
 The `Windows release` GitHub Actions workflow builds the same package on every `v*` tag and attaches the archive and checksum to the corresponding GitHub release:
 
 ```powershell
-git tag v1.7.1
-git push origin v1.7.1
+git tag v1.7.2
+git push origin v1.7.2
 ```
 
 The workflow can also be started manually to obtain a downloadable build artifact without creating a release.

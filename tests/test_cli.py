@@ -98,8 +98,9 @@ class CliWorkflowTests(unittest.TestCase):
                 candidates_csv_path=output / "candidates.csv",
                 summary_txt_path=output / "summary.txt",
                 safe_transfer_count=1,
+                recommended_transfer_count=2,
+                protected_count=4,
                 review_count=2,
-                likely_keep_count=3,
                 keep_count=4,
             )
             args = self._args(

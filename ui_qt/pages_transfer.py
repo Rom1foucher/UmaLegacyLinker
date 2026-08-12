@@ -8,6 +8,7 @@ from typing import Any
 from PySide6.QtCore import QItemSelection, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTableView,
     QTextBrowser,
@@ -54,26 +56,63 @@ class TransferPage(QWidget):
 
         safety = QFrame()
         safety.setObjectName("panel")
-        safety_layout = QHBoxLayout(safety)
+        safety_layout = QGridLayout(safety)
         safety_layout.setContentsMargins(16, 12, 16, 12)
         self.safety_text = muted_label("")
+        self.mode_label = QLabel("")
+        self.mode_combo = ThemedComboBox()
+        self.upcoming_cm_check = QCheckBox("")
+        self.upcoming_cm_limit = QSpinBox()
+        self.upcoming_cm_limit.setRange(1, 20)
+        self.team_trials_check = QCheckBox("")
+        self.generic_profiles_check = QCheckBox("")
         self.run_button = QPushButton("")
         self.run_button.setObjectName("primary")
         self.load_button = QPushButton("")
         self.open_button = QPushButton("")
-        safety_layout.addWidget(self.safety_text, 1)
-        safety_layout.addWidget(self.run_button)
-        safety_layout.addWidget(self.load_button)
-        safety_layout.addWidget(self.open_button)
+        safety_layout.addWidget(self.safety_text, 0, 0, 1, 8)
+        safety_layout.addWidget(self.mode_label, 1, 0)
+        safety_layout.addWidget(self.mode_combo, 1, 1)
+        safety_layout.addWidget(self.upcoming_cm_check, 1, 2)
+        safety_layout.addWidget(self.upcoming_cm_limit, 1, 3)
+        safety_layout.addWidget(self.team_trials_check, 2, 0, 1, 2)
+        safety_layout.addWidget(self.generic_profiles_check, 2, 2, 1, 2)
+        safety_layout.setColumnStretch(4, 1)
+        safety_layout.addWidget(self.run_button, 2, 5)
+        safety_layout.addWidget(self.load_button, 2, 6)
+        safety_layout.addWidget(self.open_button, 2, 7)
         root.addWidget(safety)
+
+        self.upcoming_cm_check.setChecked(
+            self.context.store.get("transfer_include_upcoming_cm", "1") in {"1", "true", "True"}
+        )
+        try:
+            cm_limit = int(self.context.store.get("transfer_upcoming_cm_limit", "5"))
+        except ValueError:
+            cm_limit = 5
+        self.upcoming_cm_limit.setValue(max(1, min(20, cm_limit)))
+        self.team_trials_check.setChecked(
+            self.context.store.get("transfer_include_team_trials", "0") in {"1", "true", "True"}
+        )
+        self.generic_profiles_check.setChecked(
+            self.context.store.get("transfer_include_generic_profiles", "0") in {"1", "true", "True"}
+        )
+        self.upcoming_cm_limit.setEnabled(self.upcoming_cm_check.isChecked())
 
         cards = QGridLayout()
         cards.setHorizontalSpacing(10)
         self.safe_card = StatusCard("", "0", "")
+        self.recommended_card = StatusCard("", "0", "")
         self.review_card = StatusCard("", "0", "")
-        self.likely_card = StatusCard("", "0", "")
         self.keep_card = StatusCard("", "0", "")
-        for index, card in enumerate((self.safe_card, self.review_card, self.likely_card, self.keep_card)):
+        self.protected_card = StatusCard("", "0", "")
+        for index, card in enumerate((
+            self.safe_card,
+            self.recommended_card,
+            self.review_card,
+            self.keep_card,
+            self.protected_card,
+        )):
             cards.addWidget(card, 0, index)
             cards.setColumnStretch(index, 1)
         root.addLayout(cards)
@@ -113,6 +152,7 @@ class TransferPage(QWidget):
         root.addWidget(splitter, 1)
 
         self.run_button.clicked.connect(self.start_analysis)
+        self.upcoming_cm_check.toggled.connect(self.upcoming_cm_limit.setEnabled)
         self.load_button.clicked.connect(lambda: self.load_latest(show_errors=True))
         self.open_button.clicked.connect(self.open_output)
         self.status_combo.currentIndexChanged.connect(self.apply_filters)
@@ -128,10 +168,11 @@ class TransferPage(QWidget):
     def _columns(self) -> list[Column]:
         t = self.context.t
         labels = {
-            "safe_transfer": t("Transfert sûr"),
+            "safe_transfer": t("Transfert strictement sûr"),
+            "recommended_transfer": t("Transfert recommandé"),
             "review": t("À examiner"),
-            "likely_keep": t("Probablement conserver"),
             "keep": t("Conserver"),
+            "protected": t("Protégé"),
         }
         return [
             Column(t("Verdict"), lambda row: labels.get(str(row.get("status")), row.get("status") or "—")),
@@ -143,7 +184,17 @@ class TransferPage(QWidget):
             Column(t("Rang parent"), lambda row: f"top {float(row.get('best_parent_percentile') or 100):.1f}%", RIGHT),
             Column(t("Meilleur GP"), nested("best_grandparent_score"), RIGHT),
             Column(t("Rang GP"), lambda row: f"top {float(row.get('best_grandparent_percentile') or 100):.1f}%", RIGHT),
-            Column(t("Remplaçant"), nested("dominated_by", "card_name")),
+            Column(
+                t("Couverture / remplaçant"),
+                lambda row: (
+                    (row.get("dominated_by") or {}).get("card_name")
+                    or ", ".join(
+                        str(item.get("trained_chara_id"))
+                        for item in row.get("covered_by_portfolio") or []
+                    )
+                    or "—"
+                ),
+            ),
             Column(t("Avance moy."), lambda row: (row.get("dominated_by") or {}).get("mean_score_lead", "—"), RIGHT),
             Column(t("Référencé par"), nested("referenced_by_local_veterans"), RIGHT),
         ]
@@ -164,8 +215,21 @@ class TransferPage(QWidget):
             t("Identifie les copies redondantes sans jamais modifier l’export source ni prendre une décision à ta place."),
         )
         self.safety_text.setText(
-            t("« Transfert sûr » exige un remplaçant du même costume et de la même unique, non inférieur dans chaque niche viable et sans perte de patrimoine Spark protégé. Les autres verdicts restent des diagnostics manuels.")
+            t("Le socle permanent protège les usages futurs. L’audit exhaustif peut prouver un transfert strictement sûr ; en mode rapide, les redondances restent recommandées.")
         )
+        self.mode_label.setText(t("Mode d’analyse"))
+        selected_mode = self.mode_combo.currentData() or self.context.store.get("transfer_analysis_mode", "fast")
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.clear()
+        self.mode_combo.addItem(t("Rapide (recommandé)"), "fast")
+        self.mode_combo.addItem(t("Audit exhaustif (lent)"), "exhaustive")
+        selected_index = self.mode_combo.findData(selected_mode)
+        self.mode_combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+        self.mode_combo.blockSignals(False)
+        self.upcoming_cm_check.setText(t("Inclure les prochaines CM"))
+        self.upcoming_cm_limit.setSuffix(" " + t("CM max."))
+        self.team_trials_check.setText(t("Inclure Team Trials"))
+        self.generic_profiles_check.setText(t("Inclure les profils génériques"))
         self.run_button.setText(t("Analyser les vétérans locaux"))
         self.load_button.setText(t("Charger le dernier rapport"))
         self.open_button.setText(t("Ouvrir la sortie"))
@@ -176,10 +240,11 @@ class TransferPage(QWidget):
         self.status_combo.clear()
         for label, value in (
             ("Tous les verdicts", None),
-            ("Transfert sûr", "safe_transfer"),
+            ("Transfert strictement sûr", "safe_transfer"),
+            ("Transfert recommandé", "recommended_transfer"),
             ("À examiner", "review"),
-            ("Probablement conserver", "likely_keep"),
             ("Conserver", "keep"),
+            ("Protégé", "protected"),
         ):
             self.status_combo.addItem(t(label), value)
         index = self.status_combo.findData(selected)
@@ -190,15 +255,25 @@ class TransferPage(QWidget):
 
     def _refresh_cards(self) -> None:
         t = self.context.t
-        counts = {key: 0 for key in ("safe_transfer", "review", "likely_keep", "keep")}
+        counts = {
+            key: 0
+            for key in (
+                "safe_transfer",
+                "recommended_transfer",
+                "review",
+                "keep",
+                "protected",
+            )
+        }
         for record in self._records:
             key = str(record.get("status") or "")
             if key in counts:
                 counts[key] += 1
-        self.safe_card.set_content(t("Transfert sûr"), str(counts["safe_transfer"]), t("Remplaçant strict confirmé"), "ok")
+        self.safe_card.set_content(t("Strictement sûr"), str(counts["safe_transfer"]), t("Confirmé par audit exhaustif"), "ok")
+        self.recommended_card.set_content(t("Recommandé"), str(counts["recommended_transfer"]), t("Redondant dans le portefeuille"), "ok")
         self.review_card.set_content(t("À examiner"), str(counts["review"]), t("Rôle incertain ou Spark à vérifier"), "warning")
-        self.likely_card.set_content(t("Probablement conserver"), str(counts["likely_keep"]), t("Niche ou patrimoine Spark fort"), "neutral")
-        self.keep_card.set_content(t("Conserver"), str(counts["keep"]), t("Valeur compétitive"), "info")
+        self.keep_card.set_content(t("Conserver"), str(counts["keep"]), t("Nécessaire au portefeuille"), "info")
+        self.protected_card.set_content(t("Protégé"), str(counts["protected"]), t("Verrou ou mémo en jeu"), "neutral")
 
     def set_records(self, records: list[dict[str, Any]]) -> None:
         self._records = list(records)
@@ -256,6 +331,16 @@ class TransferPage(QWidget):
 
     def start_analysis(self) -> None:
         priority_text = self.context.store.get("skill_priorities_path")
+        analysis_mode = str(self.mode_combo.currentData() or "fast")
+        self.context.store.update(
+            {
+                "transfer_analysis_mode": analysis_mode,
+                "transfer_include_upcoming_cm": int(self.upcoming_cm_check.isChecked()),
+                "transfer_upcoming_cm_limit": self.upcoming_cm_limit.value(),
+                "transfer_include_team_trials": int(self.team_trials_check.isChecked()),
+                "transfer_include_generic_profiles": int(self.generic_profiles_check.isChecked()),
+            }
+        )
         request = TransferRequest(
             master_path=Path(self.context.master_path).expanduser(),
             veterans_json_path=Path(self.context.veterans_json_path).expanduser(),
@@ -263,6 +348,11 @@ class TransferPage(QWidget):
             course_overrides_path=active_course_overrides_path(self.context.course_overrides_path),
             use_custom_scoring=self.context.store.get("use_custom_scoring", "0") in {"1", "true", "True"},
             skill_priorities_path=(Path(priority_text).expanduser() if priority_text else None),
+            analysis_mode=analysis_mode,
+            include_upcoming_cm_context=self.upcoming_cm_check.isChecked(),
+            upcoming_cm_limit=self.upcoming_cm_limit.value(),
+            include_team_trials=self.team_trials_check.isChecked(),
+            include_generic_profiles=self.generic_profiles_check.isChecked(),
         )
         self.task_requested.emit(
             partial(run_transfer_analysis, request),

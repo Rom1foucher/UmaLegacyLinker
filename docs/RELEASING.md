@@ -3,14 +3,25 @@
 ## Automated Windows release
 
 1. Update `APP_VERSION` in `ui_qt/core.py` and the four-part versions in `windows_version_info_qt.txt`.
-2. Update `CHANGELOG.md`.
-3. Run `python -m pytest`.
-4. Commit and push the release changes.
-5. Create and push the matching tag:
+2. Update `CHANGELOG.md` and any affected README/docs sections.
+3. Install `requirements-build-qt.txt`, then run the portable test and translation checks:
 
    ```powershell
-   git tag v1.7.1
-   git push origin v1.7.1
+   py -m pytest -q tests --ignore=tests/test_qt_runtime.py
+   py tests/check_i18n.py
+   ```
+
+4. Run `build_windows_qt.ps1 -SkipInstall -RunLayoutAudit` on Windows when a local release build is
+   required. The script discovers every Qt runtime test, runs each in a fresh process, performs the
+   visual audit and creates the ZIP/checksum pair. GitHub Actions executes the same command.
+5. Confirm that `APP_VERSION`, Windows metadata, the newest changelog section and the release tag
+   agree. `tests/test_release_consistency.py` enforces the repository-side values.
+6. Commit and push the release changes.
+7. Create and push the matching tag:
+
+   ```powershell
+   git tag v1.7.2
+   git push origin v1.7.2
    ```
 
 The `Windows release` workflow runs the tests and full visual layout audit on Windows, builds the packaged bundle, computes its SHA-256 checksum and attaches both files to the GitHub release. The visual QA report is uploaded even when the audit fails.
@@ -32,7 +43,9 @@ Outputs:
 - `dist\UmaLegacyLinkerQt-win64.zip`;
 - `dist\UmaLegacyLinkerQt-win64.zip.sha256`.
 
-The bundle is self-contained. The target PC does not need Python, PySide6, PyYAML or adjacent default-profile JSON files. Extract the whole directory before launching `UmaLegacyLinkerQt.exe`.
+The bundle is self-contained. The target PC does not need Python, PySide6, PyYAML or manually
+copied default-profile JSON files. The profiles are bundled inside the extracted application
+directory. Extract the whole ZIP before launching `UmaLegacyLinkerQt.exe`.
 
 ## Verification
 

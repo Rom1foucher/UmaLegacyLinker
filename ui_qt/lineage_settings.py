@@ -302,7 +302,7 @@ class LineageRaceEditor(QWidget):
         t = self.context.t
         self.shared_hint.setText(
             t(
-                "Ces réglages sont partagés en temps réel entre Optimisation de lignée et uma.moe. Les options de scoring sont aussi synchronisées avec Pondérations."
+                "Ces réglages forment le contexte partagé des recherches locales et uma.moe. Les options de scoring restent synchronisées avec Pondérations."
             )
         )
         self.surface_label.setText(t("Surface"))

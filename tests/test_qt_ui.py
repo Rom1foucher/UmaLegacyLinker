@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from check_i18n import FRENCH_MARKERS
+from tests.check_i18n import FRENCH_MARKERS
 from i18n import scoring_label, translate_text
 from parent_optimizer import OptimizerError
 from scoring_config import iter_leaf_paths, read_json_object
@@ -54,7 +54,32 @@ from ui_qt.weight_help import describe_weight
 from uma_moe import UmaMoeError
 
 
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
 class QtUiCoreTests(unittest.TestCase):
+    def test_transfer_page_exposes_analysis_scope_controls(self) -> None:
+        source = (PROJECT_DIR / "ui_qt" / "pages_transfer.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        attributes = {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+        }
+        self.assertTrue(
+            {
+                "mode_combo",
+                "upcoming_cm_check",
+                "upcoming_cm_limit",
+                "team_trials_check",
+                "generic_profiles_check",
+            }.issubset(attributes)
+        )
+        self.assertIn('"fast"', source)
+        self.assertIn('"exhaustive"', source)
+
     def test_partial_white_skill_priorities_merge_recursively(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -180,7 +205,7 @@ class QtUiCoreTests(unittest.TestCase):
         self.assertNotEqual(SPARK_COLORS["white_useful"], SPARK_COLORS["white_priority"])
 
     def test_weight_groups_preview_normalised_shares_without_mutation(self) -> None:
-        config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
+        config = read_json_object(PROJECT_DIR / "default_parent_scoring.json")
         path = ("mode_weights", "parent_pair", "distance_s")
         paths = relative_group_paths(config, path)
         shares = relative_group_shares(config, path)
@@ -214,7 +239,7 @@ class QtUiCoreTests(unittest.TestCase):
         self.assertEqual(sum(len(group) for group in groups), 32)
 
     def test_subcategories_cover_every_weight_in_curated_order(self) -> None:
-        config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
+        config = read_json_object(PROJECT_DIR / "default_parent_scoring.json")
         hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         paths = [
             path
@@ -222,7 +247,7 @@ class QtUiCoreTests(unittest.TestCase):
             if not any(key in hidden or key.endswith("description") for key in path)
         ]
         sources = {weight_subcategory(path)[1] for path in paths}
-        self.assertEqual(len(sources), 53)
+        self.assertEqual(len(sources), 54)
         self.assertNotIn("Autres réglages", sources)
         for source in sources:
             with self.subTest(source=source):
@@ -232,7 +257,7 @@ class QtUiCoreTests(unittest.TestCase):
         self.assertEqual(ordered[-1][0], "transfer_helper")
 
     def test_visible_weight_names_never_fall_back_to_json_keys(self) -> None:
-        config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
+        config = read_json_object(PROJECT_DIR / "default_parent_scoring.json")
         hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         missing: list[str] = []
         for path, _value in iter_leaf_paths(config):
@@ -245,7 +270,7 @@ class QtUiCoreTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_every_visible_weight_has_bilingual_contextual_help(self) -> None:
-        config = read_json_object(Path(__file__).parent / "default_parent_scoring.json")
+        config = read_json_object(PROJECT_DIR / "default_parent_scoring.json")
         hidden = {"schema_version", "description", "formula_notes", "notes", "weight_source"}
         checked = 0
         for path, value in iter_leaf_paths(config):
@@ -267,7 +292,7 @@ class QtUiCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 222)
+        self.assertEqual(checked, 229)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -595,7 +620,7 @@ class QtUiCoreTests(unittest.TestCase):
 
     def test_optimizer_detail_browser_exists_before_sorting_can_emit_layout_changed(self) -> None:
         source = (
-            Path(__file__).parent / "ui_qt" / "pages_optimizer.py"
+            PROJECT_DIR / "ui_qt" / "pages_optimizer.py"
         ).read_text(encoding="utf-8")
         result_pane = source[source.index("class ResultPane"):source.index("class OptimizerPage")]
         self.assertLess(
@@ -785,7 +810,16 @@ class QtUiCoreTests(unittest.TestCase):
                 course_weights_path=root / "courses.json",
             )
             expected = object()
-            request = TransferRequest(master, veterans, root)
+            request = TransferRequest(
+                master,
+                veterans,
+                root,
+                analysis_mode="exhaustive",
+                include_upcoming_cm_context=False,
+                upcoming_cm_limit=3,
+                include_team_trials=True,
+                include_generic_profiles=True,
+            )
             with (
                 patch("ui_qt.core.link_veterans", return_value=linked),
                 patch("ui_qt.core.generate_manual_skill_weights", return_value=manual),
@@ -801,6 +835,14 @@ class QtUiCoreTests(unittest.TestCase):
             self.assertEqual(
                 analyse.call_args.kwargs["course_weights_path"], manual.course_weights_path
             )
+            active_config = read_json_object(
+                analyse.call_args.kwargs["scoring_config_path"]
+            )["transfer_helper"]
+            self.assertEqual(active_config["analysis_mode"], "exhaustive")
+            self.assertFalse(active_config["include_upcoming_cm_context"])
+            self.assertEqual(active_config["upcoming_cm_limit"], 3)
+            self.assertTrue(active_config["include_team_trials"])
+            self.assertTrue(active_config["include_generic_profiles"])
 
     def test_online_parent_mode_reuses_exact_pair_ranker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1083,7 +1125,7 @@ class QtUiCoreTests(unittest.TestCase):
             "Fichier introuvable", "Profil par défaut actif", "Profil personnalisé actif",
         }
         missing: list[str] = []
-        for path in (Path(__file__).parent / "ui_qt").glob("*.py"):
+        for path in (PROJECT_DIR / "ui_qt").glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not node.args:

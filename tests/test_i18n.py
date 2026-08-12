@@ -82,6 +82,17 @@ class I18nTests(unittest.TestCase):
             "Spark-protection floor: Alice [#1] remains review versus "
             "Replacement [#2] — deficits: Nimble Navigator",
         )
+        self.assertEqual(
+            translate_text(
+                "Transfert strictement sûr détaillé : Alice [#1] — Sparks : Turf 3★",
+                "en",
+            ),
+            "Detailed strictly safe transfer: Alice [#1] — Sparks: Turf 3★",
+        )
+        self.assertEqual(
+            translate_text("Remplaçant vérifié : Bob [#2]", "en"),
+            "Verified replacement: Bob [#2]",
+        )
 
 
     def test_polish_runtime_strings_are_translated(self) -> None:

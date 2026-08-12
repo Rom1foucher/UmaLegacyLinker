@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import unicodedata
+from functools import lru_cache
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -344,6 +345,7 @@ def parse_condition(expression: str | None) -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=4096)
 def slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")

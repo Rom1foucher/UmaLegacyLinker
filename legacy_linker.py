@@ -705,6 +705,14 @@ def link_veterans(
 
             entry = {
                 "trained_chara_id": veteran.get("trained_chara_id"),
+                # Preserve the in-game safety metadata all the way to the
+                # Transfer Helper.  These fields belong to the trained copy,
+                # not to its card/costume identity, and must not disappear
+                # during linking.
+                "is_locked": bool(veteran.get("is_locked")),
+                "is_saved": bool(veteran.get("is_saved")),
+                "icon_type": int(veteran.get("icon_type") or 0),
+                "memo": str(veteran.get("memo") or ""),
                 "rank": veteran.get("rank"),
                 "rank_score": veteran.get("rank_score"),
                 "fans": veteran.get("fans"),

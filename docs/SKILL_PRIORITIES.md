@@ -5,9 +5,9 @@ Sparks for each target profile. It is separate from
 `parent_scoring_overrides.json`, which controls structural weights, probability
 curves, thresholds and the relative importance of the White component itself.
 
-The selectors shown in **Lineage Optimisation**, **uma.moe** and
-**Weights → Individual White Skill priorities** all edit the same persisted
-setting. Leaving the path empty uses `default_skill_priorities.json`.
+The selectors shown in the shared **Search** workspace and in
+**Weights → Individual White Skill priorities** edit the same persisted setting for local and
+uma.moe searches. Leaving the path empty uses `default_skill_priorities.json`.
 
 ## Merge and output pipeline
 

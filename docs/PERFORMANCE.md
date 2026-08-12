@@ -9,7 +9,7 @@ the workload is Python code constrained by the GIL.
 
 1. Final parent-pair searches: Cartesian products of pre-ranked parent branches.
 2. uma.moe automatic pairing: local pool × remote pool, followed by detailed scoring.
-3. Transfer Helper: every veteran evaluated across every Ace/profile/role context, plus same-costume dominance comparisons.
+3. Transfer Helper: every veteran evaluated across the permanent profile matrix and naturally viable Aces, followed by same-costume portfolio coverage. Strict-replacement verdicts are reserved for exhaustive audits.
 
 ## Recommended implementation
 
@@ -39,9 +39,9 @@ shared process-safe event and checked between batches.
 
 1. Parallelise uma.moe pair summaries first. It is the most isolated Cartesian workload.
 2. Apply the same batch executor to local final-parent pairs.
-3. Parallelise Transfer Helper by profile/context chunks, then deterministically merge each veteran's maxima, percentile evidence and dominance accumulators.
+3. Parallelise exhaustive Transfer Helper audits by profile/context chunks, then deterministically merge each veteran's maxima, percentile evidence and portfolio inputs.
 
-Transfer Helper is the most delicate stage because percentile distributions and dominance relations are global. Parallel workers should emit raw per-context scores; verdicts and final dominance decisions should remain in the parent process.
+Transfer Helper is the most delicate stage because percentile distributions and portfolio requirements are global. Parallel workers should emit raw per-context scores; portfolio selection and final strict-replacement decisions should remain in the parent process. Fast mode already removes most of the former cost by filtering implausible Ace/profile pairs and merging equivalent future-GP aptitude signatures.
 
 ## Validation
 

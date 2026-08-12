@@ -5,7 +5,9 @@ import unittest
 from transfer_helper import (
     DominanceAccumulator,
     _factor_snapshot,
+    _select_portfolio,
     _update_group_dominance_for_scores,
+    classify_portfolio_records,
     classify_transfer_records,
     comparison_group_key,
 )
@@ -322,6 +324,110 @@ class TransferHelperGroupingTests(unittest.TestCase):
             },
         }
         self.assertEqual(comparison_group_key(first), comparison_group_key(second))
+
+
+class TransferHelperPortfolioTests(unittest.TestCase):
+    @staticmethod
+    def portfolio_record(trained_id: int, score: float, *, locked: bool = False) -> dict:
+        profile = {
+            "context_key": "permanent:turf:mile:pace_chaser",
+            "profile": "Permanent · turf/mile/pace_chaser",
+            "score": score,
+            "utility": 0.90,
+            "percentile": 5.0,
+        }
+        return {
+            "trained_chara_id": trained_id,
+            "card_name": f"Card {trained_id}",
+            "rank_score": int(score * 100),
+            "is_locked": locked,
+            "memo": "",
+            "_parent_profiles": [dict(profile)],
+            "_grandparent_profiles": [],
+            "_spark_heritage": {"skills": {}, "packages": []},
+        }
+
+    def test_locked_copy_is_protected_but_does_not_replace_performance_keeper(self) -> None:
+        records = [
+            self.portfolio_record(1, 55.0, locked=True),
+            self.portfolio_record(2, 80.0),
+            self.portfolio_record(3, 77.0),
+        ]
+        veterans = [
+            {"factors": {"by_type": {"red_aptitude": []}}}
+            for _record in records
+        ]
+        groups = {"card:1": [0, 1, 2]}
+        selected, requirements = _select_portfolio(
+            groups,
+            records,
+            veterans,
+            competitive_score_floor=67.5,
+            competitive_utility_floor=0.78,
+            minimum_absolute_floor_ratio=0.8,
+            regret_tolerance=2.5,
+            spark_protection_config={},
+        )
+        self.assertEqual(selected, {0, 1})
+        classify_portfolio_records(
+            records,
+            groups,
+            selected,
+            requirements,
+            {},
+            dominance_mean_margin=1.0,
+            spark_protection_config={},
+        )
+        self.assertEqual(records[0]["status"], "protected")
+        self.assertEqual(records[1]["status"], "keep")
+        self.assertEqual(records[2]["status"], "recommended_transfer")
+        self.assertIsNone(records[2]["dominated_by"])
+        self.assertEqual(
+            {item["trained_chara_id"] for item in records[2]["covered_by_portfolio"]},
+            {1, 2},
+        )
+
+    def test_fast_scope_keeps_a_strict_candidate_as_a_recommendation(self) -> None:
+        records = [
+            self.portfolio_record(1, 70.0),
+            self.portfolio_record(2, 80.0),
+        ]
+        veterans = [
+            {"factors": {"by_type": {"red_aptitude": []}}}
+            for _record in records
+        ]
+        groups = {"card:1": [0, 1]}
+        selected, requirements = _select_portfolio(
+            groups,
+            records,
+            veterans,
+            competitive_score_floor=67.5,
+            competitive_utility_floor=0.78,
+            minimum_absolute_floor_ratio=0.8,
+            regret_tolerance=2.5,
+            spark_protection_config={},
+        )
+        relation = DominanceAccumulator(
+            parent_no_worse=True,
+            grandparent_no_worse=True,
+            pair_support_no_worse=True,
+            parent_sum_delta=10.0,
+            parent_count=1,
+            minimum_delta=10.0,
+            maximum_delta=10.0,
+        )
+        classify_portfolio_records(
+            records,
+            groups,
+            selected,
+            requirements,
+            {(0, 1): relation},
+            dominance_mean_margin=1.0,
+            spark_protection_config={},
+            allow_strict_transfers=False,
+        )
+        self.assertEqual(records[0]["status"], "recommended_transfer")
+        self.assertIsNone(records[0]["dominated_by"])
 
 
 if __name__ == "__main__":

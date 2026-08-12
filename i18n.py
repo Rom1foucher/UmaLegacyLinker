@@ -73,7 +73,7 @@ EXACT_EN: dict[str, str] = {
     "Preset de course": "Course preset",
     "Profil générique": "Generic profile",
     "Aucun preset — profil manuel": "No preset — manual profile",
-    "Ces réglages sont partagés en temps réel entre Optimisation de lignée et uma.moe. Les options de scoring sont aussi synchronisées avec Pondérations.": "These settings are shared in real time between Lineage Optimisation and uma.moe. Scoring options are also synchronised with Weights.",
+    "Ces réglages forment le contexte partagé des recherches locales et uma.moe. Les options de scoring restent synchronisées avec Pondérations.": "These settings form the shared context for local and uma.moe searches. Scoring options remain synchronised with Weights.",
     "Facultatif — corrections liées au tracé exact ; le fichier fourni contient CM9 à CM16.": "Optional — adjustments for the exact course layout; the bundled file contains CM9 to CM16.",
     "Facultatif — CM16 à CM46, profils Team Trials et archive CM9 à CM15.": "Optional — CM16 to CM46, Team Trials profiles, and the CM9 to CM15 archive.",
     "Calculer les meilleurs parents / grands-parents": "Calculate the best parents / grandparents",
@@ -210,7 +210,7 @@ EXACT_EN: dict[str, str] = {
     "Ouvrir le fichier": "Open file",
     "Revenir au défaut": "Restore default",
     "Ce fichier règle la valeur de chaque white skill par surface, distance et style. Un profil partiel est accepté : il est fusionné avec default_skill_priorities.json avant chaque calcul.": "This file controls the value of each white skill by surface, distance and running style. Partial profiles are accepted and merged with default_skill_priorities.json before every calculation.",
-    "Même source que dans Optimisation de lignée et uma.moe. Un JSON partiel est fusionné avec default_skill_priorities.json avant chaque calcul.": "This is the same source used by Lineage Optimisation and uma.moe. A partial JSON file is merged with default_skill_priorities.json before every calculation.",
+    "Même source que dans Recherche de lignées, pour les calculs locaux et uma.moe. Un JSON partiel est fusionné avec default_skill_priorities.json avant chaque calcul.": "This is the same source used by Lineage Search for local and uma.moe calculations. A partial JSON file is merged with default_skill_priorities.json before every calculation.",
     "Depuis la V9, le classement utilise les priorités manuelles intégrées (default_skill_priorities.json), pas Umalator. Cet import est conservé comme outil de diagnostic.": "Since V9, rankings use the bundled manual priorities (default_skill_priorities.json), not Umalator. The importer below is retained as a diagnostic tool.",
     "Batch Umalator": "Umalator batch",
     "Fichier umalator_skill_chart_batch_v2_*.json produit par le Skill Chart batch v2.": "umalator_skill_chart_batch_v2_*.json file produced by Skill Chart batch v2.",
@@ -255,6 +255,42 @@ EXACT_EN: dict[str, str] = {
 # ``card_id`` name, while user-facing English consistently refers to costume
 # variants and trained veterans/copies.
 EXACT_EN.update({
+    "Transfert strictement sûr": "Strictly safe transfer",
+    "Transfert recommandé": "Recommended transfer",
+    "Protégé": "Protected",
+    "Strictement sûr": "Strictly safe",
+    "Recommandé": "Recommended",
+    "Rapide": "Fast",
+    "Audit exhaustif": "Exhaustive audit",
+    "Mode d’analyse": "Analysis mode",
+    "Rapide (recommandé)": "Fast (recommended)",
+    "Audit exhaustif (lent)": "Exhaustive audit (slow)",
+    "Inclure les prochaines CM": "Include upcoming CMs",
+    "CM max.": "CMs max.",
+    "Inclure Team Trials": "Include Team Trials",
+    "Inclure les profils génériques": "Include generic profiles",
+    "Couverture du portefeuille": "Portfolio coverage",
+    "Confirmé par audit exhaustif": "Confirmed by exhaustive audit",
+    "Redondant dans le portefeuille": "Redundant in the portfolio",
+    "Nécessaire au portefeuille": "Required by the portfolio",
+    "Verrou ou mémo en jeu": "In-game lock or memo",
+    "Couverture / remplaçant": "Coverage / replacement",
+    "Couverture collective": "Collective coverage",
+    "Pourquoi cette copie est conservée": "Why this copy is retained",
+    "Verrouillé en jeu": "Locked in game",
+    "Mémo": "Memo",
+    "Oui": "Yes",
+    "Non": "No",
+    "Le socle permanent protège les usages futurs. L’audit exhaustif peut prouver un transfert strictement sûr ; en mode rapide, les redondances restent recommandées.": "The permanent baseline protects future uses. The exhaustive audit can prove a strictly safe transfer; in fast mode, redundancies remain recommendations.",
+    "Un remplaçant strict de la même carte et de la même unique couvre toutes les niches viables.": "A strict replacement of the same card and Unique covers every viable niche.",
+    "La copie est redondante dans le portefeuille conservé ; sa couverture peut être répartie sur plusieurs vétérans.": "The copy is redundant in the retained portfolio; several veterans may share its coverage.",
+    "Cette copie est nécessaire pour préserver une niche compétitive ou un patrimoine stratégique du costume.": "This copy is required to preserve a competitive niche or a strategic asset for the costume.",
+    "Ce vétéran est verrouillé en jeu et ne peut jamais être recommandé au transfert.": "This veteran is locked in game and can never be recommended for transfer.",
+    "Ce vétéran porte un mémo et reste protégé.": "This veteran has a memo and remains protected.",
+    "La couverture du portefeuille est incomplète : vérification manuelle nécessaire.": "Portfolio coverage is incomplete: manual review is required.",
+    "Aucun profil actif pour le Transfer Helper. Activez le socle permanent ou un périmètre additionnel dans transfer_helper.": "No Transfer Helper profile is active. Enable the permanent baseline or an additional scope under transfer_helper.",
+    "transfer_helper.analysis_mode doit valoir 'fast' ou 'exhaustive'.": "transfer_helper.analysis_mode must be 'fast' or 'exhaustive'.",
+    "transfer_helper.minimum_ace_aptitude_rank ne peut pas dépasser 8 (S).": "transfer_helper.minimum_ace_aptitude_rank cannot exceed 8 (S).",
     "Diagnostic Umalator (legacy)": "Umalator diagnostics (legacy)",
     "(aucun)": "(none)",
     "Sélectionne un master.mdb valide avant d’importer un parent.": "Select a valid master.mdb before importing a parent.",
@@ -1275,6 +1311,13 @@ EXACT_EN.update({
 })
 
 SCORING_LABELS_EN: dict[str, str] = {
+    "analysis_mode": "Analysis mode",
+    "portfolio_regret_tolerance": "Maximum portfolio score regret",
+    "minimum_ace_aptitude_rank": "Minimum natural Ace aptitude rank",
+    "include_permanent_archetypes": "Include permanent archetype baseline",
+    "include_upcoming_cm_context": "Add upcoming Champion Meetings",
+    "portfolio_direct_white_minimum_context_weight": "Minimum value of a direct White covered by the portfolio",
+    "portfolio_direct_white_min_stars": "Minimum direct White stars covered by the portfolio",
     "aptitude_inheritance": "Pinks — aptitude inheritance",
     "pink_base_proc_rates": "Pink proc rates by star level",
     "ignore_multi_rank_procs": "Ignore multi-rank procs",
@@ -1460,6 +1503,13 @@ SCORING_LABELS_EN: dict[str, str] = {
 }
 
 SCORING_LABELS_FR: dict[str, str] = {
+    "analysis_mode": "Mode d’analyse",
+    "portfolio_regret_tolerance": "Regret de score maximal du portefeuille",
+    "minimum_ace_aptitude_rank": "Rang d’aptitude naturel minimal des Aces",
+    "include_permanent_archetypes": "Inclure le socle permanent d’archétypes",
+    "include_upcoming_cm_context": "Ajouter les Champion Meetings à venir",
+    "portfolio_direct_white_minimum_context_weight": "Valeur minimale d’une White directe couverte par le portefeuille",
+    "portfolio_direct_white_min_stars": "Étoiles minimales d’une White directe couverte par le portefeuille",
     "aptitude_inheritance": "Pinks — héritage des aptitudes",
     "pink_base_proc_rates": "Taux de proc Pink par étoiles",
     "ignore_multi_rank_procs": "Ignorer les procs de plusieurs rangs",
@@ -1898,8 +1948,8 @@ FRAGMENTS_EN.update({
     " cumulés.": " total.",
     "Pondération Transfer Helper — parent : ": "Transfer Helper parent weights: ",
     "Pondération Transfer Helper — futur GP : ": "Transfer Helper future-GP weights: ",
-    "Transfert sûr détaillé : ": "Detailed safe transfer: ",
-    "Remplaçant proposé : ": "Proposed replacement: ",
+    "Transfert strictement sûr détaillé : ": "Detailed strictly safe transfer: ",
+    "Remplaçant vérifié : ": "Verified replacement: ",
     "Plancher de protection Spark : ": "Spark-protection floor: ",
     " reste ": " remains ",
     " face à ": " versus ",
@@ -2083,7 +2133,7 @@ EXACT_EN.update({
 })
 
 # Contextual GP search merged from main: subcategory labels of the new weight
-# groups plus Qt strings surfaced by the extended check_i18n coverage.
+# groups plus Qt strings surfaced by the extended tests/check_i18n.py coverage.
 EXACT_EN.update({
     "Recherche avec parent opposé fixé": "Search with a fixed opposing parent",
     "Cohortes de récupération des parents API": "API parent-retrieval cohorts",
@@ -2193,6 +2243,7 @@ FRAGMENTS_EN.update({
     "Classement introuvable : ": "Ranking file not found: ",
     "Classement JSON invalide : ": "Invalid ranking JSON: ",
     "Type de recherche locale invalide": "Invalid local search type",
+    "Portefeuille impossible à couvrir pour ": "Unable to cover portfolio for ",
 })
 
 _FRAGMENTS_EN_PATTERN = re.compile(

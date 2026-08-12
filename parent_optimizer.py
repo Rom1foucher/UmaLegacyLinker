@@ -10,6 +10,7 @@ import sqlite3
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -298,6 +299,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+@lru_cache(maxsize=4096)
 def slugify(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
@@ -1122,6 +1124,24 @@ def _scenario_stat_targets(factor: dict[str, Any]) -> tuple[list[str], str]:
     return (list(fallback), "known_name_fallback") if fallback else ([], "unresolved")
 
 
+def _factor_identity(factor: dict[str, Any]) -> str:
+    """Return a stable game identity without collapsing punctuation in names.
+
+    Scenario factors such as ``Racing Spirit PWR`` and ``Racing Spirit PWR+``
+    can share the same :func:`slugify` result.  Linked factors retain their MDB
+    ids, so factor comparisons and diagnostics must prefer those ids and only
+    fall back to the exact display name for legacy payloads.
+    """
+    for field, prefix in (("factor_group_id", "group"), ("factor_id", "factor")):
+        try:
+            value = int(factor.get(field))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return f"{prefix}:{value}"
+    return f"name:{str(factor.get('name') or '').strip()}"
+
+
 def _blue_score(
     members: list[tuple[dict[str, Any], str, str]],
     distance: str,
@@ -1214,6 +1234,9 @@ def _blue_score(
             scenario_details.append({
                 "role": role,
                 "position": position,
+                "factor_identity": _factor_identity(factor),
+                "factor_id": factor.get("factor_id"),
+                "factor_group_id": factor.get("factor_group_id"),
                 "name": name,
                 "stars": stars,
                 "stat_targets": stat_targets,
@@ -1262,6 +1285,7 @@ def _blue_score(
             "per_event_probability_cap": scenario_probability_cap,
             "blue_equivalent_per_proc": blue_equivalent_per_proc,
             "uses_individual_affinity": True,
+            "uses_position_transmission": False,
             "factors": scenario_details,
             "factor_count": len(scenario_details),
             "unresolved_factor_count": sum(
@@ -2172,6 +2196,7 @@ def _white_score(
         "inspiration_event_count": event_count,
         "distinct_skill_probability_curve": distinct_skill_curve,
         "uses_individual_affinity": True,
+        "uses_position_transmission": False,
         "race_skill_policy": "no arbitrary multiplier: Race Sparks use their lower 1/2/3% base rates and merge with direct white copies of the same granted skill",
         "diversity_policy": "very low chances are suppressed; useful distinct skills receive separate utility; repeated copies only increase the same skill probability with diminishing returns",
         "top_skills": skill_details[:20],

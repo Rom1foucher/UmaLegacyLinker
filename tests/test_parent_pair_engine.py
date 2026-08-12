@@ -3,6 +3,7 @@ import unittest
 from parent_optimizer import (
     _aptitude_pair_score,
     _blue_score,
+    _pink_score,
     _race_scenario_score,
     _white_score,
     evaluate_parent_branch,
@@ -386,6 +387,9 @@ def test_scenario_spark_adds_expected_same_star_blue_equivalents_with_affinity()
             "per_event_probability_cap": 1.0,
             "blue_equivalent_per_proc": 1.0,
         },
+        # Position weights remain available to heuristic components, but the
+        # Crazyfellow proc formula contains no extra parent/GP multiplier.
+        "position_transmission": {"parent": 1.0, "grandparent": 0.5},
     }
 
     base_score, base_detail = _blue_score(
@@ -409,6 +413,50 @@ def test_scenario_spark_adds_expected_same_star_blue_equivalents_with_affinity()
     assert factor["proc_probability_per_event"] == 0.18
     assert factor["expected_proc_count"] == 0.36
     assert base_detail["scenario_blue_equivalent_raw"] == 0.261
+
+
+def test_scenario_sparks_keep_normal_plus_factor_ids_distinct():
+    normal = add_scenario(
+        member(120, "Normal", []), "Racing Spirit PWR", 3, "Power"
+    )
+    plus = add_scenario(
+        member(121, "Plus", []), "Racing Spirit PWR+", 3, "Guts"
+    )
+    normal_factor = normal["factors"]["by_type"]["scenario"][0]
+    plus_factor = plus["factors"]["by_type"]["scenario"][0]
+    normal_factor.update({"factor_id": 3100103, "factor_group_id": 31001})
+    plus_factor.update({"factor_id": 3100203, "factor_group_id": 31002})
+    config = {
+        "blue_star_quality": {"1": 0.12, "2": 0.78, "3": 1.0},
+        "blue_neutral_score": 0.0,
+        "blue_score_influence_by_distance": {"medium": 1.0},
+        "blue_stat_weights_by_distance": {
+            "medium": {"Power": 1.0, "Guts": 1.0},
+        },
+        "scenario_inheritance": {
+            "base_proc_rates": {"1": 0.03, "2": 0.06, "3": 0.09},
+            "inspiration_event_count": 2,
+            "per_event_probability_cap": 1.0,
+            "blue_equivalent_per_proc": 1.0,
+        },
+        "position_transmission": {"parent": 1.0, "grandparent": 0.5},
+    }
+
+    score, detail = _blue_score(
+        [
+            (normal, "parent", "normal"),
+            (plus, "grandparent", "plus"),
+        ],
+        "medium",
+        config,
+        inheritance_affinities={"normal": 0.0, "plus": 0.0},
+    )
+
+    factors = detail["scenario_inheritance"]["factors"]
+    assert [row["factor_identity"] for row in factors] == ["group:31001", "group:31002"]
+    assert [row["proc_probability_per_event"] for row in factors] == [0.09, 0.09]
+    assert detail["scenario_inheritance"]["factor_count"] == 2
+    assert abs(score - 18.0) < 1e-9
 
 
 def test_scenario_sparks_are_blue_bonuses_and_can_raise_score_above_100():
@@ -859,6 +907,7 @@ def test_white_skill_score_uses_individual_affinity_and_combines_duplicate_carri
                 "per_event_probability_cap": 1.0,
             },
             "white_saturation": {"parent_pair": 1.0},
+            "position_transmission": {"parent": 1.0, "grandparent": 0.5},
         },
         "parent_pair",
         inheritance_affinities={"parent": 100.0, "grandparent": 0.0},
@@ -876,6 +925,40 @@ def test_white_skill_score_uses_individual_affinity_and_combines_duplicate_carri
     assert skill["probability_utility"] > skill["probability_at_least_once"]
     assert score > 0.0
 
+
+def test_pink_probability_uses_affinity_without_extra_position_multiplier():
+    parent = add_red(member(130, "Parent", []), "Medium", 3)
+    grandparent = add_red(member(131, "Grandparent", []), "Medium", 3)
+    config = {
+        "position_transmission": {"parent": 1.0, "grandparent": 0.5},
+        "aptitude_inheritance": {
+            "pink_base_proc_rates": {"1": 0.01, "2": 0.03, "3": 0.05},
+            "inspiration_event_count": 2,
+            "dimension_weights_by_mode": {
+                "parent_pair": {"distance": 1.0, "surface": 0.0, "style": 0.0}
+            },
+        },
+    }
+    _score, detail = _pink_score(
+        [
+            (parent, "parent", "parent"),
+            (grandparent, "grandparent", "grandparent"),
+        ],
+        ace(),
+        "turf",
+        "medium",
+        "pace_chaser",
+        config,
+        mode="parent_pair",
+        inheritance_affinities={"parent": 0.0, "grandparent": 0.0},
+    )
+
+    distance = detail["distance_s"]
+    factors = {row["role"]: row for row in distance["factors"]}
+    expected = 1.0 - (1.0 - 0.05) ** 4
+    assert abs(distance["probability_reach_s"] - expected) < 1e-8
+    assert factors["parent"]["proc_probability_per_event"] == 0.05
+    assert factors["grandparent"]["proc_probability_per_event"] == 0.05
 
 
 def test_white_diversity_curve_prefers_several_meaningful_rare_skills_over_one_concentrated_skill():

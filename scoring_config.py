@@ -607,6 +607,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         "utility_percentile_weight",
         "dominance_tolerance",
         "dominance_mean_margin",
+        "portfolio_regret_tolerance",
     ):
         value = transfer.get(key)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -622,14 +623,24 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         raise ScoringConfigError("transfer_helper.elite_utility_floor doit être supérieur ou égal au seuil compétitif.")
     if sum(float(transfer[key]) for key in ("utility_absolute_weight", "utility_leader_weight", "utility_percentile_weight")) <= 0:
         raise ScoringConfigError("Les poids d'utilité du Transfer Helper ne peuvent pas tous être nuls.")
-    for key in ("minimum_competitive_contexts", "minimum_distinct_profiles"):
+    for key in (
+        "minimum_competitive_contexts",
+        "minimum_distinct_profiles",
+        "minimum_ace_aptitude_rank",
+    ):
         value = transfer.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ScoringConfigError(
                 f"transfer_helper.{key} doit être un entier strictement positif."
             )
+    if int(transfer["minimum_ace_aptitude_rank"]) > 8:
+        raise ScoringConfigError(
+            "transfer_helper.minimum_ace_aptitude_rank ne peut pas dépasser 8 (S)."
+        )
     for key in (
+        "include_permanent_archetypes",
         "include_course_presets",
+        "include_upcoming_cm_context",
         "include_team_trials",
         "include_generic_profiles",
     ):
@@ -637,6 +648,11 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
             raise ScoringConfigError(
                 f"transfer_helper.{key} doit valoir true ou false."
             )
+    analysis_mode = transfer.get("analysis_mode")
+    if analysis_mode not in {"fast", "exhaustive"}:
+        raise ScoringConfigError(
+            "transfer_helper.analysis_mode doit valoir 'fast' ou 'exhaustive'."
+        )
     upcoming_cm_limit = transfer.get("upcoming_cm_limit")
     if (
         isinstance(upcoming_cm_limit, bool)
@@ -660,6 +676,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         "repeated_review_min_probability",
         "repeated_strong_min_probability",
         "direct_future_gp_minimum_context_weight",
+        "portfolio_direct_white_minimum_context_weight",
         "replacement_probability_ratio",
         "replacement_probability_tolerance",
     ):
@@ -695,6 +712,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         ("repeated_review_min_total_stars", 1),
         ("repeated_strong_min_carriers", 1),
         ("direct_future_gp_min_stars", 1),
+        ("portfolio_direct_white_min_stars", 1),
     ):
         value = spark_protection.get(key)
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:

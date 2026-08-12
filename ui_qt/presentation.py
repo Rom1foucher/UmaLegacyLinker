@@ -1330,13 +1330,19 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
         return result_detail_html(None, "pair", language)
     replacement = row.get("dominated_by") or {}
     statuses = {
-        "safe_transfer": "Transfert sûr",
+        "safe_transfer": "Transfert strictement sûr",
+        "recommended_transfer": "Transfert recommandé",
         "review": "À examiner",
-        "likely_keep": "Probablement conserver",
         "keep": "Conserver",
+        "protected": "Protégé",
     }
     reasons = {
         "strictly_dominated_same_card": "Un remplaçant strict de la même carte et de la même unique couvre toutes les niches viables.",
+        "redundant_in_collection_portfolio": "La copie est redondante dans le portefeuille conservé ; sa couverture peut être répartie sur plusieurs vétérans.",
+        "required_by_collection_portfolio": "Cette copie est nécessaire pour préserver une niche compétitive ou un patrimoine stratégique du costume.",
+        "locked_in_game": "Ce vétéran est verrouillé en jeu et ne peut jamais être recommandé au transfert.",
+        "memo_present": "Ce vétéran porte un mémo et reste protégé.",
+        "portfolio_coverage_incomplete": "La couverture du portefeuille est incomplète : vérification manuelle nécessaire.",
         "no_meaningful_role_detected": "Aucun rôle compétitif n’atteint les seuils, sans remplaçant strict confirmé.",
         "strong_grandparent_value": "Forte valeur comme futur grand-parent.",
         "strong_parent_value": "Forte valeur comme parent.",
@@ -1383,6 +1389,8 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
     <div class='muted'>{escape(reason)}</div>
     {_facts_table([
         (_t('Score Uma', language), str(row.get('rank_score') or '—')),
+        (_t('Verrouillé en jeu', language), _t('Oui', language) if row.get('is_locked') else _t('Non', language)),
+        (_t('Mémo', language), str(row.get('memo') or '—')),
         (_t('Copies comparables', language), int(row.get('same_card_copy_count') or 0)),
         (
             _t('Meilleur potentiel parent', language),
@@ -1401,6 +1409,28 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
             f"{escape(_t('Avance moyenne', language))}: +{_number(replacement.get('mean_score_lead'), 3)} · "
             f"{escape(_t('Pire écart observé', language))}: {_number(replacement.get('worst_context_delta'), 3)}"
             "</div>"
+        )
+    coverage = list(row.get("covered_by_portfolio") or [])
+    if coverage and not replacement:
+        html += (
+            f"<h3>{escape(_t('Couverture collective', language))}</h3>"
+            "<div class='replacement'>"
+            + "<br>".join(
+                f"<b>{escape(_identity(item))}</b>"
+                for item in coverage
+            )
+            + "</div>"
+        )
+    required_for = list(row.get("portfolio_required_for") or [])
+    if required_for:
+        html += (
+            f"<h3>{escape(_t('Pourquoi cette copie est conservée', language))}</h3>"
+            "<table>"
+            + "".join(
+                f"<tr><td>{escape(str(item.get('label') or item.get('key') or '—'))}</td></tr>"
+                for item in required_for
+            )
+            + "</table>"
         )
     protection = row.get("spark_protection") or {}
     if protection.get("applied"):

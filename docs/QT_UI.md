@@ -26,7 +26,9 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - export of a selected final pair to the uma.moe Lineage Planner format;
 - live and imported uma.moe parent/grandparent searches, explicit per-mode filter/import menus, costume filters and Friend ID copy;
 - stable uma.moe API URL/key configuration under Settings, separate from scoring weights and per-search filters;
-- Transfer Helper with verdict/search filters and an embedded replacement diagnostic;
+- Transfer Helper with visible Fast/Exhaustive (slow), upcoming-CM, Team Trials and generic-profile
+  controls, portfolio verdict/search filters, lock and memo protection, and embedded portfolio or
+  strict-replacement diagnostics;
 - a two-pane scoring-profile editor with search, 51 gameplay subcategories, plain-language help for every setting, hover summaries and visible draft/default states;
 - unambiguous probability, threshold, multiplier and 100%-budget controls, including live donut charts for all nine genuinely normalised scoring groups;
 - live shared White Skill priority-file management across Search and Weights,
@@ -89,6 +91,7 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/weight_help.py` | bilingual purpose, impact, scope and scale guidance for every weight |
 | `ui_qt/distribution_chart.py` | dependency-free live donut chart for normalised weight groups |
 | `ui_qt/layout_audit.py` | offscreen screenshots and overflow checks |
+| `tests/` | engine, UI, release, documentation and bilingual-coverage tests |
 
 The reasoning and comparable-app patterns behind the weights redesign are recorded in [`WEIGHTS_UI_DESIGN.md`](WEIGHTS_UI_DESIGN.md).
 

@@ -17,6 +17,7 @@ from scoring_config import (
     deep_merge,
     materialize_effective_scoring_config,
     read_json_object,
+    validate_scoring_config,
     validate_skill_priorities_config,
     write_json_object,
 )
@@ -43,7 +44,7 @@ from uma_moe import (
 
 
 APP_NAME = "Uma Legacy Linker"
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 
 LogCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, str], None]
@@ -256,6 +257,11 @@ class TransferRequest:
     course_overrides_path: Path | None = None
     use_custom_scoring: bool = False
     skill_priorities_path: Path | None = None
+    analysis_mode: str = "fast"
+    include_upcoming_cm_context: bool = True
+    upcoming_cm_limit: int = 5
+    include_team_trials: bool = False
+    include_generic_profiles: bool = False
 
 
 @dataclass(frozen=True)
@@ -555,6 +561,21 @@ def run_transfer_analysis(
     scoring_config = _materialize_scoring_profile(
         request.output_dir, request.use_custom_scoring
     )
+    scoring_payload = read_json_object(scoring_config)
+    helper_config = scoring_payload.setdefault("transfer_helper", {})
+    if not isinstance(helper_config, dict):
+        raise ScoringConfigError("transfer_helper doit être un objet JSON.")
+    helper_config.update(
+        {
+            "analysis_mode": request.analysis_mode,
+            "include_upcoming_cm_context": request.include_upcoming_cm_context,
+            "upcoming_cm_limit": request.upcoming_cm_limit,
+            "include_team_trials": request.include_team_trials,
+            "include_generic_profiles": request.include_generic_profiles,
+        }
+    )
+    validate_scoring_config(scoring_payload)
+    scoring_config = write_json_object(scoring_config, scoring_payload)
     skill_priorities = _materialize_skill_priorities(
         request.output_dir, request.skill_priorities_path
     )

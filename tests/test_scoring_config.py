@@ -28,7 +28,7 @@ from uma_moe import (
 )
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_SCORING = PROJECT_DIR / "default_parent_scoring.json"
 DEFAULT_SKILL_PRIORITIES = PROJECT_DIR / "default_skill_priorities.json"
 
@@ -73,7 +73,7 @@ class ScoringConfigTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(migrated["schema_version"], 22)
+        self.assertEqual(migrated["schema_version"], 23)
         self.assertEqual(migrated["race_factor"]["base_per_star_quality"], 0.04)
         self.assertNotIn("scenario_per_star_quality", migrated["race_factor"])
 
@@ -122,6 +122,11 @@ class ScoringConfigTests(unittest.TestCase):
     def test_transfer_helper_scope_is_validated(self) -> None:
         config = read_json_object(DEFAULT_SCORING)
         config["transfer_helper"]["upcoming_cm_limit"] = 2.5
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["minimum_ace_aptitude_rank"] = 9
         with self.assertRaises(ScoringConfigError):
             validate_scoring_config(config)
 

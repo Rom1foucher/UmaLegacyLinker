@@ -19,6 +19,9 @@ from uma_moe import (
 )
 
 
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
 class FakeResolver:
     def pair(self, a: int, b: int) -> int:
         return 0 if a == b else a + b
@@ -91,7 +94,7 @@ def ace_payload():
 
 
 def default_config():
-    path = Path(__file__).resolve().parent / "default_parent_scoring.json"
+    path = PROJECT_DIR / "default_parent_scoring.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -398,7 +401,10 @@ def test_projected_future_parent_keeps_unknown_own_sparks_empty():
     assert projected["when_used_as_parent"]["grandparent_1"] is gp1
     assert projected["when_used_as_parent"]["grandparent_2"] is gp2
     assert "Shared" in projected["g1_wins"]["names"]
-    assert plan["single_selected"] == 2
+    # The future parent also races against the opposing parent's unilateral G1:
+    # that win creates the parent↔parent link in the eventual Ace lineage.
+    assert plan["single_selected"] == 3
+    assert "C" in projected["g1_wins"]["names"]
 
 
 def test_known_whites_are_soft_coverage_not_a_binary_blacklist():

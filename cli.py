@@ -95,10 +95,12 @@ def run_cli(args: argparse.Namespace) -> int:
             print(f"CSV : {result.candidates_csv_path}")
             print(f"Résumé : {result.summary_txt_path}")
             print(
-                f"Verdicts : {result.safe_transfer_count} transfert(s) sûr(s), "
+                f"Verdicts : {result.protected_count} protégé(s), "
+                f"{result.keep_count} à conserver, "
+                f"{result.safe_transfer_count} transfert(s) strictement sûr(s), "
+                f"{result.recommended_transfer_count} transfert(s) recommandé(s), "
                 f"{result.review_count} à examiner, "
-                f"{result.likely_keep_count} probablement à conserver, "
-                f"{result.keep_count} à conserver."
+                "sans aucune action automatique."
             )
             return 0
         if args.rank_parents:
@@ -248,7 +250,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--transfer-helper",
         action="store_true",
-        help="Analyse les vétérans locaux et identifie les doublons strictement dominés.",
+        help="Analyse le portefeuille de vétérans et recommande les copies redondantes sans action automatique.",
     )
     parser.add_argument("--ace-card-id", type=int, help="Costume ID de l'Ace cible.")
     parser.add_argument("--future-parent-card-id", type=int, help="Costume ID du parent à produire pour le calcul exact des futurs grands-parents.")

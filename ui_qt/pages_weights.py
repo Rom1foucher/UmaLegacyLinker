@@ -1218,6 +1218,11 @@ class WeightsPage(QWidget):
         return path[-1].endswith("_curve") or path[-1].endswith("_thresholds")
 
     def _enum_options(self, path: tuple[str, ...]) -> list[tuple[str, str]]:
+        if path == ("transfer_helper", "analysis_mode"):
+            return [
+                (self.context.t("Rapide"), "fast"),
+                (self.context.t("Audit exhaustif"), "exhaustive"),
+            ]
         if path[:2] == ("course_conditions", "modes"):
             return [
                 (self.context.t("Plancher"), "floor"),
@@ -1671,7 +1676,7 @@ class WeightsPage(QWidget):
         self.priorities.set_title(t("Priorités individuelles des White Skills · avancé"))
         self.priority_help.setText(
             t(
-                "Même source que dans Optimisation de lignée et uma.moe. Un JSON partiel est fusionné avec default_skill_priorities.json avant chaque calcul."
+                "Même source que dans Recherche de lignées, pour les calculs locaux et uma.moe. Un JSON partiel est fusionné avec default_skill_priorities.json avant chaque calcul."
             )
         )
         self.priority_picker.dialog_title = t("Choisir un profil de priorités white")

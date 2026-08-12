@@ -10,7 +10,7 @@ from spark_protection import build_spark_heritage, compare_spark_heritage
 from transfer_helper import DominanceAccumulator, classify_transfer_records
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 
 def factor(name: str, stars: int) -> dict:

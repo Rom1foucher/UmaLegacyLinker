@@ -154,7 +154,8 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
             50,
         )
     if root == "transfer_helper" and (
-        leaf.startswith("include_") or leaf == "upcoming_cm_limit"
+        leaf.startswith("include_")
+        or leaf in {"analysis_mode", "upcoming_cm_limit", "minimum_ace_aptitude_rank"}
     ):
         return ("transfer.scope", "Périmètre d’analyse", 10)
     if root == "transfer_helper" and leaf in {
@@ -169,6 +170,8 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
         "dominance_mean_margin",
     }:
         return ("transfer.dominance", "Comparaison des remplaçants", 30)
+    if root == "transfer_helper" and leaf == "portfolio_regret_tolerance":
+        return ("transfer.portfolio", "Couverture du portefeuille", 35)
     if root == "transfer_helper" and leaf in {
         "minimum_competitive_contexts",
         "minimum_distinct_profiles",
@@ -449,6 +452,7 @@ def is_percentage_setting(path: Sequence[str], value: object) -> bool:
             "utility_leader_weight",
             "utility_percentile_weight",
             "minimum_context_weight",
+            "portfolio_direct_white_minimum_context_weight",
             "hard_to_obtain_minimum_context_weight",
             "repeated_review_min_probability",
             "repeated_strong_min_probability",

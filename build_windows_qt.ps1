@@ -19,13 +19,8 @@ if (-not $SkipInstall) {
     Invoke-Python -m pip install --upgrade -r requirements-build-qt.txt
 }
 
-$NonQtTestModules = @(
-    Get-ChildItem -Path $PSScriptRoot -Filter "test_*.py" -File |
-        Where-Object { $_.Name -ne "test_qt_runtime.py" } |
-        Sort-Object Name |
-        ForEach-Object { $_.BaseName }
-)
-Invoke-Python -m unittest -v @NonQtTestModules
+Invoke-Python -m pytest -q tests --ignore=tests/test_qt_runtime.py
+Invoke-Python tests/check_i18n.py
 
 Invoke-Python -c "from PySide6.QtWidgets import QApplication; from ui_qt.main_window import MainWindow; print('Qt import OK')"
 $PreviousQtPlatform = $env:QT_QPA_PLATFORM
@@ -39,17 +34,19 @@ try {
     # Run every Qt smoke test in a fresh process. Some PySide6/Qt objects are
     # destroyed asynchronously and can trigger a native access violation during
     # interpreter teardown when several widget-heavy tests share one process.
-    $QtSmokeTests = @(
-        "test_qt_runtime.QtRuntimeSmokeTests.test_distribution_chart_renders_at_editor_width",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_every_page_constructs_and_retranslates",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_grandparent_dialog_uses_target_parent_as_root",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_layout_audit_disposes_top_levels_immediately",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_layout_audit_uses_qt_control_content_rects",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_lineage_dialog_renders_complete_pair_without_network",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_result_panes_do_not_refresh_before_the_detail_browser_exists",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_searchable_combo_resolves_text_without_stale_item_data",
-        "test_qt_runtime.QtRuntimeSmokeTests.test_weight_page_uses_categories_and_typed_controls"
+    $DiscoveredQtTests = @(
+        & $Python -c "import unittest; from tests.test_qt_runtime import QtRuntimeSmokeTests; suite = unittest.defaultTestLoader.loadTestsFromTestCase(QtRuntimeSmokeTests); print('\n'.join(test.id() for test in suite))"
     )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to discover Qt runtime tests (exit code $LASTEXITCODE)."
+    }
+    $QtSmokeTests = @(
+        $DiscoveredQtTests |
+            Where-Object { $_ -match '^tests\.test_qt_runtime\.QtRuntimeSmokeTests\.test_' }
+    )
+    if ($QtSmokeTests.Count -eq 0) {
+        throw "No Qt runtime tests were discovered."
+    }
     foreach ($QtSmokeTest in $QtSmokeTests) {
         Invoke-Python -m unittest -v $QtSmokeTest
     }

@@ -303,6 +303,48 @@ _CONTEXTUAL_OPPONENT_HELP: dict[str, tuple[str, str, str, str]] = {
 
 
 _TRANSFER_HELP: dict[str, tuple[str, str, str, str]] = {
+    "analysis_mode": (
+        "Le mode rapide utilise le socle permanent et filtre les Aces naturellement viables ; l’audit exhaustif réactive tous les styles et toutes les variantes d’Ace.",
+        "Fast mode uses the permanent baseline and naturally viable Aces; exhaustive audit restores every style and Ace variant.",
+        "Le mode exhaustif sert de contrôle ponctuel, peut prendre plusieurs minutes et autorise le verdict strictement sûr.",
+        "Exhaustive mode is intended as an occasional control, may take several minutes, and enables the strictly safe verdict.",
+    ),
+    "portfolio_regret_tolerance": (
+        "Écart maximal accepté entre la meilleure copie du costume et le portefeuille conservé dans chaque niche compétitive.",
+        "Maximum accepted gap between the costume's best copy and the retained portfolio in each competitive niche.",
+        "L’augmenter transfère davantage de micro-variantes ; le réduire conserve plus de copies proches du meilleur score.",
+        "Increasing it transfers more micro-variants; reducing it retains more copies close to the best score.",
+    ),
+    "portfolio_direct_white_minimum_context_weight": (
+        "Poids contextuel minimal pour qu’une White directe devienne un actif obligatoire du portefeuille.",
+        "Minimum contextual weight for a direct White to become a mandatory portfolio asset.",
+        "L’augmenter réserve cette protection aux skills les plus stratégiques.",
+        "Increasing it limits this protection to the most strategic skills.",
+    ),
+    "portfolio_direct_white_min_stars": (
+        "Nombre minimal d’étoiles d’une White directe protégée collectivement.",
+        "Minimum star count for a collectively protected direct White.",
+        "Deux étoiles protège les sources directes déjà solides sans conserver toutes les White 1★.",
+        "Two stars protects already solid direct sources without retaining every 1-star White.",
+    ),
+    "minimum_ace_aptitude_rank": (
+        "Rang naturel minimal exigé en surface, distance et style pour qu’un Ace participe au mode rapide.",
+        "Minimum natural surface, distance, and style rank required for an Ace to participate in fast mode.",
+        "B écarte les couples théoriques sans sacrifier les Aces naturellement plausibles ; le mode exhaustif ignore ce filtre.",
+        "B removes theoretical pairings without sacrificing naturally plausible Aces; exhaustive mode ignores this filter.",
+    ),
+    "include_permanent_archetypes": (
+        "Active le socle stable Turf Sprint/Mile/Medium/Long et Dirt Sprint/Mile/Medium.",
+        "Enables the stable Turf Sprint/Mile/Medium/Long and Dirt Sprint/Mile/Medium baseline.",
+        "Le laisser activé empêche la rotation temporaire des CM d’autoriser un nettoyage irréversible.",
+        "Keeping it enabled prevents the temporary CM rotation from authorising irreversible cleanup.",
+    ),
+    "include_upcoming_cm_context": (
+        "Ajoute les prochaines Champion Meetings comme signal contextuel au-dessus du socle permanent.",
+        "Adds upcoming Champion Meetings as contextual evidence on top of the permanent baseline.",
+        "Activer peut conserver des spécialistes utiles prochainement et allonge le calcul ; leur absence ne retire jamais un archétype permanent.",
+        "Enabling it may retain specialists useful soon and lengthens analysis; their absence never removes a permanent archetype.",
+    ),
     "competitive_score_floor": (
         "Score absolu à partir duquel un rôle commence à être considéré comme compétitif.",
         "Absolute score at which a role starts to count as competitive.",

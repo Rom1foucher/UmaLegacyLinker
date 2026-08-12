@@ -209,7 +209,9 @@ même rang pour chacune des stats données. Ce choix représente la forte récom
 une distribution exacte non connue. Contrairement à un diviseur fixe, le rendement attendu
 augmente avec l'affinité réelle du porteur et tient compte des deux Inspiration Events.
 
-Les effets sont lus dans `succession_factor_effect` depuis le `master.mdb`. Les anciens exports
+Les effets sont lus dans `succession_factor_effect` depuis le `master.mdb`. L'identité d'un
+Scenario Spark repose sur `factor_group_id`, puis `factor_id`, et jamais sur le seul nom normalisé :
+des variantes comme `Racing Spirit PWR` et `Racing Spirit PWR+` restent donc distinctes. Les anciens exports
 restent compatibles grâce aux quatre noms Global connus :
 
 | Scenario Spark | Stats données |
@@ -274,9 +276,12 @@ inheritance_affinity(G11) =
   + 3 × G1(P1, G11)
 ```
 
-Les formules symétriques s'appliquent à l'autre branche. La meilleure transmission des
-parents directs apparaît naturellement parce qu'ils cumulent davantage de liens ; aucun
-multiplicateur fixe parent/GP n'est ajouté.
+Les formules symétriques s'appliquent à l'autre branche. Les parents directs ont naturellement
+une meilleure transmission parce que leur affinité individuelle cumule davantage de liens.
+Le [guide Parenting/Gene de Crazyfellow](https://docs.google.com/document/d/1Q3IJKbtkplmuY-PAJMNjYiLtasv0eU0aIBEqp8_C3tg/edit?tab=t.0),
+référence communautaire normative retenue par le projet, rapporte ainsi des taux GP
+approximativement deux fois plus faibles, mais l'attribue explicitement au calcul de compatibilité
+GP de moindre poids : aucun second multiplicateur fixe parent/GP n'est ajouté aux probabilités.
 
 ### Probabilité de proc
 
@@ -288,6 +293,15 @@ Events. Les taux de base fournis sont :
 | 1★ | 1 % |
 | 2★ | 3 % |
 | 3★ | 5 % |
+
+Pour chaque porteur :
+
+```text
+p/événement = taux de base × (1 + affinité individuelle / 100)
+```
+
+Cette probabilité alimente directement la distribution exacte des procs et donc `P(A)`/`P(S)`.
+Les étoiles roses utilisées pour le rang initial restent déterministes.
 
 ```text
 p_i = base_rate(stars) × (1 + inheritance_affinity(i) / 100)
@@ -464,8 +478,8 @@ utilité(skill) = courbe_distincte(P(skill))
 contribution = priorité du skill × utilité(skill)
 ```
 
-Cette agrégation évite de surévaluer plusieurs copies situées sur des GP à faible affinité.
-Une copie parent à forte affinité peut donc valoir davantage que plusieurs copies éloignées.
+Cette agrégation évite de surévaluer plusieurs copies. Une copie parent à forte affinité peut
+valoir davantage que plusieurs copies GP dont l'affinité individuelle est plus faible.
 Les copies identiques augmentent uniquement la probabilité de leur skill commune. Elles ne créent
 pas plusieurs entrées de diversité.
 
@@ -611,43 +625,78 @@ l'audit ou la copie manuelle : `/api/v3/search` n'accepte pas de requête texte 
 
 ## Transfer Helper
 
-Le Transfer Helper réutilise les modèles existants sur un périmètre volontairement proche des
-usages à venir :
+Le Transfer Helper réutilise les modèles existants sur un socle qui ne dépend pas de la rotation
+temporaire des Champion Meetings :
 
-- les cinq premières Champion Meetings classées comme à venir dans le catalogue ;
-- les cinq catégories génériques Team Trials ;
-- chacun de ces dix profils décliné sur les quatre styles, soit 40 contextes ;
-- toutes les variantes d'Ace distinctes utiles pour l'affinité et le besoin en pinks ;
+- Turf Sprint, Mile, Medium et Long ;
+- Dirt Sprint, Mile et Medium ;
+- Front Runner, Pace Chaser et une famille Backline représentée par Late Surger ;
 - rôle parent avec la branche actuelle complète ;
 - rôle futur grand-parent avec factors propres et support de génération issu de sa lignée.
 
-Les profils génériques `surface × distance × style`, les CM plus lointaines et les CM archivées
-restent utilisables dans l'optimiseur normal, mais ne participent pas aux verdicts de nettoyage
+Le mode rapide produit donc 21 contextes permanents et ne conserve que les Aces naturellement au
+moins B en surface, distance et style pour le contexte. End Closer n'est pas recalculé séparément
+par défaut : Late Surger couvre la famille Backline. Les CM à venir, Team Trials et profils
+génériques sont des couches optionnelles. Les ajouter peut conserver un spécialiste utile ; leur
+absence ne retire jamais un archétype du socle permanent.
+
+Le profil livré active jusqu'aux cinq prochaines CM comme preuve additionnelle, soit au maximum
+15 contextes rapides de plus après déduplication par style. Cette fenêtre dynamique peut être
+désactivée et ne remplace jamais les 21 contextes permanents. Les Team Trials restent désactivés
 par défaut.
+
+Le mode `exhaustive` réactive les quatre styles et toutes les variantes d'Ace. Il sert de contrôle
+ponctuel, assume un temps de calcul de plusieurs minutes et constitue le seul périmètre autorisé
+à émettre le verdict **transfert strictement sûr**. En mode rapide, toute redondance reste une
+recommandation, même lorsqu'un remplaçant semble dominer sur les contextes filtrés.
 
 Le potentiel GP utilise une affinité constante optimiste à 100. Ce choix volontaire évite de
 classer comme inutile un personnage dont la niche de compatibilité ne correspond simplement
 pas à une cible sélectionnée : le classement relatif mesure donc surtout sa valeur intrinsèque
 comme GP.
 
-Un vétéran est marqué **transfert sûr** uniquement si un autre exemplaire du même `card_id` et
-de la même unique héritée :
+### Portefeuille de collection
+
+Le verdict principal n'utilise plus une dominance universelle copie contre copie. Pour chaque
+costume, l'outil construit un ensemble conservé couvrant :
+
+1. au moins une copie du costume ;
+2. chaque niche parent/GP globalement compétitive à moins de
+   `portfolio_regret_tolerance` du meilleur score de ce costume ;
+3. chaque Pink Distance/Surface directe 3★ disponible ;
+4. les Sparks répétées, rares, directes ou packages stratégiques définis par la protection ;
+5. tous les vétérans verrouillés ou portant un mémo.
+
+La sélection est une couverture collective gloutonne puis élaguée : une copie n'a pas besoin de
+reproduire seule tout le patrimoine d'une autre si plusieurs vétérans conservés couvrent ensemble
+les niches et les Sparks concernées.
+
+Les verdicts deviennent :
+
+- **Protégé** : verrou ou mémo en jeu ;
+- **Conserver** : membre nécessaire du portefeuille ;
+- **Transfert strictement sûr** : en audit exhaustif seulement, un remplaçant individuel est réellement prouvé ;
+- **Transfert recommandé** : copie redondante au niveau de la collection, sans faux remplaçant unique ;
+- **À examiner** : couverture incomplète ou donnée insuffisante.
+
+Le sous-verdict **strictement sûr** exige toujours qu'un autre exemplaire du même `card_id` et de
+la même unique héritée :
 
 1. n'est inférieur au candidat dans aucun contexte parent testé, à la tolérance configurée ;
 2. n'est inférieur dans aucun contexte futur GP ;
 3. conserve au moins autant de G1 communes avec chaque partenaire local potentiel ;
 4. dépasse la marge moyenne minimale `dominance_mean_margin` ;
-5. préserve chaque signal retenu par le plancher indépendant de protection des Sparks.
+5. préserve individuellement chaque signal retenu par la protection des Sparks.
 
-Les costumes alternatifs ne sont jamais regroupés. Sans remplaçant dominant, la compétitivité
-combine score absolu, proximité au leader du contexte et percentile. Une performance élite ou
-répétée mène à **conserver** ; une niche plausible mais étroite à **probablement conserver** ;
-une absence de rôle détecté à **examiner**. Aucun de ces verdicts ne déclenche une action en jeu.
+Les costumes alternatifs ne sont jamais regroupés. Une copie redondante sans remplaçant universel
+reçoit **transfert recommandé** et expose la liste des copies conservées qui assurent sa couverture.
+Aucun verdict ne déclenche une action en jeu.
 
 ### Plancher de protection des Sparks
 
-Ce garde-fou ne modifie jamais le score principal. Il intervient uniquement après la sélection
-d'un remplaçant dominant et ne peut que relever `safe_transfer` vers `review` ou `likely_keep`.
+Ce garde-fou ne modifie jamais le score principal. Il devient un ensemble de contraintes de
+couverture collective. Pour le verdict strict, il reste aussi comparé directement entre candidat
+et remplaçant.
 
 Les sources sont d'abord normalisées par skill effective :
 
@@ -658,14 +707,15 @@ Les sources sont d'abord normalisées par skill effective :
 Pour chaque skill, le rapport conserve le nombre de porteurs distincts, la somme des étoiles,
 la probabilité neutre cumulée sur les deux événements, la présence directe sur le vétéran et
 le nombre de porteurs contribuant à la génération white. L'utilité retenue est le maximum sur
-les contextes CM/Team Trials actifs, jamais une moyenne qui écraserait une niche.
+tous les contextes actifs — socle permanent et extensions configurées —, jamais une moyenne qui
+écraserait une niche.
 
 Trois familles de signaux peuvent fixer un plancher :
 
 1. répétition utile dans la branche (`2` porteurs, `4★` et 15 % par défaut) ;
 2. Spark utile difficile à obtenir, à partir du nombre de support cards donnant directement
    le hint dans le `master.mdb` courant ; une table absente signifie « inconnu », pas zéro ;
-3. Spark directe 3★ à forte valeur de futur GP ou package explicitement configuré.
+3. Spark directe 2★ ou 3★ dont le poids contextuel atteint `1,0`, ou package explicitement configuré.
 
 Le remplaçant doit conserver au moins 90 % de la probabilité neutre du candidat, avec une
 tolérance absolue d'un point. Un signal direct exige aussi une source directe équivalente.
@@ -679,16 +729,21 @@ Paramètres disponibles dans `transfer_helper` :
 
 | Paramètre | Défaut | Rôle |
 |---|---:|---|
+| `analysis_mode` | `fast` | `fast` permanent filtré ou audit `exhaustive` |
+| `portfolio_regret_tolerance` | 2,5 | recul maximal du portefeuille dans une niche compétitive |
+| `minimum_ace_aptitude_rank` | 6 (B) | filtre naturel surface/distance/style du mode rapide |
+| `include_permanent_archetypes` | `true` | active le socle stable de 21 contextes |
 | `competitive_score_floor` | 67,5 | référence absolue de compétitivité |
-| `competitive_utility_floor` | 0,82 | qualité minimale d'une niche viable |
+| `competitive_utility_floor` | 0,78 | qualité minimale d'une niche viable |
 | `elite_utility_floor` | 0,92 | qualité suffisante pour une valeur élite |
 | `minimum_competitive_contexts` | 3 | contextes requis pour une valeur répétée |
 | `minimum_distinct_profiles` | 2 | profils de course distincts requis |
 | `dominance_tolerance` | 0,75 | recul maximal accepté dans un contexte lors d'une comparaison |
 | `dominance_mean_margin` | 1,0 | avance moyenne minimale du remplaçant |
 | `include_course_presets` | `true` | active l'utilisation du catalogue de presets |
-| `upcoming_cm_limit` | 5 | nombre de prochaines CM évaluées, dans l'ordre du catalogue |
-| `include_team_trials` | `true` | ajoute les cinq catégories Team Trials |
+| `include_upcoming_cm_context` | `true` | ajoute les prochaines CM au-dessus du socle |
+| `upcoming_cm_limit` | 5 | nombre maximal de prochaines CM additionnelles |
+| `include_team_trials` | `false` | ajoute les catégories Team Trials comme audit additionnel |
 | `include_generic_profiles` | `false` | ajoute les 32 profils génériques surface × distance × style |
 | `spark_protection.enabled` | `true` | active le plancher indépendant |
 | `spark_protection.minimum_context_weight` | 0,55 | utilité minimale d'une skill protégée |

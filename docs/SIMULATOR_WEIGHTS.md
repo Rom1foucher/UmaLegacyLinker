@@ -86,8 +86,10 @@ Exemple :
 
 ## Overrides liés au tracé
 
-`default_course_overrides.json` contient des presets CM9 à CM16. Ils ne remplacent
-jamais les poids génériques tant qu'aucune course cible n'est sélectionnée.
+`default_course_overrides.json` contient les CM9 à CM46 et cinq profils Team Trials.
+Les CM9 à CM16 conservent les corrections de skills liées au tracé déjà documentées ; les CM17 à
+CM46 ajoutent leurs conditions statiques exactes et les profils Team Trials restent génériques.
+Aucun preset ne remplace les poids génériques tant qu'aucune course cible n'est sélectionnée.
 
 Les opérations supplémentaires acceptent `bonus` pour ajouter une petite valeur
 spécifique au tracé.

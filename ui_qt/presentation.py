@@ -1342,6 +1342,7 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
         "required_by_collection_portfolio": "Cette copie est nécessaire pour préserver une niche compétitive ou un patrimoine stratégique du costume.",
         "locked_in_game": "Ce vétéran est verrouillé en jeu et ne peut jamais être recommandé au transfert.",
         "memo_present": "Ce vétéran porte un mémo et reste protégé.",
+        "active_loop_project": "Ce vétéran appartient à un projet White Loop actif et reste protégé.",
         "portfolio_coverage_incomplete": "La couverture du portefeuille est incomplète : vérification manuelle nécessaire.",
         "no_meaningful_role_detected": "Aucun rôle compétitif n’atteint les seuils, sans remplaçant strict confirmé.",
         "strong_grandparent_value": "Forte valeur comme futur grand-parent.",

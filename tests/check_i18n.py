@@ -199,6 +199,9 @@ def main() -> None:
         (ROOT / "transfer_helper.py", {"logger", "log", "raise"}),
         (ROOT / "uma_moe.py", {"logger", "log", "raise"}),
         (ROOT / "lineage_planner.py", {"logger", "log", "raise"}),
+        (ROOT / "loop_engine.py", {"raise"}),
+        (ROOT / "loop_models.py", {"raise"}),
+        (ROOT / "loop_repository.py", {"raise"}),
         (ROOT / "scoring_config.py", {"logger", "log", "raise"}),
     ]
     # Couche Qt : couverture complète, comme app.py (tout le texte est UI).

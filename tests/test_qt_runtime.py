@@ -41,7 +41,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             self.application.processEvents()
             self.assertEqual(
                 set(window._pages),
-                {"home", "data", "search", "transfer", "weights", "tools"},
+                {"home", "data", "search", "loop", "transfer", "weights", "tools"},
             )
             for language in ("fr", "en"):
                 window.context.set_language(language)

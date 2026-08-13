@@ -1121,7 +1121,8 @@ class QtUiCoreTests(unittest.TestCase):
             "Transfer Helper", "Score", "Trainer", "Surface", "Distance", "Distance S",
             "Whites", "ID", "Copies", "Minimum pink", "Parent", "Parent 1", "Parent 2", "Local",
             "G1", "Points", "Aptitude", "Sparks", "Export", "Verdict", "base",
-            "Support",
+            "Support", "White Loop Workshop", "White Skill", "Trainee", "Descendant",
+            "Note", "Date", "Parents", "OK", "P(acquisition)", "P(≥2★)",
             "Fichier introuvable", "Profil par défaut actif", "Profil personnalisé actif",
         }
         missing: list[str] = []

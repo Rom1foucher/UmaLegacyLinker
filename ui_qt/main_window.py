@@ -27,6 +27,7 @@ from ui_qt.components import ThemedComboBox
 from ui_qt.context import AppContext
 from ui_qt.core import APP_NAME, APP_VERSION
 from ui_qt.pages_home_data import DataPage, HomePage
+from ui_qt.pages_loop import LoopPage
 from ui_qt.pages_search import SearchPage
 from ui_qt.pages_tools import ToolsPage
 from ui_qt.pages_transfer import TransferPage
@@ -43,7 +44,7 @@ class MainWindow(QMainWindow):
         self._active_worker: FunctionWorker | None = None
         self._busy = False
         self._status_source = "Prêt"
-        self._nav_order = ["home", "data", "search", "transfer", "weights", "tools"]
+        self._nav_order = ["home", "data", "search", "loop", "transfer", "weights", "tools"]
         self._nav_buttons: dict[str, QPushButton] = {}
         self._nav_sections: dict[str, QLabel] = {}
         self._pages: dict[str, QWidget] = {}
@@ -83,7 +84,7 @@ class MainWindow(QMainWindow):
         nav_sections = (
             ("overview", ("home",)),
             ("prepare", ("data",)),
-            ("analyse", ("search", "transfer")),
+            ("analyse", ("search", "loop", "transfer")),
             ("configure", ("weights", "tools")),
         )
         for section_key, page_keys in nav_sections:
@@ -169,6 +170,7 @@ class MainWindow(QMainWindow):
         home = HomePage(self.context)
         data = DataPage(self.context)
         search = SearchPage(self.context)
+        loop = LoopPage(self.context)
         transfer = TransferPage(self.context)
         weights = WeightsPage(self.context)
         tools_page = ToolsPage(self.context)
@@ -176,6 +178,7 @@ class MainWindow(QMainWindow):
             "home": home,
             "data": data,
             "search": search,
+            "loop": loop,
             "transfer": transfer,
             "weights": weights,
             "tools": tools_page,
@@ -202,6 +205,7 @@ class MainWindow(QMainWindow):
             "home": "Accueil",
             "data": "Données locales",
             "search": "Recherche de lignées",
+            "loop": "White Loop Workshop",
             "transfer": "Transfer Helper",
             "weights": "Pondérations",
             "tools": "Paramètres",
@@ -210,6 +214,7 @@ class MainWindow(QMainWindow):
             "home": "⌂",
             "data": "◫",
             "search": "⌕",
+            "loop": "↻",
             "transfer": "⇄",
             "weights": "⚙",
             "tools": "⌘",

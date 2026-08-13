@@ -223,6 +223,35 @@ class MasterResolver:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
+        # Keep the learned-skill payload in the linked collection. White Loop
+        # batch statistics need to distinguish skill acquisition from factor
+        # generation, so acquisition must come from skill_array rather than be
+        # inferred backwards from generated Sparks.
+        self.skills: dict[int, dict[str, Any]] = {}
+        if "skill_data" in available_tables:
+            skill_names = text_map(self.connection, 47)
+            for row in self.connection.execute(
+                "SELECT id, group_id, rarity FROM skill_data ORDER BY id"
+            ):
+                skill_id = int(row["id"])
+                group_id = int(row["group_id"])
+                rarity = int(row["rarity"])
+                name = skill_names.get(skill_id, f"Unknown skill {skill_id}")
+                if "◎" in name:
+                    form = "double_circle"
+                elif "○" in name:
+                    form = "single_circle"
+                elif rarity == 2:
+                    form = "gold"
+                else:
+                    form = "normal"
+                self.skills[skill_id] = {
+                    "skill_id": skill_id,
+                    "group_id": group_id,
+                    "name": name,
+                    "rarity": rarity,
+                    "form": form,
+                }
         if "succession_factor_effect" in available_tables:
             for row in self.connection.execute(
                 "SELECT factor_group_id, effect_id, target_type, value_1, value_2 "
@@ -489,6 +518,33 @@ class MasterResolver:
         resolved.sort(key=factor_sort_key)
         return grouped_factors(resolved)
 
+    def resolve_skills(self, skill_array: Any) -> list[dict[str, Any]]:
+        """Resolve learned skills without inventing acquisition information."""
+        if not isinstance(skill_array, list):
+            return []
+        resolved: list[dict[str, Any]] = []
+        for raw_skill in skill_array:
+            if not isinstance(raw_skill, dict):
+                continue
+            raw_id = raw_skill.get("skill_id")
+            if not isinstance(raw_id, int) or raw_id <= 0:
+                continue
+            metadata = self.skills.get(raw_id)
+            if metadata is None:
+                resolved.append(
+                    {
+                        "skill_id": raw_id,
+                        "group_id": None,
+                        "name": f"Unknown skill {raw_id}",
+                        "rarity": None,
+                        "form": "unknown",
+                        "level": raw_skill.get("level"),
+                    }
+                )
+                continue
+            resolved.append({**metadata, "level": raw_skill.get("level")})
+        return resolved
+
     def resolve_g1_saddles(self, saddle_ids: Any) -> dict[str, Any]:
         details_by_name: dict[str, dict[str, Any]] = {}
         if isinstance(saddle_ids, list):
@@ -729,6 +785,8 @@ def link_veterans(
                 },
                 **card,
                 "factors": own_factors,
+                "learned_skills_known": isinstance(veteran.get("skill_array"), list),
+                "learned_skills": resolver.resolve_skills(veteran.get("skill_array")),
                 "g1_wins": own_g1,
                 "when_used_as_parent": {
                     "grandparent_1": parent_1,

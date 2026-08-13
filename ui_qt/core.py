@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from course_presets import resolve_course_overrides_path
 from legacy_linker import LinkResult, LinkerError, link_veterans, normalize_json_root
+from loop_repository import LoopProjectRepository, LoopRepositoryError, loop_projects_path
 from manual_weights import generate_manual_skill_weights
 from parent_optimizer import OptimizerError, OptimizerResult, load_ace_options, optimize_parents
 from scoring_config import (
@@ -594,6 +595,15 @@ def run_transfer_analysis(
         logger=logger,
     )
     progress(62, "Analyse de tous les rôles et profils…")
+    try:
+        loop_protected_ids = LoopProjectRepository(
+            loop_projects_path(request.output_dir)
+        ).active_trained_ids()
+    except LoopRepositoryError as exc:
+        raise TransferHelperError(
+            "Protection Loop Workshop indisponible : "
+            f"{exc}"
+        ) from exc
     result = analyze_transfer_candidates(
         request.master_path,
         linked.json_path,
@@ -603,6 +613,7 @@ def run_transfer_analysis(
         request.output_dir,
         course_weights_path=manual_weights.course_weights_path,
         scoring_config_path=scoring_config,
+        protected_trained_ids=loop_protected_ids,
         logger=logger,
     )
     progress(100, "Transfer Helper terminé.")

@@ -748,6 +748,8 @@ def _manual_protection(record: dict[str, Any]) -> list[str]:
         reasons.append("locked_in_game")
     if str(record.get("memo") or "").strip():
         reasons.append("memo_present")
+    if bool(record.get("active_loop_project")):
+        reasons.append("active_loop_project")
     return reasons
 
 
@@ -1252,6 +1254,7 @@ def analyze_transfer_candidates(
     *,
     course_weights_path: str | Path | None = None,
     scoring_config_path: str | Path | None = None,
+    protected_trained_ids: Iterable[int] = (),
     logger: Callable[[str], None] | None = None,
 ) -> TransferHelperResult:
     log = logger or _logger_default
@@ -1284,6 +1287,11 @@ def analyze_transfer_candidates(
     veterans = list(linked_payload.get("veterans") or [])
     if not veterans:
         raise TransferHelperError("Aucun vétéran dans veterans_legacy_linked.json")
+    loop_protected_ids = {
+        int(value)
+        for value in protected_trained_ids
+        if isinstance(value, int) or str(value).strip().isdigit()
+    }
 
     helper_config = config.get("transfer_helper") or {}
     analysis_mode = str(helper_config.get("analysis_mode") or "fast")
@@ -1353,6 +1361,7 @@ def analyze_transfer_candidates(
                 "direct_support_hint_metadata_available", False
             )
         ),
+        "active_loop_project_protected_count": len(loop_protected_ids),
     }
 
     contexts = _build_profile_contexts(
@@ -1392,6 +1401,8 @@ def analyze_transfer_candidates(
             "is_saved": bool(veteran.get("is_saved")),
             "icon_type": int(veteran.get("icon_type") or 0),
             "memo": str(veteran.get("memo") or ""),
+            "active_loop_project": int(veteran.get("trained_chara_id") or 0)
+            in loop_protected_ids,
             "comparison_group": group,
             "same_card_copy_count": 0,
             "referenced_by_local_veterans": 0,
@@ -1914,7 +1925,7 @@ def analyze_transfer_candidates(
             ),
             "safety_notes": [
                 "The helper never modifies the source collection export and never transfers a veteran automatically.",
-                "Locked veterans and veterans carrying a memo are always Protected before portfolio selection.",
+                "Locked veterans, veterans carrying a memo and active White Loop project carriers are always Protected before portfolio selection.",
                 "The default verdict scope is a permanent seven-archetype matrix over Front, Pace and Backline; it does not shrink when the upcoming Champion Meeting rotation changes.",
                 "Keep means the copy is required by the minimum same-costume collection portfolio to stay within the configured regret in every competitive niche or to preserve a protected inheritance asset.",
                 "Strictly safe transfer requires one retained same-costume/same-Unique replacement that is not worse in any viable profile envelope, remains at least as good for G1 pair support, clears the average lead, and individually preserves protected Spark heritage.",
@@ -1955,6 +1966,7 @@ def analyze_transfer_candidates(
                 "reason": record.get("reason_code"),
                 "is_locked": record.get("is_locked"),
                 "memo": record.get("memo"),
+                "active_loop_project": record.get("active_loop_project"),
                 "icon_type": record.get("icon_type"),
                 "trained_chara_id": record.get("trained_chara_id"),
                 "card_id": record.get("card_id"),
@@ -2013,6 +2025,7 @@ def analyze_transfer_candidates(
             "reason",
             "is_locked",
             "memo",
+            "active_loop_project",
             "icon_type",
             "trained_chara_id",
             "card_id",

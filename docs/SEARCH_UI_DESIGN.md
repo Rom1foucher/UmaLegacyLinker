@@ -267,9 +267,12 @@ fingerprint(kind) = sha1(canonical_json({
 }))
 ```
 
-- Computed by a new `AppContext.family_fingerprint(kind)`; panes store the
-  fingerprint at result application (`set_rows` / `set_result` gain the
-  parameter — they already receive the profile).
+- Computed by `AppContext.family_fingerprint(family)`; each
+  `ResultFamilyView` stores the fingerprint when a result is applied.
+- **Files are identified by path, size and mtime, not by their bytes.**
+  Digesting the overrides files on every badge refresh would put disk I/O on
+  the path of ordinary interactions such as changing a combo; the triple
+  moves with any edit, whether made in the app or outside it.
 - Badges refresh on: `lineage_changed`, a new `online_options_changed` signal
   (emitted by the new `AppContext.update_online_options(...)` that replaces
   direct `store.update` writes from the dialog), `configuration_changed`,
@@ -280,6 +283,14 @@ fingerprint(kind) = sha1(canonical_json({
   beats a guess.
 - The existing `_last_profile` / `profile_summary` machinery stays as the
   human-readable "computed with" line; the fingerprint is its machine twin.
+- **Stale is stated twice, deliberately.** The tab glyph answers "which of my
+  results moved?" while scanning the bar; a worded badge beside the result
+  answers "does what I am reading still match my settings?" while reading the
+  table. Neither position serves both questions.
+- **The detail pane hides rather than shrinks.** Its diagnostics were
+  hardened for a documented minimum width, below which the Spark tables
+  collapse into unreadable strips, so the pane offers two honest states
+  instead of a continuum that degrades silently.
 
 ## Component inventory
 
@@ -330,7 +341,7 @@ Extract panes to `ui_qt/result_panes.py`, delete dead `OptimizerPage` /
 audit imports. Riskiest phase: `start_local` / `start_online` /
 `_local_done` / `_online_done` / `_show_results` rewire onto tabs.
 
-**P4 — State visibility.** Family fingerprints, badges, `▣` loaded state,
+**P4 — State visibility** *(landed)*. Family fingerprints, badges, `▣` loaded state,
 `Ctrl+Enter`, detail-pane collapse toggle if not already landed with P1's
 splitter work.
 

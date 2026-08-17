@@ -669,6 +669,131 @@ class QtRuntimeSmokeTests(unittest.TestCase):
 
             _dispose_widget(search, self.application)
 
+    def test_staleness_is_scoped_to_each_family_inputs(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+        from ui_qt.result_families import (
+            FUTURE,
+            ONLINE_GP,
+            ONLINE_PARENT,
+            PAIRS,
+            STATE_LOADED,
+            STATE_READY,
+            STATE_STALE,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
+            search = SearchPage(context)
+            search.resize(1500, 900)
+            search.show()
+            self.application.processEvents()
+
+            profile = {
+                "surface": "turf",
+                "distance": "medium",
+                "style": "pace_chaser",
+            }
+
+            def compute_both() -> None:
+                search.pair_results.set_rows([], profile, lineage_root=None)
+                search._show_results(PAIRS, "local:pairs", profile)
+                search.online_parent_results.set_payload(
+                    {"metadata": {}, "results": []}, "parent"
+                )
+                search._show_results(
+                    ONLINE_PARENT, "uma.moe:online_parent", profile
+                )
+                self.application.processEvents()
+
+            compute_both()
+            self.assertEqual(search.families.view(PAIRS).state, STATE_READY)
+            self.assertEqual(
+                search.families.view(ONLINE_PARENT).state, STATE_READY
+            )
+
+            # A shared input moved: every computed family is stale.
+            context.update_lineage(top_n=50)
+            self.application.processEvents()
+            self.assertEqual(search.families.view(PAIRS).state, STATE_STALE)
+            self.assertEqual(
+                search.families.view(ONLINE_PARENT).state, STATE_STALE
+            )
+
+            # A grandparent-only option must not touch anything else.
+            compute_both()
+            search.section_online_gp.fetch_spin.setValue(1200)
+            self.application.processEvents()
+            self.assertEqual(search.families.view(PAIRS).state, STATE_READY)
+            self.assertEqual(
+                search.families.view(ONLINE_PARENT).state, STATE_READY
+            )
+
+            # A remote-parent option marks only that family.
+            search.section_online_parent.fetch_spin.setValue(900)
+            self.application.processEvents()
+            self.assertEqual(search.families.view(PAIRS).state, STATE_READY)
+            self.assertEqual(
+                search.families.view(ONLINE_PARENT).state, STATE_STALE
+            )
+            search.families.set_current_family(ONLINE_PARENT)
+            self.application.processEvents()
+            self.assertTrue(search.stale_badge.isVisible())
+            search.families.set_current_family(PAIRS)
+            self.application.processEvents()
+            self.assertFalse(search.stale_badge.isVisible())
+
+            # A result read from disk has no known inputs, so it is never
+            # promoted to fresh nor demoted to stale.
+            search._show_results(FUTURE, "local:future", profile, loaded=True)
+            context.update_lineage(top_n=80)
+            self.application.processEvents()
+            self.assertEqual(search.families.view(FUTURE).state, STATE_LOADED)
+            self.assertEqual(search.families.view(ONLINE_GP).result_kind, "")
+
+            _dispose_widget(search, self.application)
+
+    def test_detail_pane_hides_instead_of_being_squeezed(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
+            search = SearchPage(context)
+            search.resize(1500, 900)
+            search.show()
+            self.application.processEvents()
+
+            for pane in (search.pair_results, search.online_gp_results):
+                self.assertFalse(pane.detail_is_hidden())
+                self.assertTrue(pane.detail_toggle.text().strip())
+                # The documented minimum is kept: the pane hides the detail
+                # rather than rendering it below the width it was built for.
+                self.assertGreaterEqual(pane.detail.minimumWidth(), 520)
+
+                pane.set_detail_hidden(True)
+                self.application.processEvents()
+                self.assertTrue(pane.detail.isHidden())
+                hidden_label = pane.detail_toggle.text()
+
+                # The choice survives a language switch.
+                context.set_language("en")
+                self.application.processEvents()
+                self.assertTrue(pane.detail.isHidden())
+                self.assertNotEqual(pane.detail_toggle.text(), hidden_label)
+
+                pane.set_detail_hidden(False)
+                self.application.processEvents()
+                self.assertFalse(pane.detail.isHidden())
+                context.set_language("fr")
+                self.application.processEvents()
+
+            _dispose_widget(search, self.application)
+
     def test_uma_moe_integration_is_persisted_by_settings_context(self) -> None:
         from unittest.mock import patch
 

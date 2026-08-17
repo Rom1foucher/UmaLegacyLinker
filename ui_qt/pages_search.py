@@ -239,6 +239,12 @@ class SearchPage(QWidget):
         self.result_badge = QLabel("")
         self.result_badge.setObjectName("pillAccent")
         self.result_badge.setVisible(False)
+        # Stated in words next to the result, not only as a tab glyph: the
+        # question "does this still match my settings?" is asked while reading
+        # the table, not while scanning the tab bar.
+        self.stale_badge = QLabel("")
+        self.stale_badge.setObjectName("pillWarning")
+        self.stale_badge.setVisible(False)
         self.results_context = muted_label("")
         self.online_badge = QLabel("")
         self.online_badge.setObjectName("pill")
@@ -262,6 +268,7 @@ class SearchPage(QWidget):
         status = QHBoxLayout()
         status.setSpacing(8)
         status.addWidget(self.result_badge)
+        status.addWidget(self.stale_badge)
         status.addWidget(self.results_context, 1)
         status.addWidget(self.local_badge)
         status.addWidget(self.online_badge)
@@ -307,6 +314,7 @@ class SearchPage(QWidget):
         self.section_retrieval.changed.connect(self._refresh_online_validation)
         self.section_online_parent.changed.connect(self._refresh_online_validation)
         self.section_online_gp.changed.connect(self._refresh_online_validation)
+        context.online_options_changed.connect(self._refresh_freshness)
         self.ace_combo.currentIndexChanged.connect(self._ace_changed)
         self.target_combo.currentIndexChanged.connect(self._lineage_selection_changed)
         self.top_spin.valueChanged.connect(self._lineage_selection_changed)
@@ -324,7 +332,9 @@ class SearchPage(QWidget):
         )
         self.open_button.clicked.connect(self.open_output)
         context.lineage_changed.connect(self._sync_lineage_context)
+        context.lineage_changed.connect(self._refresh_freshness)
         context.configuration_changed.connect(self._schedule_refresh)
+        context.configuration_changed.connect(self._refresh_freshness)
         context.integration_changed.connect(self._refresh_integration)
         context.language_changed.connect(self._language_changed)
         self._refresh_timer = QTimer(self)
@@ -350,6 +360,9 @@ class SearchPage(QWidget):
         if not self._rail_state_restored:
             self._rail_state_restored = True
             self._restore_rail_state()
+        # Cheaply catches overrides files edited outside the app since the
+        # page was last visible.
+        self._refresh_freshness()
 
     def _restore_rail_state(self) -> None:
         """Apply the stored rail preference, or infer one from the width."""
@@ -869,9 +882,19 @@ class SearchPage(QWidget):
         """
         self._active_result_kind = kind
         view = self.families.view(family)
-        view.mark_result(loaded=loaded, kind=kind, profile=profile)
+        view.mark_result(
+            loaded=loaded,
+            kind=kind,
+            profile=profile,
+            fingerprint=self.context.family_fingerprint(family),
+        )
         self.families.set_current_family(family)
-        self.families.refresh_states()
+        self.families.refresh_freshness()
+        self._refresh_toolbar()
+
+    def _refresh_freshness(self, *_args: object) -> None:
+        """Re-compare every family's result against the current inputs."""
+        self.families.refresh_freshness()
         self._refresh_toolbar()
 
     def _family_changed(self, family: str) -> None:
@@ -926,6 +949,11 @@ class SearchPage(QWidget):
             else ""
         )
         self.run_button.setEnabled(not self._busy)
+        stale = view.is_stale()
+        self.stale_badge.setVisible(stale)
+        self.results_context.setToolTip(
+            t("Le contexte a changé depuis ce calcul") if stale else ""
+        )
 
     def run_current_family(self) -> None:
         """The one verb of the visible view; also bound to Ctrl+Enter."""
@@ -1148,6 +1176,7 @@ class SearchPage(QWidget):
         self.options_button.setText(t("Options…"))
         self.local_gp_pairs_button.setText(t("GP locaux"))
         self.open_button.setText(t("Sortie"))
+        self.stale_badge.setText(t("Obsolète"))
         self.families.retranslate()
         self._refresh_toolbar()
         self.section_retrieval.retranslate()

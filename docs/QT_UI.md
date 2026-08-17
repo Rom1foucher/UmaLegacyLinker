@@ -77,7 +77,7 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/main_window.py` | application shell, navigation, progress and log drawer |
 | `ui_qt/pages_home_data.py` | dashboard and local linking workflow |
 | `ui_qt/pages_search.py` | unified context rail, adaptive toolbar and result families |
-| `ui_qt/result_families.py` | one tab and one persistent pane per result family |
+| `ui_qt/result_families.py` | one tab and one persistent pane per result family, with per-family freshness |
 | `ui_qt/result_panes.py` | result tables and diagnostics shared by every family |
 | `ui_qt/online_options.py` | shared uma.moe retrieval constraints and per-search strategy sections |
 | `ui_qt/pages_optimizer.py` | reusable local result explorer and diagnostics |

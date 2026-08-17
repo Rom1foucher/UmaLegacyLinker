@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -15,7 +18,51 @@ from ui_qt.core import (
     auto_detect_extractor,
     auto_detect_master,
     default_output_dir,
+    user_scoring_overrides_path,
 )
+
+# Search options every remote family reads, versus the ones that belong to a
+# single family. The split mirrors ui_qt/online_options.py: a fingerprint that
+# folded them together would report a parent search as stale because a
+# grandparent setting moved.
+SHARED_ONLINE_KEYS = (
+    "uql_prefer_whites",
+    "uql_lineage_whites",
+    "uql_surface_cohort",
+    "uql_require_surface",
+    "uql_require_distance",
+    "uql_require_style",
+    "uql_pink_min_stars",
+    "uql_lineage_blue_name",
+    "uql_lineage_blue_stars",
+    "uql_lineage_pink_name",
+    "uql_lineage_pink_stars",
+    "uma_moe_parent_allowed_card_ids",
+    "uma_moe_parent_excluded_card_ids",
+)
+
+FAMILY_ONLINE_KEYS = {
+    "online_parent": (
+        "uma_moe_parent_auto_pairs",
+        "uma_moe_parent_fixed_local_id",
+        "uma_moe_parent_local_pool",
+        "uma_moe_parent_remote_pool",
+        "uma_moe_parent_limit",
+        "uma_moe_required_parent_card_id",
+    ),
+    "online_gp": (
+        "uma_moe_gp_auto_pairs",
+        "uma_moe_gp_fixed_local_id",
+        "uma_moe_gp_local_pool",
+        "uma_moe_gp_remote_pool",
+        "uma_moe_gp_limit",
+        "uma_moe_opposing_selection",
+        "uma_moe_opposing_id",
+        "uma_moe_parent_g1_budget",
+        "uma_moe_g1_win_probability_cutoff",
+    ),
+}
+
 
 
 def _stored_integer(value: object, default: int = 0) -> int:
@@ -279,6 +326,53 @@ class AppContext(QObject):
             }
         )
         self.integration_changed.emit()
+
+    def _file_signature(self, path: str | Path | None) -> list[object]:
+        """Identify a file by path, size and mtime rather than by its bytes.
+
+        Reading the overrides files on every badge refresh would put disk I/O
+        on the path of ordinary interactions. Path, size and mtime move
+        together with any edit made through the app or outside it.
+        """
+        if not path:
+            return ["", 0, 0]
+        candidate = Path(path).expanduser()
+        try:
+            stat = candidate.stat()
+        except OSError:
+            return [str(candidate), 0, 0]
+        return [str(candidate), stat.st_size, int(stat.st_mtime_ns)]
+
+    def family_fingerprint(self, family: str) -> str:
+        """Digest exactly the inputs one result family consumes.
+
+        A single revision counter over the whole context would mark local
+        results stale because a uma.moe fetch limit moved — noise that teaches
+        the user to ignore the badge. Each family therefore hashes its own
+        inputs: everything shared, plus only its own search options.
+        """
+        state = self.lineage_state().normalized()
+        payload: dict[str, object] = {
+            "family": family,
+            "lineage": {
+                name: getattr(state, name)
+                for name in sorted(LineageContextState.__dataclass_fields__)
+            },
+            "master": self._file_signature(self.master_path),
+            "data": self._file_signature(self.veterans_json_path),
+            "courses": self._file_signature(self.course_overrides_path),
+            "skills": self._file_signature(state.skill_priorities_path),
+            "scoring": self._file_signature(
+                user_scoring_overrides_path() if state.use_custom_scoring else None
+            ),
+        }
+        option_keys = SHARED_ONLINE_KEYS + FAMILY_ONLINE_KEYS.get(family, ())
+        if option_keys:
+            payload["options"] = {
+                key: self.store.get(key, "") for key in sorted(option_keys)
+            }
+        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
     def update_online_options(self, values: dict[str, object]) -> None:
         """Persist a uma.moe search-option edit and notify every consumer.

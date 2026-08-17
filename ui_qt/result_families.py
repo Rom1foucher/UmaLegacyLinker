@@ -52,12 +52,14 @@ ONLINE_FAMILIES = (ONLINE_PARENT, ONLINE_GP)
 STATE_EMPTY = "empty"
 STATE_RUNNING = "running"
 STATE_READY = "ready"
+STATE_STALE = "stale"
 STATE_LOADED = "loaded"
 
 STATE_GLYPHS = {
     STATE_EMPTY: "○",
     STATE_RUNNING: "⟳",
     STATE_READY: "●",
+    STATE_STALE: "◐",
     STATE_LOADED: "▣",
 }
 
@@ -65,6 +67,7 @@ STATE_LABELS = {
     STATE_EMPTY: "Aucun résultat",
     STATE_RUNNING: "Calcul en cours",
     STATE_READY: "Résultat à jour",
+    STATE_STALE: "Le contexte a changé depuis ce calcul",
     STATE_LOADED: "Résultat chargé depuis le disque",
 }
 
@@ -111,6 +114,10 @@ class ResultFamilyView(QWidget):
         self.state = STATE_EMPTY
         self.profile: dict[str, Any] = {}
         self.result_kind = ""
+        # The fingerprint of the inputs this result was computed from. Empty
+        # for a result read from disk: its inputs are unknown, and claiming
+        # freshness would be a guess.
+        self.fingerprint = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -131,11 +138,32 @@ class ResultFamilyView(QWidget):
         layout.addWidget(self.stack)
         self.retranslate()
 
-    def mark_result(self, *, loaded: bool, kind: str, profile: dict[str, Any] | None) -> None:
+    def mark_result(
+        self,
+        *,
+        loaded: bool,
+        kind: str,
+        profile: dict[str, Any] | None,
+        fingerprint: str = "",
+    ) -> None:
         self.state = STATE_LOADED if loaded else STATE_READY
         self.result_kind = kind
         self.profile = dict(profile or {})
+        self.fingerprint = "" if loaded else fingerprint
         self.stack.setCurrentWidget(self.pane)
+
+    def refresh_freshness(self, fingerprint: str) -> None:
+        """Compare the current inputs with the ones this result came from.
+
+        A result loaded from disk keeps its own state: without a known
+        fingerprint there is nothing to compare, and calling it stale would be
+        as much of a guess as calling it fresh.
+        """
+        if self.state in {STATE_RUNNING, STATE_EMPTY, STATE_LOADED}:
+            return
+        if not self.fingerprint:
+            return
+        self.state = STATE_READY if fingerprint == self.fingerprint else STATE_STALE
 
     def mark_running(self) -> None:
         self.state = STATE_RUNNING
@@ -143,6 +171,9 @@ class ResultFamilyView(QWidget):
     def clear_running(self) -> None:
         if self.state == STATE_RUNNING:
             self.state = STATE_EMPTY if self.result_kind == "" else STATE_READY
+
+    def is_stale(self) -> bool:
+        return self.state == STATE_STALE
 
     def has_result(self) -> bool:
         return bool(self.result_kind)
@@ -204,6 +235,11 @@ class ResultFamilyTabs(QWidget):
 
     def view(self, family: str) -> ResultFamilyView:
         return self.views[family]
+
+    def refresh_freshness(self) -> None:
+        for family, view in self.views.items():
+            view.refresh_freshness(self.context.family_fingerprint(family))
+        self.refresh_states()
 
     def refresh_states(self) -> None:
         t = self.context.t

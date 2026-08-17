@@ -14,6 +14,7 @@ from typing import Any
 from PySide6.QtCore import QItemSelection, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QToolButton,
     QApplication,
     QDialog,
     QDialogButtonBox,
@@ -51,6 +52,23 @@ from ui_qt.presentation import (
 RIGHT = Qt.AlignmentFlag.AlignRight
 
 
+def _install_detail_toggle(pane, splitter) -> None:
+    """Let the detail browser be hidden outright instead of squeezed.
+
+    The diagnostics HTML was hardened for a documented minimum width, and
+    below it the Spark tables collapse into unreadable strips. So the pane
+    offers exactly two states — the detail at full width, or no detail at all
+    — rather than a continuum that silently degrades. Hiding it hands the
+    whole width back to the table, which is what a narrow workspace needs.
+    """
+    pane.detail_splitter = splitter
+    pane.detail_toggle = QToolButton()
+    pane.detail_toggle.setCheckable(True)
+    pane.detail_toggle.setAutoRaise(True)
+    pane.detail_toggle.toggled.connect(pane.set_detail_hidden)
+    pane.set_detail_hidden(False)
+
+
 def _integer(value: object, default: int = 0) -> int:
     try:
         return int(value)
@@ -75,6 +93,7 @@ class ResultPane(QWidget):
         head.addWidget(self.summary, 1)
         head.addWidget(self.lineage_button)
         root.addLayout(head)
+        self._pending_head = head
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.table = QTableView()
@@ -98,6 +117,8 @@ class ResultPane(QWidget):
         splitter.addWidget(self.detail)
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 5)
+        _install_detail_toggle(self, splitter)
+        self._pending_head.addWidget(self.detail_toggle)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([700, 560])
         root.addWidget(splitter, 1)
@@ -230,7 +251,23 @@ class ResultPane(QWidget):
             parent=self,
         ).exec()
 
+    def set_detail_hidden(self, hidden: bool) -> None:
+        self.detail.setVisible(not hidden)
+        if self.detail_toggle.isChecked() != hidden:
+            self.detail_toggle.blockSignals(True)
+            self.detail_toggle.setChecked(hidden)
+            self.detail_toggle.blockSignals(False)
+        self.detail_toggle.setText(
+            self.context.t("Détail")
+            if hidden
+            else self.context.t("Masquer le détail")
+        )
+
+    def detail_is_hidden(self) -> bool:
+        return self.detail_toggle.isChecked()
+
     def retranslate(self) -> None:
+        self.set_detail_hidden(self.detail_toggle.isChecked())
         t = self.context.t
         selected = self.selected_row()
         selected_rank = selected.get("_rank") if selected else None
@@ -357,6 +394,7 @@ class OnlineResultsPane(QWidget):
         head.addWidget(self.copy_export_button)
         head.addWidget(self.copy_button)
         root.addLayout(head)
+        self._pending_head = head
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.table = QTableView()
@@ -375,6 +413,8 @@ class OnlineResultsPane(QWidget):
         splitter.addWidget(self.detail)
         splitter.setChildrenCollapsible(False)
         splitter.setStretchFactor(0, 5)
+        _install_detail_toggle(self, splitter)
+        self._pending_head.addWidget(self.detail_toggle)
         splitter.setStretchFactor(1, 4)
         splitter.setSizes([700, 560])
         root.addWidget(splitter, 1)
@@ -628,7 +668,23 @@ class OnlineResultsPane(QWidget):
         self.copy_export_button.setText(self.context.t("Export copié !"))
         QTimer.singleShot(1400, self.retranslate)
 
+    def set_detail_hidden(self, hidden: bool) -> None:
+        self.detail.setVisible(not hidden)
+        if self.detail_toggle.isChecked() != hidden:
+            self.detail_toggle.blockSignals(True)
+            self.detail_toggle.setChecked(hidden)
+            self.detail_toggle.blockSignals(False)
+        self.detail_toggle.setText(
+            self.context.t("Détail")
+            if hidden
+            else self.context.t("Masquer le détail")
+        )
+
+    def detail_is_hidden(self) -> bool:
+        return self.detail_toggle.isChecked()
+
     def retranslate(self) -> None:
+        self.set_detail_hidden(self.detail_toggle.isChecked())
         t = self.context.t
         summary = t("{count} paires classées · tri par en-tête · double-clic sur Friend ID pour copier").replace(
             "{count}", str(self.model.rowCount())

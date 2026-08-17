@@ -9,8 +9,9 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - extraction through UmaExtractor or umadump, linking of `data.json` or
   `trained_chara_data.json`, and skill-catalogue generation;
 - searchable Ace, target-parent, course and racecourse selection with contains-based autocomplete;
-- course presets and advanced static race conditions;
-- one Search workspace with a persistent Ace, target-parent, race, course and scoring context;
+- course presets and static race conditions, edited in place rather than in a modal editor;
+- one Search workspace with a persistent Ace, target-parent, race, course and scoring context, held in a collapsible context rail beside a full-height result area;
+- rail sections whose headers keep stating their effective values, modified state and reset action, so a collapsed section never hides the settings a calculation will use;
 - clearly separated local and uma.moe source cards feeding one shared result area;
 - independent background actions for final pairs, parent branches and future grandparents, so a local request computes only the requested result family;
 - sortable final-pair, parent-branch and future-grandparent tables;
@@ -41,7 +42,7 @@ The lineage view retains the compact identities, Sparks and skill IDs required f
 
 ## Visual QA
 
-The Windows workflow renders every page, the Search conditions and per-mode uma.moe option dialogs, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 102 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
+The Windows workflow renders every page, the Search workspace with its context rail both expanded and collapsed, the per-mode uma.moe option dialogs, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 106 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
 
 ## Artwork and offline behaviour
 
@@ -93,7 +94,7 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/layout_audit.py` | offscreen screenshots and overflow checks |
 | `tests/` | engine, UI, release, documentation and bilingual-coverage tests |
 
-The reasoning and comparable-app patterns behind the weights redesign are recorded in [`WEIGHTS_UI_DESIGN.md`](WEIGHTS_UI_DESIGN.md).
+The reasoning and comparable-app patterns behind the weights redesign are recorded in [`WEIGHTS_UI_DESIGN.md`](WEIGHTS_UI_DESIGN.md); the Search workspace redesign and its remaining phases are recorded in [`SEARCH_UI_DESIGN.md`](SEARCH_UI_DESIGN.md).
 
 ## Packaging note
 

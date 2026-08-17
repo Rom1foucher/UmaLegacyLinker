@@ -2,6 +2,10 @@
 
 This project uses feature-level semantic versioning. Small internal iterations are consolidated into the nearest meaningful release instead of receiving their own public version.
 
+## Unreleased
+
+- Split the Search workspace into a collapsible context rail and a full-height result area instead of stacking configuration above the results. Every section header keeps stating its effective values, its modified state and its reset action, so a collapsed rail still shows what the next calculation will use. The static race conditions moved out of their modal editor into the rail, and the rail can be hidden entirely on narrow windows.
+
 ## 1.7.2 - Search, planning and Transfer Helper portfolio
 
 - Fixed Lineage Planner export compatibility with the current uma.moe v1 import envelope, then exposed file and clipboard export directly on uma.moe parent-pair results while preserving race-saddle histories.

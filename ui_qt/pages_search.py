@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QSplitter,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +43,7 @@ from ui_qt.components import (
     PageHeader,
     PathPicker,
     SearchableComboBox,
+    SummarySection,
     ThemedComboBox,
     muted_label,
     section_label,
@@ -63,6 +66,12 @@ from ui_qt.pages_online import CardFilterDialog, OnlineResultsPane
 from ui_qt.pages_optimizer import ResultPane
 from ui_qt.presentation import profile_summary
 
+RAIL_COLLAPSED_KEY = "search_rail_collapsed"
+RAIL_WIDTH = 300
+# Below this workspace width the rail and a result pane cannot both stay
+# readable, so the rail starts collapsed unless the user decided otherwise.
+NARROW_WORKSPACE_WIDTH = 1360
+
 
 def _integer(value: object, default: int = 0) -> int:
     try:
@@ -81,62 +90,6 @@ def _id_set(value: str) -> set[int]:
         if candidate > 0:
             result.add(candidate)
     return result
-
-
-class RaceConditionsDialog(QDialog):
-    """Static editor for the less frequently changed race/scoring settings."""
-
-    def __init__(
-        self,
-        context: AppContext,
-        tracks: list[object],
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self.context = context
-        self.setModal(True)
-        self.resize(780, 610)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(12)
-        self.title = section_label("")
-        self.title.setWordWrap(False)
-        self.hint = muted_label("")
-        root.addWidget(self.title)
-        root.addWidget(self.hint)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.editor = LineageRaceEditor(context)
-        self.editor.set_track_options(tracks)
-        self.editor.panel.setVisible(False)
-        self.editor.advanced.toggle.setChecked(True)
-        self.editor.advanced.toggle.setVisible(False)
-        scroll.setWidget(self.editor)
-        root.addWidget(scroll, 1)
-
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        self.buttons.rejected.connect(self.reject)
-        root.addWidget(self.buttons)
-        context.language_changed.connect(self._language_changed)
-        self.retranslate()
-
-    def _language_changed(self, _language: str) -> None:
-        self.retranslate()
-
-    def retranslate(self) -> None:
-        t = self.context.t
-        self.setWindowTitle(t("Conditions et scoring"))
-        self.title.setText(t("Conditions exactes et profil de score"))
-        self.hint.setText(
-            t(
-                "Ces valeurs complètent le contexte principal. Elles restent partagées entre les recherches locales et uma.moe."
-            )
-        )
-        close_button = self.buttons.button(QDialogButtonBox.StandardButton.Close)
-        if close_button is not None:
-            close_button.setText(t("Fermer"))
 
 
 class OnlineSearchOptionsDialog(QDialog):
@@ -764,6 +717,7 @@ class SearchPage(QWidget):
         self._last_future_parent: dict[str, Any] | None = None
         self._last_profile: dict[str, Any] = {}
         self._active_result_kind = ""
+        self._rail_state_restored = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 16, 24, 18)
@@ -771,22 +725,34 @@ class SearchPage(QWidget):
         self.header = PageHeader("", "")
         root.addWidget(self.header)
 
-        context_panel = QFrame()
-        context_panel.setObjectName("panel")
-        context_layout = QVBoxLayout(context_panel)
-        context_layout.setContentsMargins(17, 13, 17, 14)
-        context_layout.setSpacing(9)
-        context_head = QHBoxLayout()
-        self.context_title = section_label("")
-        self.context_summary = muted_label("")
-        self.conditions_button = QPushButton("")
-        self.refresh_button = QPushButton("")
-        context_head.addWidget(self.context_title)
-        context_head.addWidget(self.context_summary, 1)
-        context_head.addWidget(self.conditions_button)
-        context_head.addWidget(self.refresh_button)
-        context_layout.addLayout(context_head)
+        # The workspace is split rather than stacked. Configuration used to sit
+        # above the results and claim a fixed slice of height on every visit,
+        # leaving the tables and their rich-text diagnostics — the part actually
+        # read — whatever remained. A collapsible rail lets the results own the
+        # full height while keeping every setting one click away.
+        self.workspace = QSplitter(Qt.Orientation.Horizontal)
+        self.workspace.setChildrenCollapsible(False)
+        self.workspace.setHandleWidth(6)
 
+        self.rail = QWidget()
+        rail_layout = QVBoxLayout(self.rail)
+        rail_layout.setContentsMargins(0, 0, 6, 0)
+        rail_layout.setSpacing(8)
+        self.rail_title = section_label("")
+        rail_layout.addWidget(self.rail_title)
+
+        self.rail_scroll = QScrollArea()
+        self.rail_scroll.setWidgetResizable(True)
+        self.rail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.rail_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        rail_body = QWidget()
+        rail_body_layout = QVBoxLayout(rail_body)
+        rail_body_layout.setContentsMargins(0, 0, 0, 0)
+        rail_body_layout.setSpacing(8)
+
+        self.section_objective = SummarySection("")
         objective = QGridLayout()
         objective.setHorizontalSpacing(12)
         objective.setVerticalSpacing(6)
@@ -798,24 +764,58 @@ class SearchPage(QWidget):
         self.top_spin = QSpinBox()
         self.top_spin.setRange(5, 200)
         self.top_spin.setValue(context.lineage_state().top_n)
-        self.top_spin.setMaximumWidth(150)
-        objective.addWidget(self.ace_label, 0, 0)
-        objective.addWidget(self.target_label, 0, 1)
-        objective.addWidget(self.top_label, 0, 2)
-        objective.addWidget(self.ace_combo, 1, 0)
-        objective.addWidget(self.target_combo, 1, 1)
-        objective.addWidget(self.top_spin, 1, 2)
-        objective.setColumnStretch(0, 3)
-        objective.setColumnStretch(1, 3)
-        objective.setColumnStretch(2, 1)
-        context_layout.addLayout(objective)
+        self.refresh_button = QPushButton("")
+        objective.addWidget(self.ace_label, 0, 0, 1, 2)
+        objective.addWidget(self.ace_combo, 1, 0, 1, 2)
+        objective.addWidget(self.target_label, 2, 0, 1, 2)
+        objective.addWidget(self.target_combo, 3, 0, 1, 2)
+        objective.addWidget(self.top_label, 4, 0)
+        objective.addWidget(self.top_spin, 5, 0)
+        objective.addWidget(self.refresh_button, 5, 1)
+        objective.setColumnStretch(0, 1)
+        objective.setColumnStretch(1, 1)
+        self.section_objective.content_layout.addLayout(objective)
+        self.section_objective.toggle.setChecked(True)
+        rail_body_layout.addWidget(self.section_objective)
 
-        self.race_editor = LineageRaceEditor(context, compact=True)
+        # The editor keeps owning its controls and their synchronisation; the
+        # rail only decides where its two groups are shown.
+        self.race_editor = LineageRaceEditor(context, self, host_sections=True)
         self.race_editor.shared_hint.setVisible(False)
-        self.race_editor.advanced.setVisible(False)
         self.race_editor.panel.setObjectName("subtlePanel")
-        context_layout.addWidget(self.race_editor)
-        root.addWidget(context_panel)
+
+        self.section_course = SummarySection("")
+        self.section_course.content_layout.addWidget(self.race_editor.panel)
+        rail_body_layout.addWidget(self.section_course)
+
+        self.section_conditions = SummarySection("", resettable=True)
+        self.section_conditions.content_layout.addWidget(
+            self.race_editor.advanced_body
+        )
+        rail_body_layout.addWidget(self.section_conditions)
+
+        rail_body_layout.addStretch(1)
+        self.rail_scroll.setWidget(rail_body)
+        rail_layout.addWidget(self.rail_scroll, 1)
+        self.workspace.addWidget(self.rail)
+
+        main = QWidget()
+        main_layout = QVBoxLayout(main)
+        main_layout.setContentsMargins(10, 0, 0, 0)
+        main_layout.setSpacing(10)
+        ribbon = QHBoxLayout()
+        ribbon.setSpacing(8)
+        self.rail_toggle = QToolButton()
+        self.rail_toggle.setCheckable(True)
+        self.rail_toggle.setAutoRaise(True)
+        self.context_summary = muted_label("", wrap=False)
+        ribbon.addWidget(self.rail_toggle)
+        ribbon.addWidget(self.context_summary, 1)
+        main_layout.addLayout(ribbon)
+        self.workspace.addWidget(main)
+        self.workspace.setStretchFactor(0, 0)
+        self.workspace.setStretchFactor(1, 1)
+        root.addWidget(self.workspace, 1)
 
         source_layout = QHBoxLayout()
         source_layout.setSpacing(10)
@@ -898,7 +898,7 @@ class SearchPage(QWidget):
         online.addLayout(online_secondary)
         source_layout.addWidget(self.local_card, 1)
         source_layout.addWidget(self.online_card, 1)
-        root.addLayout(source_layout)
+        main_layout.addLayout(source_layout)
 
         result_frame = QFrame()
         result_frame.setObjectName("panel")
@@ -949,12 +949,15 @@ class SearchPage(QWidget):
         ):
             self.result_stack.addWidget(widget)
         result_layout.addWidget(self.result_stack, 1)
-        root.addWidget(result_frame, 1)
+        main_layout.addWidget(result_frame, 1)
 
         self.refresh_button.clicked.connect(
             lambda: self.refresh_options(show_errors=True)
         )
-        self.conditions_button.clicked.connect(self.open_conditions)
+        self.rail_toggle.toggled.connect(self._rail_toggled)
+        self.section_conditions.reset_requested.connect(
+            self.race_editor.clear_static_conditions
+        )
         self.ace_combo.currentIndexChanged.connect(self._ace_changed)
         self.target_combo.currentIndexChanged.connect(self._lineage_selection_changed)
         self.top_spin.valueChanged.connect(self._lineage_selection_changed)
@@ -1004,6 +1007,57 @@ class SearchPage(QWidget):
         self._sync_lineage_context()
         self._initial_refresh_timer.start(0)
         self._initial_result_timer.start(80)
+
+    def showEvent(self, event) -> None:
+        # Width-based inference has to wait for a real geometry: during
+        # construction the page is not in its window yet and reports Qt's
+        # default size, which would collapse the rail on every machine.
+        super().showEvent(event)
+        if not self._rail_state_restored:
+            self._rail_state_restored = True
+            self._restore_rail_state()
+
+    def _restore_rail_state(self) -> None:
+        """Apply the stored rail preference, or infer one from the width.
+
+        Below the threshold the rail and a result pane cannot both be readable:
+        the diagnostics browser needs its documented minimum before its Spark
+        tables are worth rendering. Starting collapsed there keeps the first
+        view usable, while an explicit user choice always wins afterwards.
+        """
+        stored = self.context.store.get(RAIL_COLLAPSED_KEY, "")
+        if stored in {"0", "1"}:
+            collapsed = stored == "1"
+        else:
+            window = self.window()
+            width = window.width() if window is not None else 0
+            collapsed = 0 < width < NARROW_WORKSPACE_WIDTH
+        self.set_rail_collapsed(collapsed, persist=False)
+
+    def set_rail_collapsed(self, collapsed: bool, *, persist: bool = True) -> None:
+        self.rail.setVisible(not collapsed)
+        if self.rail_toggle.isChecked() != collapsed:
+            self.rail_toggle.blockSignals(True)
+            self.rail_toggle.setChecked(collapsed)
+            self.rail_toggle.blockSignals(False)
+        if not collapsed:
+            self.workspace.setSizes([RAIL_WIDTH, max(1, self.width() - RAIL_WIDTH)])
+        self._retranslate_rail_toggle()
+        if persist:
+            self.context.store.update({RAIL_COLLAPSED_KEY: "1" if collapsed else "0"})
+
+    def _rail_toggled(self, collapsed: bool) -> None:
+        self.set_rail_collapsed(collapsed)
+
+    def _retranslate_rail_toggle(self) -> None:
+        t = self.context.t
+        collapsed = self.rail_toggle.isChecked()
+        self.rail_toggle.setText(
+            f"⇥  {t('Contexte')}" if collapsed else f"⇤  {t('Contexte')}"
+        )
+        self.rail_toggle.setToolTip(
+            t("Afficher le contexte") if collapsed else t("Masquer le contexte")
+        )
 
     def _initial_refresh(self) -> None:
         self.refresh_options(show_errors=False)
@@ -1138,6 +1192,37 @@ class SearchPage(QWidget):
         if condition_parts:
             text += " · " + " / ".join(condition_parts)
         self.context_summary.setText(text)
+        self._refresh_section_summaries(state, profile)
+
+    def _refresh_section_summaries(
+        self, state: LineageContextState, profile: dict[str, str]
+    ) -> None:
+        """Keep every collapsed section readable.
+
+        A closed section must still answer what the next calculation will use,
+        so each header restates its effective values rather than only its name.
+        """
+        t = self.context.t
+        ace = self.ace_combo.currentText().strip()
+        target = self.target_combo.currentText().strip()
+        objective = " → ".join(part for part in (ace, target) if part)
+        top = t("{count} résultats").replace("{count}", str(state.top_n))
+        self.section_objective.set_summary(
+            f"{objective} · {top}" if objective else t("Aucun Ace sélectionné")
+        )
+
+        self.section_course.set_summary(
+            profile_summary(profile, self.context.language)
+            + f" · {self.race_editor.current_course_label()}"
+        )
+
+        static_labels = self.race_editor.static_condition_labels()
+        self.section_conditions.set_summary(
+            " · ".join(static_labels)
+            if static_labels
+            else t("Aucune condition fixée")
+        )
+        self.section_conditions.set_modified(bool(static_labels), t("Modifié"))
 
     def _refresh_source_badges(self) -> None:
         self.local_badge.setText(
@@ -1156,11 +1241,14 @@ class SearchPage(QWidget):
         self.online_badge.setText(status)
 
     def open_conditions(self) -> None:
-        RaceConditionsDialog(
-            self.context,
-            sorted(self._track_options, key=lambda item: item.name.casefold()),
-            self,
-        ).exec()
+        """Reveal the static conditions instead of opening a modal editor.
+
+        Kept as a named entry point so any caller asking for "the conditions"
+        lands on them, now that they live in the rail rather than in a dialog.
+        """
+        self.set_rail_collapsed(False)
+        self.section_conditions.toggle.setChecked(True)
+        self.rail_scroll.ensureWidgetVisible(self.section_conditions)
         self._refresh_context()
 
     def _selected_ids(self) -> tuple[int, int]:
@@ -1553,7 +1641,6 @@ class SearchPage(QWidget):
         self._busy = busy
         for widget in (
             self.refresh_button,
-            self.conditions_button,
             self.local_pairs_button,
             self.local_parents_button,
             self.local_future_button,
@@ -1582,9 +1669,16 @@ class SearchPage(QWidget):
                 "Définis l’objectif une seule fois, puis choisis explicitement la source et le calcul à lancer."
             ),
         )
-        self.context_title.setText(t("Contexte commun"))
-        self.conditions_button.setText(t("Conditions et scoring…"))
-        self.refresh_button.setText(t("Actualiser les listes"))
+        self.rail_title.setText(t("Contexte commun"))
+        self.section_objective.set_title(t("Objectif"))
+        self.section_course.set_title(t("Course et profil"))
+        self.section_conditions.set_title(t("Conditions statiques"))
+        self.section_conditions.set_reset_text(
+            t("Réinitialiser"),
+            t("Remet les conditions statiques sur « Non précisé »."),
+        )
+        self._retranslate_rail_toggle()
+        self.refresh_button.setText(t("Actualiser"))
         self.ace_label.setText(t("Ace visé"))
         self.target_label.setText(t("Parent à produire") + " · " + t("pour les recherches GP"))
         self.top_label.setText(t("Résultats"))

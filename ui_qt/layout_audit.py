@@ -29,7 +29,7 @@ from ui_qt.lineage_view import LineageDialog
 from ui_qt.main_window import MainWindow
 from ui_qt.pages_online import OnlineResultsPane
 from ui_qt.pages_optimizer import ResultPane
-from ui_qt.pages_search import OnlineSearchOptionsDialog, RaceConditionsDialog
+from ui_qt.pages_search import OnlineSearchOptionsDialog
 from ui_qt.presentation import online_detail_html, result_detail_html
 from ui_qt.theme import application_stylesheet
 
@@ -176,6 +176,13 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                 application.processEvents()
                 variants: list[tuple[str, str | None]] = [(page, None)]
                 current_page = window._pages[page]
+                if page == "search" and hasattr(current_page, "set_rail_collapsed"):
+                    # The rail is the page's main layout state: both positions
+                    # have to survive every audited width.
+                    variants = [
+                        ("search", "rail-expanded"),
+                        ("search-rail-collapsed", "rail-collapsed"),
+                    ]
                 if page == "weights" and hasattr(current_page, "_all_rows"):
                     variants = [
                         ("weights-distribution", "distribution"),
@@ -186,6 +193,11 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                     ]
                 for variant, mode in variants:
                     print(f"Auditing {language}/{variant}...", flush=True)
+                    if page == "search" and mode is not None:
+                        current_page.set_rail_collapsed(
+                            mode == "rail-collapsed", persist=False
+                        )
+                        application.processEvents()
                     if page == "weights" and mode is not None:
                         if mode == "distribution":
                             row = next(
@@ -272,10 +284,6 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                             report["issues"].append(f"{language}/{variant}/{width}x{height}: {issue}")
 
             dialog_factories = [
-                (
-                    "search-conditions",
-                    lambda: RaceConditionsDialog(context, []),
-                ),
                 (
                     "search-options-parent",
                     lambda: OnlineSearchOptionsDialog(

@@ -313,11 +313,16 @@ class CollapsibleSection(QFrame):
         self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.toggle.setStyleSheet("QToolButton { border:none; font-weight:650; padding:4px; }")
+        self.header_layout = QHBoxLayout()
+        self.header_layout.setContentsMargins(0, 0, 0, 0)
+        self.header_layout.setSpacing(6)
+        self.header_layout.addWidget(self.toggle)
+        self.header_layout.addStretch(1)
         self.content = QWidget()
         self.content.setVisible(False)
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(4, 2, 4, 2)
-        layout.addWidget(self.toggle)
+        layout.addLayout(self.header_layout)
         layout.addWidget(self.content)
         self.toggle.toggled.connect(self._toggle)
 
@@ -329,6 +334,58 @@ class CollapsibleSection(QFrame):
 
     def set_title(self, title: str) -> None:
         self.toggle.setText(title)
+
+
+class SummarySection(CollapsibleSection):
+    """Collapsible section whose header keeps stating its effective value.
+
+    Collapsing trades content visibility for space, so a plain accordion turns
+    every closed panel into state the user has to reopen to recall. That cost
+    is unacceptable for settings that change a calculation: a non-default
+    condition hidden inside a closed section is indistinguishable from an
+    unset one.
+
+    This section therefore hides the *controls*, never the *state*. The header
+    keeps a plain-language summary of the effective values, an explicit
+    modified marker when they differ from the defaults, and the reset action
+    beside them, so a collapsed rail still answers "what will this calculation
+    actually use?" at a glance. It reuses the modified/reset vocabulary
+    already established by the scoring editor.
+    """
+
+    reset_requested = Signal()
+
+    def __init__(self, title: str, parent=None, *, resettable: bool = False):
+        super().__init__(title, parent)
+        self.modified = QLabel("")
+        self.modified.setObjectName("pillAccent")
+        self.modified.setVisible(False)
+        self.reset_button = QToolButton()
+        self.reset_button.setAutoRaise(True)
+        self.reset_button.setVisible(resettable)
+        self.reset_button.clicked.connect(self.reset_requested.emit)
+        self.header_layout.insertWidget(1, self.modified)
+        self.header_layout.addWidget(self.reset_button)
+
+        # The summary sits on its own row rather than beside the title: a
+        # narrow rail would otherwise elide exactly the values this section
+        # exists to keep readable.
+        self.summary = QLabel("")
+        self.summary.setObjectName("settingSummary")
+        self.summary.setWordWrap(True)
+        layout = self.layout()
+        layout.insertWidget(1, self.summary)
+
+    def set_summary(self, text: str) -> None:
+        self.summary.setText(text)
+
+    def set_modified(self, modified: bool, label: str = "") -> None:
+        self.modified.setText(label)
+        self.modified.setVisible(bool(modified and label))
+
+    def set_reset_text(self, text: str, tooltip: str = "") -> None:
+        self.reset_button.setText(text)
+        self.reset_button.setToolTip(tooltip or text)
 
 
 def section_label(text: str) -> QLabel:

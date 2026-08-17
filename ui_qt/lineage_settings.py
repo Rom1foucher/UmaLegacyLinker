@@ -76,9 +76,26 @@ class LineageRaceEditor(QWidget):
     changed = Signal()
     layout_changed = Signal()
 
-    def __init__(self, context: AppContext, parent=None, *, compact: bool = False):
+    def __init__(
+        self,
+        context: AppContext,
+        parent=None,
+        *,
+        compact: bool = False,
+        host_sections: bool = False,
+    ):
+        """``host_sections`` hands ``panel`` and ``advanced_body`` to the caller.
+
+        The editor owns the controls, their validation and their context
+        synchronisation; where those controls are *placed* is a page-layout
+        decision. A page that arranges settings itself (a context rail, for
+        instance) needs the two groups as separate widgets rather than one
+        pre-assembled column with its own collapsible section, which would
+        otherwise nest a second disclosure level inside the host's.
+        """
         super().__init__(parent)
         self.context = context
+        self._host_sections = host_sections
         self._syncing = False
         self._course_definitions: dict[str, dict[str, Any]] = {}
         self._track_options: list[tuple[int, str]] = []
@@ -127,10 +144,13 @@ class LineageRaceEditor(QWidget):
                     form.addWidget(label, label_row, column)
                     form.addWidget(combo, label_row + 1, column)
                     form.setColumnStretch(column, 1)
-        root.addWidget(self.panel)
+        if not host_sections:
+            root.addWidget(self.panel)
 
         self.advanced = CollapsibleSection("")
-        advanced = QGridLayout()
+        self.advanced_body = QWidget(self)
+        advanced = QGridLayout(self.advanced_body)
+        advanced.setContentsMargins(0, 0, 0, 0)
         advanced.setHorizontalSpacing(10)
         advanced.setVerticalSpacing(8)
         self.course_file_label = QLabel("")
@@ -182,8 +202,13 @@ class LineageRaceEditor(QWidget):
         advanced.addWidget(self.priority_picker, 9, 0, 1, 2)
         for column in range(2):
             advanced.setColumnStretch(column, 1)
-        self.advanced.content_layout.addLayout(advanced)
-        root.addWidget(self.advanced)
+        if host_sections:
+            # The host provides the disclosure control; keeping this one alive
+            # but unused would give the same settings two toggles.
+            self.advanced.setVisible(False)
+        else:
+            self.advanced.content_layout.addWidget(self.advanced_body)
+            root.addWidget(self.advanced)
 
         self.course_combo.currentIndexChanged.connect(self._course_changed)
         for kind, combo in (
@@ -536,6 +561,49 @@ class LineageRaceEditor(QWidget):
         if self.course_combo.currentIndex() < 0:
             return self.context.t("Aucun preset — profil manuel")
         return self.course_combo.currentText()
+
+    def static_condition_labels(self) -> list[str]:
+        """Human-readable list of the static settings that are actually set.
+
+        Returned as display text rather than raw values so a host can show the
+        effective conditions without re-deriving combo labels or re-translating
+        stored keys.
+        """
+        labels: list[str] = []
+        if self.track_combo.currentIndex() > 0:
+            labels.append(self.track_combo.currentText())
+        for combo in (
+            self.rotation_combo,
+            self.season_combo,
+            self.weather_combo,
+            self.ground_combo,
+        ):
+            if self._condition_source(combo) != "Non précisé":
+                labels.append(combo.currentText())
+        if self.custom_scoring.isChecked():
+            labels.append(self.context.t("pondérations personnalisées"))
+        if self.priority_picker.text().strip():
+            labels.append(self.context.t("priorités white personnalisées"))
+        return labels
+
+    def has_static_conditions(self) -> bool:
+        return bool(self.static_condition_labels())
+
+    def clear_static_conditions(self) -> None:
+        """Return every static condition to its unspecified default.
+
+        Paths and the custom-scoring toggle are deliberately untouched: they
+        are user configuration shared with the Weights page, not a race
+        condition set for one calculation.
+        """
+        self.context.update_lineage(
+            track_id=0,
+            rotation="Non précisé",
+            season="Non précisé",
+            weather="Non précisé",
+            ground_condition="Non précisé",
+        )
+        self.changed.emit()
 
     def selected_conditions(self) -> dict[str, object]:
         if not self.track_combo.resolve_current_text():

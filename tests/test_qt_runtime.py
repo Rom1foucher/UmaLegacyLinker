@@ -323,6 +323,96 @@ class QtRuntimeSmokeTests(unittest.TestCase):
 
             _dispose_widget(search, self.application)
 
+    def test_context_rail_keeps_its_state_readable_while_collapsed(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import RAIL_COLLAPSED_KEY, SearchPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
+            search = SearchPage(context)
+            search.resize(1460, 900)
+            search.show()
+            self.application.processEvents()
+
+            sections = (
+                search.section_objective,
+                search.section_course,
+                search.section_conditions,
+            )
+            # Collapsing hides the controls, never the values they hold.
+            for section in sections:
+                section.toggle.setChecked(False)
+            self.application.processEvents()
+            for section in sections:
+                self.assertFalse(section.content.isVisible())
+                self.assertTrue(section.summary.text().strip())
+
+            context.update_lineage(season="Été", weather="Pluie")
+            self.application.processEvents()
+            summary = search.section_conditions.summary.text()
+            self.assertIn(context.t("Été"), summary)
+            self.assertIn(context.t("Pluie"), summary)
+            self.assertTrue(search.section_conditions.modified.isVisible())
+
+            search.race_editor.clear_static_conditions()
+            self.application.processEvents()
+            self.assertEqual(context.lineage_state().season, "Non précisé")
+            self.assertEqual(context.lineage_state().weather, "Non précisé")
+            self.assertFalse(search.section_conditions.modified.isVisible())
+            # A path is user configuration, not a race condition: reset keeps it.
+            self.assertEqual(
+                search.race_editor.priority_picker.text(),
+                context.lineage_state().skill_priorities_path,
+            )
+
+            search.set_rail_collapsed(True)
+            self.application.processEvents()
+            self.assertFalse(search.rail.isVisible())
+            self.assertEqual(context.store.get(RAIL_COLLAPSED_KEY), "1")
+
+            # The former modal editor is now a named jump into the rail.
+            search.open_conditions()
+            self.application.processEvents()
+            self.assertTrue(search.rail.isVisible())
+            self.assertTrue(search.section_conditions.content.isVisible())
+
+            _dispose_widget(search, self.application)
+
+    def test_context_rail_starts_collapsed_only_on_narrow_workspaces(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import (
+            NARROW_WORKSPACE_WIDTH,
+            RAIL_COLLAPSED_KEY,
+            SearchPage,
+        )
+
+        # Width is only ever a fallback: the inference has to run once the page
+        # has a real geometry, and an explicit preference always wins.
+        cases = (
+            (NARROW_WORKSPACE_WIDTH + 100, None, True),
+            (NARROW_WORKSPACE_WIDTH - 240, None, False),
+            (NARROW_WORKSPACE_WIDTH - 240, "0", True),
+            (NARROW_WORKSPACE_WIDTH + 100, "1", False),
+        )
+        for width, stored, expected_visible in cases:
+            with self.subTest(width=width, stored=stored):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    context = AppContext(
+                        SettingsStore(Path(temp_dir) / "config.json")
+                    )
+                    if stored is not None:
+                        context.store.update({RAIL_COLLAPSED_KEY: stored})
+                    search = SearchPage(context)
+                    search.resize(width, 900)
+                    search.show()
+                    self.application.processEvents()
+                    self.assertEqual(search.rail.isVisible(), expected_visible)
+                    _dispose_widget(search, self.application)
+
     def test_search_workspace_loads_the_latest_remote_result_too(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore

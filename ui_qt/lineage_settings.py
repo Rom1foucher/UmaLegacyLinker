@@ -128,7 +128,15 @@ class LineageRaceEditor(QWidget):
             (self.style_label, self.style_combo),
             (self.course_label, self.course_combo),
         )
-        if compact:
+        if host_sections:
+            # A hosting rail is narrow: side-by-side combos overflow it.
+            form.addWidget(self.shared_hint, 0, 0)
+            for index, (label, combo) in enumerate(controls):
+                label.setWordWrap(True)
+                form.addWidget(label, 1 + index * 2, 0)
+                form.addWidget(combo, 2 + index * 2, 0)
+            form.setColumnStretch(0, 1)
+        elif compact:
             form.addWidget(self.shared_hint, 0, 0, 1, 4)
             for column, (label, combo) in enumerate(controls):
                 form.addWidget(label, 1, column)
@@ -177,29 +185,51 @@ class LineageRaceEditor(QWidget):
             file_filter="JSON (*.json);;Tous les fichiers (*)",
         )
 
-        advanced.addWidget(self.course_file_label, 0, 0)
-        advanced.addWidget(self.course_picker, 1, 0, 1, 2)
-        for row, controls in enumerate(
-            (
+        advanced_controls = (
+            (self.course_file_label, self.course_picker),
+            (self.track_label, self.track_combo),
+            (self.rotation_label, self.rotation_combo),
+            (self.season_label, self.season_combo),
+            (self.weather_label, self.weather_combo),
+            (self.ground_label, self.ground_combo),
+        )
+        if host_sections:
+            # A hosting rail is narrow: two columns of long labels overflow it
+            # rather than fitting into it.
+            row = 0
+            for label, widget in advanced_controls:
+                label.setWordWrap(True)
+                advanced.addWidget(label, row, 0, 1, 2)
+                advanced.addWidget(widget, row + 1, 0, 1, 2)
+                row += 2
+            advanced.addWidget(self.custom_scoring, row, 0, 1, 2)
+            self.priority_label.setWordWrap(True)
+            advanced.addWidget(self.priority_label, row + 1, 0, 1, 2)
+            advanced.addWidget(self.priority_picker, row + 2, 0, 1, 2)
+        else:
+            advanced.addWidget(self.course_file_label, 0, 0)
+            advanced.addWidget(self.course_picker, 1, 0, 1, 2)
+            for row, controls in enumerate(
                 (
-                    (self.track_label, self.track_combo),
-                    (self.rotation_label, self.rotation_combo),
-                ),
-                (
-                    (self.season_label, self.season_combo),
-                    (self.weather_label, self.weather_combo),
-                ),
-            )
-        ):
-            label_row = 2 + row * 2
-            for column, (label, combo) in enumerate(controls):
-                advanced.addWidget(label, label_row, column)
-                advanced.addWidget(combo, label_row + 1, column)
-        advanced.addWidget(self.ground_label, 6, 0)
-        advanced.addWidget(self.ground_combo, 7, 0)
-        advanced.addWidget(self.custom_scoring, 7, 1)
-        advanced.addWidget(self.priority_label, 8, 0)
-        advanced.addWidget(self.priority_picker, 9, 0, 1, 2)
+                    (
+                        (self.track_label, self.track_combo),
+                        (self.rotation_label, self.rotation_combo),
+                    ),
+                    (
+                        (self.season_label, self.season_combo),
+                        (self.weather_label, self.weather_combo),
+                    ),
+                )
+            ):
+                label_row = 2 + row * 2
+                for column, (label, combo) in enumerate(controls):
+                    advanced.addWidget(label, label_row, column)
+                    advanced.addWidget(combo, label_row + 1, column)
+            advanced.addWidget(self.ground_label, 6, 0)
+            advanced.addWidget(self.ground_combo, 7, 0)
+            advanced.addWidget(self.custom_scoring, 7, 1)
+            advanced.addWidget(self.priority_label, 8, 0)
+            advanced.addWidget(self.priority_picker, 9, 0, 1, 2)
         for column in range(2):
             advanced.setColumnStretch(column, 1)
         if host_sections:

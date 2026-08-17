@@ -6,19 +6,18 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
-    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -57,12 +56,27 @@ from ui_qt.online_options import (
     OnlineModeSection,
     OnlineRetrievalSection,
 )
-from ui_qt.pages_online import OnlineResultsPane
-from ui_qt.pages_optimizer import ResultPane
+from ui_qt.result_families import (
+    BRANCHES,
+    FAMILY_ORDER,
+    FAMILY_RUN_LABELS,
+    FUTURE,
+    LOCAL_FAMILIES,
+    ONLINE_FAMILIES,
+    ONLINE_GP,
+    ONLINE_PARENT,
+    PAIRS,
+    ResultFamilyTabs,
+    family_for_local_kind,
+    family_for_online_mode,
+    local_kind_for_family,
+    online_mode_for_family,
+)
+from ui_qt.result_panes import OnlineResultsPane, ResultPane
 from ui_qt.presentation import profile_summary
 
 RAIL_COLLAPSED_KEY = "search_rail_collapsed"
-RAIL_WIDTH = 300
+RAIL_WIDTH = 344
 # Below this workspace width the rail and a result pane cannot both stay
 # readable, so the rail starts collapsed unless the user decided otherwise.
 NARROW_WORKSPACE_WIDTH = 1360
@@ -94,6 +108,7 @@ class SearchPage(QWidget):
         self._last_profile: dict[str, Any] = {}
         self._active_result_kind = ""
         self._rail_state_restored = False
+        self._rail_preference = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 16, 24, 18)
@@ -111,6 +126,10 @@ class SearchPage(QWidget):
         self.workspace.setHandleWidth(6)
 
         self.rail = QWidget()
+        # The splitter must not squeeze the rail below its content: a squeezed
+        # rail hides settings behind an invisible horizontal scroll instead of
+        # simply being closed.
+        self.rail.setMinimumWidth(RAIL_WIDTH)
         rail_layout = QVBoxLayout(self.rail)
         rail_layout.setContentsMargins(0, 0, 6, 0)
         rail_layout.setSpacing(8)
@@ -137,6 +156,8 @@ class SearchPage(QWidget):
         self.target_label = QLabel("")
         self.target_combo = SearchableComboBox()
         self.top_label = QLabel("")
+        for label in (self.ace_label, self.target_label, self.top_label):
+            label.setWordWrap(True)
         self.top_spin = QSpinBox()
         self.top_spin.setRange(5, 200)
         self.top_spin.setValue(context.lineage_state().top_n)
@@ -194,7 +215,7 @@ class SearchPage(QWidget):
         self.rail_toggle = QToolButton()
         self.rail_toggle.setCheckable(True)
         self.rail_toggle.setAutoRaise(True)
-        self.context_summary = muted_label("", wrap=False)
+        self.context_summary = muted_label("")
         ribbon.addWidget(self.rail_toggle)
         ribbon.addWidget(self.context_summary, 1)
         main_layout.addLayout(ribbon)
@@ -203,139 +224,78 @@ class SearchPage(QWidget):
         self.workspace.setStretchFactor(1, 1)
         root.addWidget(self.workspace, 1)
 
-        source_layout = QHBoxLayout()
-        source_layout.setSpacing(10)
-        self.local_card = QFrame()
-        self.local_card.setObjectName("panel")
-        local = QVBoxLayout(self.local_card)
-        local.setContentsMargins(16, 12, 16, 13)
-        local.setSpacing(7)
-        local_head = QHBoxLayout()
-        self.local_title = section_label("")
-        self.local_badge = QLabel("")
-        self.local_badge.setObjectName("pillAccent")
-        local_head.addWidget(self.local_title)
-        local_head.addStretch(1)
-        local_head.addWidget(self.local_badge)
-        self.local_hint = muted_label("")
-        local_actions = QHBoxLayout()
-        self.local_pairs_button = QPushButton("")
-        self.local_pairs_button.setObjectName("primary")
-        self.local_parents_button = QPushButton("")
-        self.local_future_button = QPushButton("")
-        local_actions.addWidget(self.local_pairs_button)
-        local_actions.addWidget(self.local_parents_button)
-        local_actions.addWidget(self.local_future_button)
-        local.addLayout(local_head)
-        local.addWidget(self.local_hint)
-        local.addLayout(local_actions)
-
-        self.online_card = QFrame()
-        self.online_card.setObjectName("panel")
-        online = QVBoxLayout(self.online_card)
-        online.setContentsMargins(16, 12, 16, 13)
-        online.setSpacing(7)
-        online_head = QHBoxLayout()
-        self.online_title = section_label("")
+        # One toolbar that adapts to the active family, rather than five run
+        # buttons and two menus competing above the results.
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        self.run_button = QPushButton("")
+        self.run_button.setObjectName("primary")
+        self.load_button = QPushButton("")
+        self.export_button = QPushButton("")
+        self.import_button = QPushButton("")
+        self.local_gp_pairs_button = QPushButton("")
+        self.options_button = QPushButton("")
+        self.open_button = QPushButton("")
+        self.result_badge = QLabel("")
+        self.result_badge.setObjectName("pillAccent")
+        self.result_badge.setVisible(False)
+        self.results_context = muted_label("")
         self.online_badge = QLabel("")
         self.online_badge.setObjectName("pill")
-        online_head.addWidget(self.online_title)
-        online_head.addStretch(1)
-        self.online_hint = muted_label("")
-        online_actions = QHBoxLayout()
-        self.online_parent_button = QPushButton("")
-        self.online_parent_button.setObjectName("primary")
-        self.online_gp_button = QPushButton("")
-        self.online_options_button = QPushButton("")
-        self.online_options_menu = QMenu(self.online_options_button)
-        self.online_parent_options_action = self.online_options_menu.addAction("")
-        self.online_gp_options_action = self.online_options_menu.addAction("")
-        self.online_options_button.setMenu(self.online_options_menu)
-        online_actions.addWidget(self.online_parent_button)
-        online_actions.addWidget(self.online_gp_button)
-        online_secondary = QHBoxLayout()
-        self.online_import_button = QPushButton("")
-        self.online_import_menu = QMenu(self.online_import_button)
-        self.online_parent_import_action = self.online_import_menu.addAction("")
-        self.online_gp_import_action = self.online_import_menu.addAction("")
-        self.online_import_button.setMenu(self.online_import_menu)
-        self.local_gp_pairs_button = QPushButton("")
-        online_secondary.addWidget(self.online_import_button)
-        online_secondary.addWidget(self.local_gp_pairs_button)
-        online_secondary.addStretch(1)
-        compact_button_style = (
-            "QPushButton { padding-left: 6px; padding-right: 6px; }"
-        )
-        for button in (
-            self.local_pairs_button,
-            self.local_parents_button,
-            self.local_future_button,
-            self.online_parent_button,
-            self.online_gp_button,
-            self.online_import_button,
+        self.local_badge = QLabel("")
+        self.local_badge.setObjectName("pillAccent")
+        for widget in (
+            self.run_button,
+            self.load_button,
+            self.export_button,
+            self.import_button,
             self.local_gp_pairs_button,
+            self.options_button,
+            self.open_button,
         ):
-            button.setStyleSheet(compact_button_style)
-        online_head.addWidget(self.online_options_button)
-        online_head.addWidget(self.online_badge)
-        online.addLayout(online_head)
-        online.addWidget(self.online_hint)
-        online.addLayout(online_actions)
-        online.addLayout(online_secondary)
-        source_layout.addWidget(self.local_card, 1)
-        source_layout.addWidget(self.online_card, 1)
-        main_layout.addLayout(source_layout)
+            toolbar.addWidget(widget)
+        toolbar.addStretch(1)
+        main_layout.addLayout(toolbar)
+
+        # The result context sits on its own row: sharing one with the buttons
+        # made a long profile summary squeeze them at narrow widths.
+        status = QHBoxLayout()
+        status.setSpacing(8)
+        status.addWidget(self.result_badge)
+        status.addWidget(self.results_context, 1)
+        status.addWidget(self.local_badge)
+        status.addWidget(self.online_badge)
+        main_layout.addLayout(status)
 
         result_frame = QFrame()
         result_frame.setObjectName("panel")
         result_layout = QVBoxLayout(result_frame)
         result_layout.setContentsMargins(10, 9, 10, 10)
         result_layout.setSpacing(7)
-        result_head = QHBoxLayout()
-        self.results_title = section_label("")
-        self.result_badge = QLabel("")
-        self.result_badge.setObjectName("pillAccent")
-        self.result_badge.setVisible(False)
-        self.results_context = muted_label("")
-        self.export_button = QPushButton("")
-        self.export_button.setVisible(False)
-        self.load_button = QPushButton("")
-        self.open_button = QPushButton("")
-        result_head.addWidget(self.results_title)
-        result_head.addWidget(self.result_badge)
-        result_head.addWidget(self.results_context, 1)
-        result_head.addWidget(self.export_button)
-        result_head.addWidget(self.load_button)
-        result_head.addWidget(self.open_button)
-        result_layout.addLayout(result_head)
-
-        self.result_stack = QStackedWidget()
-        placeholder = QWidget()
-        placeholder_layout = QVBoxLayout(placeholder)
-        placeholder_layout.setContentsMargins(28, 28, 28, 28)
-        self.placeholder_title = QLabel("")
-        self.placeholder_title.setObjectName("sectionTitle")
-        self.placeholder_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.placeholder_hint = muted_label("")
-        self.placeholder_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder_layout.addStretch(1)
-        placeholder_layout.addWidget(self.placeholder_title)
-        placeholder_layout.addWidget(self.placeholder_hint)
-        placeholder_layout.addStretch(1)
         self.pair_results = ResultPane("pair", context)
         self.branch_results = ResultPane("branch", context)
         self.future_results = ResultPane("future", context)
-        self.online_results = OnlineResultsPane(context)
-        for widget in (
-            placeholder,
-            self.pair_results,
-            self.branch_results,
-            self.future_results,
-            self.online_results,
-        ):
-            self.result_stack.addWidget(widget)
-        result_layout.addWidget(self.result_stack, 1)
+        # Two instances: a grandparent search must stop overwriting the parent
+        # results it is meant to complement.
+        self.online_parent_results = OnlineResultsPane(context)
+        self.online_gp_results = OnlineResultsPane(context)
+        self.families = ResultFamilyTabs(
+            context,
+            {
+                PAIRS: self.pair_results,
+                BRANCHES: self.branch_results,
+                FUTURE: self.future_results,
+                ONLINE_PARENT: self.online_parent_results,
+                ONLINE_GP: self.online_gp_results,
+            },
+        )
+        result_layout.addWidget(self.families, 1)
         main_layout.addWidget(result_frame, 1)
+
+        self.run_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
+        self.run_shortcut.activated.connect(self.run_current_family)
+        self.run_shortcut_enter = QShortcut(QKeySequence("Ctrl+Enter"), self)
+        self.run_shortcut_enter.activated.connect(self.run_current_family)
 
         self.refresh_button.clicked.connect(
             lambda: self.refresh_options(show_errors=True)
@@ -351,32 +311,17 @@ class SearchPage(QWidget):
         self.target_combo.currentIndexChanged.connect(self._lineage_selection_changed)
         self.top_spin.valueChanged.connect(self._lineage_selection_changed)
         self.race_editor.changed.connect(self._refresh_context)
-        self.local_pairs_button.clicked.connect(lambda: self.start_local("pairs"))
-        self.local_parents_button.clicked.connect(lambda: self.start_local("branches"))
-        self.local_future_button.clicked.connect(lambda: self.start_local("future"))
-        self.online_parent_button.clicked.connect(
-            lambda: self.start_online("parent")
-        )
-        self.online_gp_button.clicked.connect(
-            lambda: self.start_online("grandparent")
-        )
-        self.online_parent_options_action.triggered.connect(
-            lambda _checked=False: self.open_online_options("parent")
-        )
-        self.online_gp_options_action.triggered.connect(
-            lambda _checked=False: self.open_online_options("grandparent")
-        )
-        self.online_parent_import_action.triggered.connect(
-            lambda _checked=False: self.start_online_import("parent")
-        )
-        self.online_gp_import_action.triggered.connect(
-            lambda _checked=False: self.start_online_import("grandparent")
-        )
+        self.families.current_changed.connect(self._family_changed)
+        self.run_button.clicked.connect(self.run_current_family)
+        self.import_button.clicked.connect(self.import_current_family)
+        self.options_button.clicked.connect(self.open_current_family_options)
         self.local_gp_pairs_button.clicked.connect(
             lambda: self.start_online("grandparent", local_pairs=True)
         )
         self.export_button.clicked.connect(self.export_selected_pair)
-        self.load_button.clicked.connect(lambda: self.load_latest(show_errors=True))
+        self.load_button.clicked.connect(
+            lambda: self.load_latest(show_errors=True)
+        )
         self.open_button.clicked.connect(self.open_output)
         context.lineage_changed.connect(self._sync_lineage_context)
         context.configuration_changed.connect(self._schedule_refresh)
@@ -407,23 +352,29 @@ class SearchPage(QWidget):
             self._restore_rail_state()
 
     def _restore_rail_state(self) -> None:
-        """Apply the stored rail preference, or infer one from the width.
-
-        Below the threshold the rail and a result pane cannot both be readable:
-        the diagnostics browser needs its documented minimum before its Spark
-        tables are worth rendering. Starting collapsed there keeps the first
-        view usable, while an explicit user choice always wins afterwards.
-        """
+        """Apply the stored rail preference, or infer one from the width."""
         stored = self.context.store.get(RAIL_COLLAPSED_KEY, "")
         if stored in {"0", "1"}:
-            collapsed = stored == "1"
+            self._rail_preference = stored == "1"
         else:
-            window = self.window()
-            width = window.width() if window is not None else 0
-            collapsed = 0 < width < NARROW_WORKSPACE_WIDTH
-        self.set_rail_collapsed(collapsed, persist=False)
+            self._rail_preference = self._workspace_is_narrow()
+        self._apply_rail_state()
 
-    def set_rail_collapsed(self, collapsed: bool, *, persist: bool = True) -> None:
+    def _workspace_is_narrow(self) -> bool:
+        window = self.window()
+        width = window.width() if window is not None else 0
+        return 0 < width < NARROW_WORKSPACE_WIDTH
+
+    def _apply_rail_state(self) -> None:
+        """Show the rail when the preference asks for it *and* it fits.
+
+        Below the threshold the rail and a result pane cannot both hold their
+        minimum width, and a splitter resolves that by squeezing everything —
+        clipped toolbars and a rail scrolling sideways behind a hidden bar.
+        Yielding to the width keeps the workspace readable; the preference is
+        remembered and takes effect again as soon as the window has room.
+        """
+        collapsed = self._rail_preference or self._workspace_is_narrow()
         self.rail.setVisible(not collapsed)
         if self.rail_toggle.isChecked() != collapsed:
             self.rail_toggle.blockSignals(True)
@@ -432,8 +383,17 @@ class SearchPage(QWidget):
         if not collapsed:
             self.workspace.setSizes([RAIL_WIDTH, max(1, self.width() - RAIL_WIDTH)])
         self._retranslate_rail_toggle()
+
+    def set_rail_collapsed(self, collapsed: bool, *, persist: bool = True) -> None:
+        self._rail_preference = bool(collapsed)
+        self._apply_rail_state()
         if persist:
             self.context.store.update({RAIL_COLLAPSED_KEY: "1" if collapsed else "0"})
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._rail_state_restored:
+            self._apply_rail_state()
 
     def _rail_toggled(self, collapsed: bool) -> None:
         self.set_rail_collapsed(collapsed)
@@ -727,22 +687,21 @@ class SearchPage(QWidget):
                 self._last_profile,
                 lineage_root=self._last_ace,
             )
-            widget = self.pair_results
         elif kind == "branches":
             self.branch_results.set_rows(
                 list(getattr(result, "top_parent_candidates", ()) or ()),
                 self._last_profile,
                 lineage_root=self._last_ace,
             )
-            widget = self.branch_results
         else:
             self.future_results.set_rows(
                 list(getattr(result, "top_future_grandparents", ()) or ()),
                 self._last_profile,
                 lineage_root=self._last_future_parent,
             )
-            widget = self.future_results
-        self._show_results(widget, f"local:{kind}", self._last_profile)
+        self._show_results(
+            family_for_local_kind(kind), f"local:{kind}", self._last_profile
+        )
 
     def _mode_section(self, mode: str) -> OnlineModeSection:
         return (
@@ -880,12 +839,16 @@ class SearchPage(QWidget):
             "distance": request.distance,
             "style": request.style,
         }
-        self.online_results.set_result(result, profile)
+        family = family_for_online_mode(request.search_mode)
+        pane = (
+            self.online_parent_results
+            if family == ONLINE_PARENT
+            else self.online_gp_results
+        )
+        pane.set_result(result, profile)
         source = "local" if request.local_pair_mode else "uma.moe"
         self._show_results(
-            self.online_results,
-            f"{source}:online_{request.search_mode}",
-            profile,
+            family, f"{source}:online_{request.search_mode}", profile
         )
         response = request.output_dir / "uma_moe_api_response.json"
         if not request.use_import and response.is_file():
@@ -893,12 +856,59 @@ class SearchPage(QWidget):
 
     def _show_results(
         self,
-        widget: QWidget,
+        family: str,
         kind: str,
         profile: dict[str, Any] | None,
+        *,
+        loaded: bool = False,
     ) -> None:
+        """Record a family's result and bring it forward.
+
+        Recording is per family, so a result is never destroyed by running a
+        different one; only the visible tab changes.
+        """
         self._active_result_kind = kind
-        self.result_stack.setCurrentWidget(widget)
+        view = self.families.view(family)
+        view.mark_result(loaded=loaded, kind=kind, profile=profile)
+        self.families.set_current_family(family)
+        self.families.refresh_states()
+        self._refresh_toolbar()
+
+    def _family_changed(self, family: str) -> None:
+        self._refresh_toolbar()
+        self._sync_mode_sections(family)
+
+    def _sync_mode_sections(self, family: str) -> None:
+        """Let the active tab decide which mode's options are in view.
+
+        The tab already carries the parent/grandparent choice, so a second
+        selector for the same state could only drift out of sync with it. The
+        sibling section collapses rather than hiding: its header keeps its
+        values readable, and no section ever moves.
+        """
+        if family not in ONLINE_FAMILIES:
+            return
+        self.context.store.update(
+            {"uma_moe_search_mode": online_mode_for_family(family)}
+        )
+        active = self._mode_section(online_mode_for_family(family))
+        for section in (self.section_online_parent, self.section_online_gp):
+            section.toggle.setChecked(section is active)
+
+    def _refresh_toolbar(self) -> None:
+        """Expose exactly the verbs the visible family supports."""
+        t = self.context.t
+        family = self.families.current_family()
+        view = self.families.view(family)
+        self.run_button.setText(t(FAMILY_RUN_LABELS[family]))
+        online = family in ONLINE_FAMILIES
+        self.import_button.setVisible(online)
+        self.options_button.setVisible(online)
+        self.local_gp_pairs_button.setVisible(family == ONLINE_GP)
+        self.export_button.setVisible(family == PAIRS and view.has_result())
+        self.online_badge.setVisible(online)
+        self.local_badge.setVisible(not online)
+        self.result_badge.setVisible(bool(view.result_kind))
         labels = {
             "local:pairs": "Local · paires finales",
             "local:branches": "Local · parents",
@@ -907,39 +917,70 @@ class SearchPage(QWidget):
             "uma.moe:online_grandparent": "uma.moe · grands-parents distants",
             "local:online_grandparent": "Local · paires de grands-parents",
         }
-        self.result_badge.setText(self.context.t(labels.get(kind, kind)))
-        self.result_badge.setVisible(True)
-        self.results_context.setText(
-            profile_summary(dict(profile or {}), self.context.language)
+        self.result_badge.setText(
+            t(labels.get(view.result_kind, view.result_kind))
         )
-        self.export_button.setVisible(kind == "local:pairs")
+        self.results_context.setText(
+            profile_summary(dict(view.profile), self.context.language)
+            if view.has_result()
+            else ""
+        )
+        self.run_button.setEnabled(not self._busy)
+
+    def run_current_family(self) -> None:
+        """The one verb of the visible view; also bound to Ctrl+Enter."""
+        if self._busy:
+            return
+        family = self.families.current_family()
+        if family in LOCAL_FAMILIES:
+            self.start_local(local_kind_for_family(family))
+        else:
+            self.start_online(online_mode_for_family(family))
+
+    def import_current_family(self) -> None:
+        family = self.families.current_family()
+        if family in ONLINE_FAMILIES:
+            self.start_online(online_mode_for_family(family), use_import=True)
+
+    def open_current_family_options(self) -> None:
+        family = self.families.current_family()
+        if family in ONLINE_FAMILIES:
+            self.open_online_options(online_mode_for_family(family))
 
     def load_latest(self, *, show_errors: bool = True) -> None:
+        """Load the visible family's last generated result.
+
+        Scoped to the active family rather than picking the newest file of any
+        kind: with one result slot per family, a global "latest" would drop a
+        result into whichever tab happened to be in front.
+        """
+        family = self.families.current_family()
         output = Path(self.context.output_dir).expanduser()
-        candidates = [
-            (latest_rankings_path(output), "local"),
-            (output / "uma_moe_parent_pairs.json", "online_parent"),
-            (output / "uma_moe_grandparent_pairs.json", "online_grandparent"),
-        ]
-        existing = [(path, kind) for path, kind in candidates if path.is_file()]
-        if not existing:
+        if family in ONLINE_FAMILIES:
+            path = output / (
+                "uma_moe_parent_pairs.json"
+                if family == ONLINE_PARENT
+                else "uma_moe_grandparent_pairs.json"
+            )
+        else:
+            path = latest_rankings_path(output)
+        if not path.is_file():
             if show_errors:
                 QMessageBox.information(
                     self,
                     self.context.t("Dernier résultat"),
                     self.context.t(
-                        "Aucun résultat local ou uma.moe n’a encore été généré."
+                        "Cette vue n’a pas encore de calcul enregistré sur le disque."
                     ),
                 )
             return
-        path, stored_kind = max(existing, key=lambda item: item[0].stat().st_mtime)
         try:
-            if stored_kind == "local":
-                payload = load_rankings_payload(path)
-            else:
+            if family in ONLINE_FAMILIES:
                 payload = json.loads(path.read_text(encoding="utf-8-sig"))
                 if not isinstance(payload, dict):
                     raise ValueError("Le résultat doit être un objet JSON.")
+            else:
+                payload = load_rankings_payload(path)
         except Exception as exc:
             if show_errors:
                 QMessageBox.warning(
@@ -948,17 +989,20 @@ class SearchPage(QWidget):
                     self.context.t(str(exc)),
                 )
             return
-        if stored_kind != "local":
-            mode = "parent" if stored_kind == "online_parent" else "grandparent"
+        if family in ONLINE_FAMILIES:
+            mode = online_mode_for_family(family)
             metadata = payload.get("metadata") or {}
             profile = metadata.get("profile") or {}
-            self.online_results.set_payload(payload, mode)
+            pane = (
+                self.online_parent_results
+                if family == ONLINE_PARENT
+                else self.online_gp_results
+            )
+            pane.set_payload(payload, mode)
             is_local_gp = str(metadata.get("pair_mode") or "").startswith("local_")
             source = "local" if is_local_gp else "uma.moe"
             self._show_results(
-                self.online_results,
-                f"{source}:online_{mode}",
-                profile,
+                family, f"{source}:online_{mode}", profile, loaded=True
             )
             return
         ace = payload.get("ace") if isinstance(payload.get("ace"), dict) else None
@@ -967,25 +1011,40 @@ class SearchPage(QWidget):
             if isinstance(payload.get("future_parent"), dict)
             else None
         )
-        profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        profile = (
+            payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+        )
         self._last_ace = ace
         self._last_future_parent = future_parent
         self._last_profile = dict(profile)
-        kind = str((payload.get("metadata") or {}).get("search_kind") or "all")
-        pairs = list(payload.get("top_parent_pairs") or [])
-        branches = list(payload.get("top_parent_candidates") or [])
-        future = list(payload.get("top_future_grandparents") or [])
-        if pairs and kind in {"all", "pairs"}:
-            self.pair_results.set_rows(pairs, profile, lineage_root=ace)
-            self._show_results(self.pair_results, "local:pairs", profile)
-        elif branches and kind in {"all", "branches"}:
-            self.branch_results.set_rows(branches, profile, lineage_root=ace)
-            self._show_results(self.branch_results, "local:branches", profile)
-        elif future:
-            self.future_results.set_rows(
-                future, profile, lineage_root=future_parent
-            )
-            self._show_results(self.future_results, "local:future", profile)
+        rows_by_family = {
+            PAIRS: (list(payload.get("top_parent_pairs") or []), ace),
+            BRANCHES: (list(payload.get("top_parent_candidates") or []), ace),
+            FUTURE: (
+                list(payload.get("top_future_grandparents") or []),
+                future_parent,
+            ),
+        }
+        rows, root = rows_by_family[family]
+        if not rows:
+            if show_errors:
+                QMessageBox.information(
+                    self,
+                    self.context.t("Dernier résultat"),
+                    self.context.t(
+                        "Le dernier calcul local ne couvre pas cette vue."
+                    ),
+                )
+            return
+        panes = {
+            PAIRS: self.pair_results,
+            BRANCHES: self.branch_results,
+            FUTURE: self.future_results,
+        }
+        panes[family].set_rows(rows, profile, lineage_root=root)
+        self._show_results(
+            family, f"local:{local_kind_for_family(family)}", profile, loaded=True
+        )
 
     def export_selected_pair(self) -> None:
         row = self.pair_results.selected_row()
@@ -1036,20 +1095,21 @@ class SearchPage(QWidget):
         )
 
     def set_busy(self, busy: bool) -> None:
+        """One worker at a time: every run action is disabled while it runs."""
         self._busy = busy
         for widget in (
             self.refresh_button,
-            self.local_pairs_button,
-            self.local_parents_button,
-            self.local_future_button,
-            self.online_parent_button,
-            self.online_gp_button,
-            self.online_options_button,
-            self.online_import_button,
+            self.run_button,
+            self.import_button,
             self.local_gp_pairs_button,
             self.load_button,
         ):
             widget.setEnabled(not busy)
+        if not busy:
+            for family in FAMILY_ORDER:
+                self.families.view(family).clear_running()
+        self.families.refresh_states()
+        self._refresh_toolbar()
 
     def open_output(self) -> None:
         output = Path(self.context.output_dir).expanduser()
@@ -1064,7 +1124,7 @@ class SearchPage(QWidget):
         self.header.set_text(
             t("Recherche de lignées"),
             t(
-                "Définis l’objectif une seule fois, puis choisis explicitement la source et le calcul à lancer."
+                "Définis le contexte une seule fois, puis lance chaque onglet quand tu en as besoin."
             ),
         )
         self.rail_title.setText(t("Contexte commun"))
@@ -1078,36 +1138,18 @@ class SearchPage(QWidget):
         self._retranslate_rail_toggle()
         self.refresh_button.setText(t("Actualiser"))
         self.ace_label.setText(t("Ace visé"))
-        self.target_label.setText(t("Parent à produire") + " · " + t("pour les recherches GP"))
+        self.target_label.setText(
+            t("Parent à produire") + " · " + t("pour les recherches GP")
+        )
         self.top_label.setText(t("Résultats"))
-        self.local_title.setText(t("Collection locale"))
-        self.local_hint.setText(
-            t("Aucun accès réseau. Chaque bouton ne calcule que le résultat demandé.")
-        )
-        self.local_pairs_button.setText(t("Paires finales"))
-        self.local_parents_button.setText(t("Parents"))
-        self.local_future_button.setText(t("Grands-parents"))
-        self.online_title.setText("uma.moe")
-        self.online_hint.setText(
-            t("Candidats publics combinés à ta collection, puis classés par le moteur exact local.")
-        )
-        self.online_parent_button.setText(t("Parent distant"))
-        self.online_gp_button.setText(t("Grand-parent distant"))
-        self.online_options_button.setText(t("Options…"))
-        self.online_parent_options_action.setText(t("Options du parent distant…"))
-        self.online_gp_options_action.setText(t("Options du grand-parent distant…"))
-        self.online_import_button.setText(t("Classer un JSON…"))
-        self.online_parent_import_action.setText(t("JSON de parent distant…"))
-        self.online_gp_import_action.setText(t("JSON de grand-parent distant…"))
-        self.local_gp_pairs_button.setText(t("Paires de GP locales"))
-        self.results_title.setText(t("Résultats"))
-        self.export_button.setText(t("Exporter vers Lineage Planner…"))
-        self.load_button.setText(t("Charger le dernier résultat"))
-        self.open_button.setText(t("Ouvrir la sortie"))
-        self.placeholder_title.setText(t("Aucune recherche affichée"))
-        self.placeholder_hint.setText(
-            t("Choisis un calcul local ou uma.moe ci-dessus ; son tableau et son diagnostic apparaîtront ici.")
-        )
+        self.export_button.setText(t("Exporter…"))
+        self.load_button.setText(t("Dernier résultat"))
+        self.import_button.setText(t("Importer…"))
+        self.options_button.setText(t("Options…"))
+        self.local_gp_pairs_button.setText(t("GP locaux"))
+        self.open_button.setText(t("Sortie"))
+        self.families.retranslate()
+        self._refresh_toolbar()
         self.section_retrieval.retranslate()
         self.section_online_parent.retranslate()
         self.section_online_gp.retranslate()
@@ -1115,6 +1157,7 @@ class SearchPage(QWidget):
         self.pair_results.retranslate()
         self.branch_results.retranslate()
         self.future_results.retranslate()
-        self.online_results.retranslate()
+        self.online_parent_results.retranslate()
+        self.online_gp_results.retranslate()
         self._refresh_context()
         self._refresh_source_badges()

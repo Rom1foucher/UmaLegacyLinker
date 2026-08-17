@@ -53,7 +53,7 @@ from ui_qt.components import (
 )
 from ui_qt.context import AppContext
 from ui_qt.core import VeteranOption, load_opposing_parent_candidates
-from ui_qt.pages_online import CardFilterDialog
+from ui_qt.result_panes import CardFilterDialog
 
 PARENT_MODE = "parent"
 GRANDPARENT_MODE = "grandparent"
@@ -146,6 +146,7 @@ class OnlineRetrievalSection(SummarySection):
         grid.setVerticalSpacing(7)
 
         self.hint = muted_label("")
+        self.hint.setWordWrap(True)
         self.prefer_profile = QCheckBox("")
         self.prefer_profile.setChecked(_boolean(context.store.get("uql_prefer_whites", "1")))
         self.prefer_lineage = QCheckBox("")
@@ -214,11 +215,11 @@ class OnlineRetrievalSection(SummarySection):
         grid.addWidget(self.require_surface, 4, 0, 1, 2)
         grid.addWidget(self.require_distance, 5, 0, 1, 2)
         grid.addWidget(self.require_style, 6, 0, 1, 2)
-        grid.addWidget(self.pink_label, 7, 0)
+        grid.addWidget(self.pink_label, 7, 0, 1, 2)
         grid.addWidget(self.pink_spin, 7, 1)
         grid.addWidget(self.lineage_hint, 8, 0, 1, 2)
         grid.addWidget(self.lineage_blue_label, 9, 0, 1, 2)
-        grid.addWidget(self.lineage_blue_combo, 10, 0)
+        grid.addWidget(self.lineage_blue_combo, 10, 0, 1, 2)
         grid.addWidget(self.lineage_blue_stars, 10, 1)
         grid.addWidget(self.lineage_pink_label, 11, 0, 1, 2)
         grid.addWidget(self.lineage_pink_combo, 12, 0)
@@ -228,6 +229,8 @@ class OnlineRetrievalSection(SummarySection):
         grid.addWidget(self.excluded_button, 14, 1)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
+        for label in body.findChildren(QLabel):
+            label.setWordWrap(True)
         self.content_layout.addWidget(body)
 
         for widget in (
@@ -378,7 +381,7 @@ class OnlineRetrievalSection(SummarySection):
         )
         self.prefer_profile.setText(t("Favoriser les whites du profil"))
         self.prefer_lineage.setText(t("Favoriser leur répétition dans la lignée"))
-        self.surface_cohort.setText(t("Cohorte Surface dédiée (récupération API)"))
+        self.surface_cohort.setText(t("Cohorte Surface dédiée"))
         self.require_surface.setText(t("Exiger la surface cible"))
         self.require_distance.setText(t("Exiger la distance cible"))
         self.require_style.setText(t("Exiger le style cible"))
@@ -453,12 +456,13 @@ class OnlineModeSection(SummarySection):
         row += 1
         grid.addWidget(self.fixed_combo, row, 0, 1, 2)
         row += 1
-        grid.addWidget(self.local_pool_label, row, 0)
-        grid.addWidget(self.remote_pool_label, row, 1)
-        row += 1
-        grid.addWidget(self.local_pool, row, 0)
-        grid.addWidget(self.remote_pool, row, 1)
-        row += 1
+        for label, widget in (
+            (self.local_pool_label, self.local_pool),
+            (self.remote_pool_label, self.remote_pool),
+        ):
+            grid.addWidget(label, row, 0, 1, 2)
+            grid.addWidget(widget, row + 1, 0, 1, 2)
+            row += 2
         grid.addWidget(self.fetch_label, row, 0, 1, 2)
         row += 1
         grid.addWidget(self.fetch_spin, row, 0, 1, 2)
@@ -515,12 +519,14 @@ class OnlineModeSection(SummarySection):
             row += 1
             grid.addWidget(self.opposing_extract_button, row, 0, 1, 2)
             row += 1
-            grid.addWidget(self.g1_budget_label, row, 0)
-            grid.addWidget(self.g1_weight_label, row, 1)
-            row += 1
-            grid.addWidget(self.g1_budget, row, 0)
-            grid.addWidget(self.g1_weight, row, 1)
-            row += 1
+            for label, widget in (
+                (self.g1_budget_label, self.g1_budget),
+                (self.g1_weight_label, self.g1_weight),
+            ):
+                label.setWordWrap(True)
+                grid.addWidget(label, row, 0, 1, 2)
+                grid.addWidget(widget, row + 1, 0, 1, 2)
+                row += 2
             self.opposing_extract_button.clicked.connect(
                 lambda: self.load_external_opposing(show_errors=True)
             )
@@ -548,6 +554,8 @@ class OnlineModeSection(SummarySection):
         self.warning.setObjectName("pillWarning")
         self.warning.setWordWrap(True)
         self.warning.setVisible(False)
+        for label in body.findChildren(QLabel):
+            label.setWordWrap(True)
         self.content_layout.addWidget(body)
         self.content_layout.addWidget(self.warning)
 
@@ -815,7 +823,7 @@ class OnlineModeSection(SummarySection):
             if self.mode == PARENT_MODE
             else t("moe · Grands-parents distants")
         )
-        self.auto_pairs.setText(t("Tester automatiquement toutes les paires local × distant"))
+        self.auto_pairs.setText(t("Tester toutes les paires local × distant"))
         self.fixed_label.setText(
             t("Parent local fixé (manuel)")
             if self.mode == PARENT_MODE

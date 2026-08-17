@@ -27,8 +27,7 @@ from ui_qt.context import AppContext
 from ui_qt.core import SettingsStore
 from ui_qt.lineage_view import LineageDialog
 from ui_qt.main_window import MainWindow
-from ui_qt.pages_online import OnlineResultsPane
-from ui_qt.pages_optimizer import ResultPane
+from ui_qt.result_panes import OnlineResultsPane, ResultPane
 from ui_qt.presentation import online_detail_html, result_detail_html
 from ui_qt.theme import application_stylesheet
 
@@ -183,6 +182,9 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         ("search-rail-collapsed", "rail-collapsed"),
                         ("search-options-parent", "options-parent"),
                         ("search-options-grandparent", "options-grandparent"),
+                        ("search-family-branches", "family-branches"),
+                        ("search-family-future", "family-future"),
+                        ("search-family-online-gp", "family-online-gp"),
                     ]
                 if page == "weights" and hasattr(current_page, "_all_rows"):
                     variants = [
@@ -198,6 +200,18 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         current_page.set_rail_collapsed(
                             mode == "rail-collapsed", persist=False
                         )
+                        if mode.startswith("family-"):
+                            # Every family's toolbar and empty state has to fit
+                            # at each audited width.
+                            current_page.families.set_current_family(
+                                {
+                                    "family-branches": "branches",
+                                    "family-future": "future",
+                                    "family-online-gp": "online_gp",
+                                }[mode]
+                            )
+                        else:
+                            current_page.families.set_current_family("pairs")
                         if mode.startswith("options-"):
                             # Replaces the former per-mode option dialogs: the
                             # same controls, audited where they now live.

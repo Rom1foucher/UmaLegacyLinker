@@ -55,7 +55,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore
         from ui_qt.layout_audit import _dispose_widget
-        from ui_qt.pages_optimizer import ResultPane
+        from ui_qt.result_panes import ResultPane
 
         errors: list[BaseException] = []
         previous_hook = sys.excepthook
@@ -82,7 +82,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore
         from ui_qt.layout_audit import _dispose_widget
-        from ui_qt.pages_online import OnlineResultsPane
+        from ui_qt.result_panes import OnlineResultsPane
 
         with tempfile.TemporaryDirectory() as temp_dir:
             context = AppContext(
@@ -111,7 +111,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                 "payload": [],
             }
             with patch(
-                "ui_qt.pages_online.build_lineage_planner_export",
+                "ui_qt.result_panes.build_lineage_planner_export",
                 return_value=expected,
             ) as build:
                 pane.copy_selected_pair_export()
@@ -390,12 +390,14 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             SearchPage,
         )
 
-        # Width is only ever a fallback: the inference has to run once the page
-        # has a real geometry, and an explicit preference always wins.
+        # The preference decides whenever the rail fits, and the width decides
+        # when it does not: below the threshold the rail and a result pane
+        # cannot both hold their minimum, so the rail yields rather than
+        # squeezing the workspace.
         cases = (
             (NARROW_WORKSPACE_WIDTH + 100, None, True),
             (NARROW_WORKSPACE_WIDTH - 240, None, False),
-            (NARROW_WORKSPACE_WIDTH - 240, "0", True),
+            (NARROW_WORKSPACE_WIDTH - 240, "0", False),
             (NARROW_WORKSPACE_WIDTH + 100, "1", False),
         )
         for width, stored, expected_visible in cases:
@@ -411,6 +413,11 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                     search.show()
                     self.application.processEvents()
                     self.assertEqual(search.rail.isVisible(), expected_visible)
+                    if stored == "0" and not expected_visible:
+                        # The preference survives and applies once there is room.
+                        search.resize(NARROW_WORKSPACE_WIDTH + 100, 900)
+                        self.application.processEvents()
+                        self.assertTrue(search.rail.isVisible())
                     _dispose_widget(search, self.application)
 
     def test_online_options_split_shared_and_per_mode_storage(self) -> None:
@@ -517,6 +524,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
         from ui_qt.core import SettingsStore
         from ui_qt.layout_audit import _dispose_widget
         from ui_qt.pages_search import SearchPage
+        from ui_qt.result_families import ONLINE_PARENT, STATE_LOADED
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -543,11 +551,122 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             search = SearchPage(AppContext(store))
             search._initial_refresh_timer.stop()
             search._initial_result_timer.stop()
-            search.load_latest(show_errors=True)
+            # Loading is scoped to the visible family, so the remote-parent tab
+            # has to be the active one.
+            search.families.set_current_family(ONLINE_PARENT)
+            search.load_latest(show_errors=False)
 
             self.assertEqual(search._active_result_kind, "uma.moe:online_parent")
-            self.assertIs(search.result_stack.currentWidget(), search.online_results)
-            self.assertEqual(search.online_results.mode, "parent")
+            self.assertEqual(search.families.current_family(), ONLINE_PARENT)
+            self.assertEqual(search.online_parent_results.mode, "parent")
+            # A loaded result is marked as such rather than passed off as fresh.
+            self.assertEqual(
+                search.families.view(ONLINE_PARENT).state, STATE_LOADED
+            )
+            _dispose_widget(search, self.application)
+
+    def test_result_families_keep_their_own_result_and_toolbar(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+        from ui_qt.result_families import (
+            FAMILY_ORDER,
+            ONLINE_GP,
+            ONLINE_PARENT,
+            PAIRS,
+            STATE_EMPTY,
+            STATE_READY,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
+            search = SearchPage(context)
+            search.resize(1460, 900)
+            search.show()
+            self.application.processEvents()
+
+            # The most used family leads and is selected by default.
+            self.assertEqual(FAMILY_ORDER[0], PAIRS)
+            self.assertEqual(search.families.current_family(), PAIRS)
+            self.assertFalse(search.import_button.isVisible())
+            self.assertFalse(search.local_gp_pairs_button.isVisible())
+
+            search.families.set_current_family(ONLINE_GP)
+            self.application.processEvents()
+            self.assertTrue(search.import_button.isVisible())
+            self.assertTrue(search.local_gp_pairs_button.isVisible())
+
+            local_profile = {
+                "surface": "turf",
+                "distance": "medium",
+                "style": "pace_chaser",
+            }
+            search.pair_results.set_rows([], local_profile, lineage_root=None)
+            search._show_results(PAIRS, "local:pairs", local_profile)
+            search.online_parent_results.set_payload(
+                {"metadata": {}, "results": []}, "parent"
+            )
+            search._show_results(
+                ONLINE_PARENT,
+                "uma.moe:online_parent",
+                {"surface": "dirt", "distance": "mile", "style": "late_surger"},
+            )
+            self.application.processEvents()
+
+            # Running one family no longer destroys another's result, and the
+            # two remote searches no longer share a pane.
+            self.assertTrue(search.families.view(PAIRS).has_result())
+            self.assertTrue(search.families.view(ONLINE_PARENT).has_result())
+            self.assertEqual(search.families.view(ONLINE_GP).state, STATE_EMPTY)
+            self.assertIsNot(
+                search.online_parent_results, search.online_gp_results
+            )
+
+            search.families.set_current_family(PAIRS)
+            self.application.processEvents()
+            self.assertEqual(search.families.view(PAIRS).state, STATE_READY)
+            self.assertIn("Turf", search.results_context.text())
+            self.assertTrue(search.export_button.isVisible())
+
+            search.set_busy(True)
+            self.assertFalse(search.run_button.isEnabled())
+            search.set_busy(False)
+            self.assertTrue(search.run_button.isEnabled())
+
+            _dispose_widget(search, self.application)
+
+    def test_active_tab_drives_the_matching_mode_section(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+        from ui_qt.result_families import ONLINE_GP, ONLINE_PARENT
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
+            search = SearchPage(context)
+            search.resize(1460, 900)
+            search.show()
+            self.application.processEvents()
+
+            search.families.set_current_family(ONLINE_PARENT)
+            self.application.processEvents()
+            self.assertTrue(search.section_online_parent.content.isVisible())
+            self.assertFalse(search.section_online_gp.content.isVisible())
+            self.assertEqual(context.store.get("uma_moe_search_mode"), "parent")
+            # The collapsed sibling keeps stating its values.
+            self.assertTrue(search.section_online_gp.summary.text().strip())
+
+            search.families.set_current_family(ONLINE_GP)
+            self.application.processEvents()
+            self.assertFalse(search.section_online_parent.content.isVisible())
+            self.assertTrue(search.section_online_gp.content.isVisible())
+            self.assertEqual(
+                context.store.get("uma_moe_search_mode"), "grandparent"
+            )
+            self.assertTrue(search.section_online_parent.summary.text().strip())
+
             _dispose_widget(search, self.application)
 
     def test_uma_moe_integration_is_persisted_by_settings_context(self) -> None:

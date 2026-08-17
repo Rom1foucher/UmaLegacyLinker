@@ -235,6 +235,15 @@ Five tabs, ordered by frequency, first selected by default (NN/g):
   and output-directory write collisions would need their own pass).
 - Tab labels must pass the layout audit's button-text-width check in both
   languages; the proposals above are sized for that.
+- **Run labels carry the verb only** ("Classer", "Rechercher"). The tab
+  already names the subject, and a full sentence crowds the toolbar out of a
+  1120 px workspace.
+- **The rail yields to the width.** Below the threshold the rail and a result
+  pane cannot both hold their minimum, and a splitter resolves that by
+  squeezing everything: clipped toolbars, a rail scrolling sideways behind a
+  hidden bar. The rail therefore stays closed while the window is narrow and
+  reopens from the remembered preference once there is room. Rail sections
+  also lay out in one column when hosted, so their own minimum fits.
 
 ## Staleness model: per-family input fingerprints
 
@@ -312,7 +321,7 @@ before the riskier rewiring touches it. The interim mode gesture is simply
 expanding one of the two mode sections. Audit: `search-options-parent` /
 `search-options-grandparent` scenarios become rail-section captures.
 
-**P3 — Families.** Replace `result_stack` + source cards + the five run
+**P3 — Families** *(landed)*. Replace `result_stack` + source cards + the five run
 buttons and two menus with `FamilyTabBar`, five persistent panes (two
 `OnlineResultsPane` instances) and per-tab toolbars with empty states. Couple
 the two mode sections to the active online tab (expand/collapse, never hide).

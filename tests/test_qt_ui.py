@@ -620,9 +620,11 @@ class QtUiCoreTests(unittest.TestCase):
 
     def test_optimizer_detail_browser_exists_before_sorting_can_emit_layout_changed(self) -> None:
         source = (
-            PROJECT_DIR / "ui_qt" / "pages_optimizer.py"
+            PROJECT_DIR / "ui_qt" / "result_panes.py"
         ).read_text(encoding="utf-8")
-        result_pane = source[source.index("class ResultPane"):source.index("class OptimizerPage")]
+        result_pane = source[
+            source.index("class ResultPane") : source.index("class CardFilterDialog")
+        ]
         self.assertLess(
             result_pane.index("self.detail = QTextBrowser()"),
             result_pane.index("self.model.layoutChanged.connect"),

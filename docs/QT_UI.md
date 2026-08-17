@@ -42,7 +42,7 @@ The lineage view retains the compact identities, Sparks and skill IDs required f
 
 ## Visual QA
 
-The Windows workflow renders every page, the Search workspace with its context rail expanded, collapsed and focused on each uma.moe search mode, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 108 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
+The Windows workflow renders every page, the Search workspace with its context rail expanded, collapsed, focused on each uma.moe search mode and on each result family, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 132 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
 
 ## Artwork and offline behaviour
 
@@ -76,7 +76,9 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/core.py` | GUI-independent configuration and workflow orchestration |
 | `ui_qt/main_window.py` | application shell, navigation, progress and log drawer |
 | `ui_qt/pages_home_data.py` | dashboard and local linking workflow |
-| `ui_qt/pages_search.py` | unified context rail, local/uma.moe actions and shared results workspace |
+| `ui_qt/pages_search.py` | unified context rail, adaptive toolbar and result families |
+| `ui_qt/result_families.py` | one tab and one persistent pane per result family |
+| `ui_qt/result_panes.py` | result tables and diagnostics shared by every family |
 | `ui_qt/online_options.py` | shared uma.moe retrieval constraints and per-search strategy sections |
 | `ui_qt/pages_optimizer.py` | reusable local result explorer and diagnostics |
 | `ui_qt/pages_online.py` | reusable uma.moe result explorer and costume-filter dialog |

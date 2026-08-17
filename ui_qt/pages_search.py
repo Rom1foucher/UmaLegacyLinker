@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from functools import partial
 from pathlib import Path
@@ -8,10 +7,6 @@ from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -31,9 +26,6 @@ from PySide6.QtWidgets import (
 
 from lineage_planner import LineagePlannerError, write_lineage_planner_export
 from parent_optimizer import (
-    DISTANCE_FACTOR_NAMES,
-    STYLE_FACTOR_NAMES,
-    SURFACE_FACTOR_NAMES,
     OptimizerError,
     load_ace_options,
     load_track_options,
@@ -41,10 +33,8 @@ from parent_optimizer import (
 from uma_moe import UmaMoeError
 from ui_qt.components import (
     PageHeader,
-    PathPicker,
     SearchableComboBox,
     SummarySection,
-    ThemedComboBox,
     muted_label,
     section_label,
 )
@@ -55,14 +45,19 @@ from ui_qt.core import (
     VeteranOption,
     latest_rankings_path,
     load_local_veteran_options,
-    load_opposing_parent_candidates,
     load_rankings_payload,
     open_path,
     run_online_search,
     run_optimization,
 )
 from ui_qt.lineage_settings import LineageRaceEditor
-from ui_qt.pages_online import CardFilterDialog, OnlineResultsPane
+from ui_qt.online_options import (
+    GRANDPARENT_MODE,
+    PARENT_MODE,
+    OnlineModeSection,
+    OnlineRetrievalSection,
+)
+from ui_qt.pages_online import OnlineResultsPane
 from ui_qt.pages_optimizer import ResultPane
 from ui_qt.presentation import profile_summary
 
@@ -78,625 +73,6 @@ def _integer(value: object, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def _id_set(value: str) -> set[int]:
-    result: set[int] = set()
-    for part in value.replace(";", ",").split(","):
-        try:
-            candidate = int(part.strip())
-        except ValueError:
-            continue
-        if candidate > 0:
-            result.add(candidate)
-    return result
-
-
-class OnlineSearchOptionsDialog(QDialog):
-    """Persistent uma.moe search filters, deliberately separated from credentials."""
-
-    def __init__(
-        self,
-        context: AppContext,
-        mode: str,
-        ace_options: list[object],
-        local_options: list[VeteranOption],
-        parent=None,
-    ) -> None:
-        super().__init__(parent)
-        self.context = context
-        self.mode = "parent" if mode == "parent" else "grandparent"
-        self.ace_options = list(ace_options)
-        self.local_options = list(local_options)
-        self._allowed_ids = _id_set(
-            context.store.get("uma_moe_parent_allowed_card_ids")
-        )
-        self._excluded_ids = _id_set(
-            context.store.get("uma_moe_parent_excluded_card_ids")
-        )
-        self._external_opposing: list[dict[str, Any]] = []
-        self.setModal(True)
-        self.resize(900, 760)
-
-        root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
-        root.setSpacing(10)
-        self.header = section_label("")
-        self.header.setWordWrap(False)
-        self.header_hint = muted_label("")
-        root.addWidget(self.header)
-        root.addWidget(self.header_hint)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 4, 0)
-        body_layout.setSpacing(10)
-
-        pair_panel = QFrame()
-        pair_panel.setObjectName("panel")
-        pair = QGridLayout(pair_panel)
-        pair.setContentsMargins(17, 14, 17, 14)
-        pair.setHorizontalSpacing(12)
-        pair.setVerticalSpacing(8)
-        self.pair_title = section_label("")
-        self.auto_pairs = QCheckBox("")
-        self.auto_pairs.setChecked(
-            context.store.get("uma_moe_auto_pairs", "1")
-            not in {"0", "false", "False"}
-        )
-        self.fixed_label = QLabel("")
-        self.fixed_combo = SearchableComboBox()
-        fixed_selected = _integer(context.store.get("uma_moe_fixed_gp_id"))
-        for option in self.local_options:
-            self.fixed_combo.addItem(option.display_name, option.trained_chara_id)
-        fixed_index = self.fixed_combo.findData(fixed_selected)
-        self.fixed_combo.setCurrentIndex(
-            fixed_index if fixed_index >= 0 else (0 if self.fixed_combo.count() else -1)
-        )
-        self.fixed_combo.setDisabled(self.auto_pairs.isChecked())
-        self.local_pool_label = QLabel("")
-        self.local_pool = QSpinBox()
-        self.local_pool.setRange(1, 250)
-        self.local_pool.setValue(
-            _integer(context.store.get("uma_moe_local_pool", "100"), 100)
-        )
-        self.remote_pool_label = QLabel("")
-        self.remote_pool = QSpinBox()
-        self.remote_pool.setRange(1, 500)
-        self.remote_pool.setValue(
-            _integer(context.store.get("uma_moe_remote_pool", "100"), 100)
-        )
-        self.fetch_label = QLabel("")
-        self.fetch_spin = QSpinBox()
-        self.fetch_spin.setRange(100, 2000)
-        self.fetch_spin.setSingleStep(100)
-        self.fetch_spin.setValue(
-            _integer(context.store.get("uma_moe_limit", "500"), 500)
-        )
-        pair.addWidget(self.pair_title, 0, 0, 1, 3)
-        pair.addWidget(self.auto_pairs, 1, 0, 1, 3)
-        pair.addWidget(self.fixed_label, 2, 0, 1, 3)
-        pair.addWidget(self.fixed_combo, 3, 0, 1, 3)
-        for column, (label, widget) in enumerate(
-            (
-                (self.local_pool_label, self.local_pool),
-                (self.remote_pool_label, self.remote_pool),
-                (self.fetch_label, self.fetch_spin),
-            )
-        ):
-            pair.addWidget(label, 4, column)
-            pair.addWidget(widget, 5, column)
-            pair.setColumnStretch(column, 1)
-        body_layout.addWidget(pair_panel)
-
-        retrieval_panel = QFrame()
-        retrieval_panel.setObjectName("panel")
-        retrieval = QGridLayout(retrieval_panel)
-        retrieval.setContentsMargins(17, 14, 17, 14)
-        retrieval.setHorizontalSpacing(12)
-        retrieval.setVerticalSpacing(7)
-        self.retrieval_title = section_label("")
-        self.retrieval_hint = muted_label("")
-        self.prefer_profile = QCheckBox("")
-        self.prefer_profile.setChecked(
-            context.store.get("uql_prefer_whites", "1")
-            not in {"0", "false", "False"}
-        )
-        self.prefer_lineage = QCheckBox("")
-        self.prefer_lineage.setChecked(
-            context.store.get("uql_lineage_whites", "1")
-            not in {"0", "false", "False"}
-        )
-        self.surface_cohort = QCheckBox("")
-        self.surface_cohort.setChecked(
-            context.store.get("uql_surface_cohort", "1")
-            not in {"0", "false", "False"}
-        )
-        self.require_surface = QCheckBox("")
-        self.require_distance = QCheckBox("")
-        self.require_style = QCheckBox("")
-        for widget, key in (
-            (self.require_surface, "uql_require_surface"),
-            (self.require_distance, "uql_require_distance"),
-            (self.require_style, "uql_require_style"),
-        ):
-            widget.setChecked(context.store.get(key, "0") in {"1", "true", "True"})
-        self.pink_label = QLabel("")
-        self.pink_spin = QSpinBox()
-        self.pink_spin.setRange(1, 3)
-        self.pink_spin.setPrefix("≥ ")
-        self.pink_spin.setSuffix("★")
-        self.pink_spin.setValue(
-            _integer(context.store.get("uql_pink_min_stars", "1"), 1)
-        )
-        retrieval.addWidget(self.retrieval_title, 0, 0, 1, 3)
-        retrieval.addWidget(self.retrieval_hint, 1, 0, 1, 3)
-        retrieval.addWidget(self.prefer_profile, 2, 0)
-        retrieval.addWidget(self.prefer_lineage, 2, 1)
-        retrieval.addWidget(self.surface_cohort, 2, 2)
-        retrieval.addWidget(self.require_surface, 3, 0)
-        retrieval.addWidget(self.require_distance, 3, 1)
-        retrieval.addWidget(self.require_style, 3, 2)
-        retrieval.addWidget(self.pink_label, 4, 0)
-        retrieval.addWidget(self.pink_spin, 4, 1)
-        for column in range(3):
-            retrieval.setColumnStretch(column, 1)
-        body_layout.addWidget(retrieval_panel)
-
-        lineage_panel = QFrame()
-        lineage_panel.setObjectName("panel")
-        lineage = QGridLayout(lineage_panel)
-        lineage.setContentsMargins(17, 14, 17, 14)
-        lineage.setHorizontalSpacing(12)
-        lineage.setVerticalSpacing(8)
-        self.lineage_title = section_label("")
-        self.lineage_hint = muted_label("")
-        self.lineage_blue_label = QLabel("")
-        self.lineage_blue_combo = ThemedComboBox()
-        self.lineage_blue_combo.addItem("—", None)
-        for name in ("Speed", "Stamina", "Power", "Guts", "Wit"):
-            self.lineage_blue_combo.addItem(name, name)
-        self.lineage_blue_stars = QSpinBox()
-        self.lineage_blue_stars.setRange(0, 9)
-        self.lineage_blue_stars.setPrefix("≥ ")
-        self.lineage_blue_stars.setSuffix("★")
-        self.lineage_pink_label = QLabel("")
-        self.lineage_pink_combo = ThemedComboBox()
-        self.lineage_pink_combo.addItem("—", None)
-        for name in (
-            list(SURFACE_FACTOR_NAMES.values())
-            + list(DISTANCE_FACTOR_NAMES.values())
-            + list(STYLE_FACTOR_NAMES.values())
-        ):
-            self.lineage_pink_combo.addItem(name, name)
-        self.lineage_pink_stars = QSpinBox()
-        self.lineage_pink_stars.setRange(0, 9)
-        self.lineage_pink_stars.setPrefix("≥ ")
-        self.lineage_pink_stars.setSuffix("★")
-        self.lineage_blue_stars.setMinimumWidth(116)
-        self.lineage_pink_stars.setMinimumWidth(116)
-        for combo, key in (
-            (self.lineage_blue_combo, "uql_lineage_blue_name"),
-            (self.lineage_pink_combo, "uql_lineage_pink_name"),
-        ):
-            index = combo.findData(context.store.get(key, ""))
-            combo.setCurrentIndex(index if index >= 0 else 0)
-        self.lineage_blue_stars.setValue(
-            _integer(context.store.get("uql_lineage_blue_stars", "0"))
-        )
-        self.lineage_pink_stars.setValue(
-            _integer(context.store.get("uql_lineage_pink_stars", "0"))
-        )
-        lineage.addWidget(self.lineage_title, 0, 0, 1, 3)
-        lineage.addWidget(self.lineage_hint, 1, 0, 1, 3)
-        lineage.addWidget(self.lineage_blue_label, 2, 0)
-        lineage.addWidget(self.lineage_blue_combo, 2, 1)
-        lineage.addWidget(self.lineage_blue_stars, 2, 2)
-        lineage.addWidget(self.lineage_pink_label, 3, 0)
-        lineage.addWidget(self.lineage_pink_combo, 3, 1)
-        lineage.addWidget(self.lineage_pink_stars, 3, 2)
-        lineage.setColumnStretch(1, 1)
-        body_layout.addWidget(lineage_panel)
-
-        mode_panel = QFrame()
-        mode_panel.setObjectName("panel")
-        mode_layout = QGridLayout(mode_panel)
-        mode_layout.setContentsMargins(17, 14, 17, 14)
-        mode_layout.setHorizontalSpacing(12)
-        mode_layout.setVerticalSpacing(8)
-        self.mode_title = section_label("")
-        mode_layout.addWidget(self.mode_title, 0, 0, 1, 3)
-        if self.mode == "parent":
-            self.required_label = QLabel("")
-            self.required_combo = SearchableComboBox()
-            self.required_combo.addItem("", None)
-            for option in self.ace_options:
-                self.required_combo.addItem(option.display_name, option.card_id)
-            required = _integer(
-                context.store.get("uma_moe_required_parent_card_id")
-            )
-            required_index = self.required_combo.findData(required)
-            self.required_combo.setCurrentIndex(required_index if required_index >= 0 else 0)
-            self.allowed_button = QPushButton("")
-            self.excluded_button = QPushButton("")
-            mode_layout.addWidget(self.required_label, 1, 0, 1, 3)
-            mode_layout.addWidget(self.required_combo, 2, 0, 1, 3)
-            mode_layout.addWidget(self.allowed_button, 3, 1)
-            mode_layout.addWidget(self.excluded_button, 3, 2)
-            self.allowed_button.clicked.connect(lambda: self._pick_filter("allowed"))
-            self.excluded_button.clicked.connect(lambda: self._pick_filter("excluded"))
-        else:
-            self.opposing_label = QLabel("")
-            self.opposing_combo = SearchableComboBox()
-            self.opposing_json_label = QLabel("")
-            self.opposing_picker = PathPicker(
-                context.store.get("uma_moe_opposing_path"),
-                title="Sélectionner un JSON de parent opposé",
-                file_filter="JSON (*.json);;Tous les fichiers (*)",
-            )
-            self.opposing_extract_button = QPushButton("")
-            self.g1_budget_label = QLabel("")
-            self.g1_budget = QSpinBox()
-            self.g1_budget.setRange(0, 40)
-            self.g1_budget.setValue(
-                _integer(context.store.get("uma_moe_parent_g1_budget", "20"), 20)
-            )
-            self.g1_weight_label = QLabel("")
-            self.g1_weight = QDoubleSpinBox()
-            self.g1_weight.setRange(0.0, 1.0)
-            self.g1_weight.setSingleStep(0.1)
-            self.g1_weight.setDecimals(2)
-            try:
-                self.g1_weight.setValue(
-                    float(
-                        context.store.get(
-                            "uma_moe_g1_win_probability_cutoff",
-                            context.store.get("uma_moe_single_g1_weight", "0.6"),
-                        )
-                    )
-                )
-            except ValueError:
-                self.g1_weight.setValue(0.6)
-            mode_layout.addWidget(self.opposing_label, 1, 0, 1, 3)
-            mode_layout.addWidget(self.opposing_combo, 2, 0, 1, 3)
-            mode_layout.addWidget(self.opposing_json_label, 3, 0, 1, 3)
-            mode_layout.addWidget(self.opposing_picker, 4, 0, 1, 2)
-            mode_layout.addWidget(self.opposing_extract_button, 4, 2)
-            mode_layout.addWidget(self.g1_budget_label, 5, 0)
-            mode_layout.addWidget(self.g1_weight_label, 5, 1)
-            mode_layout.addWidget(self.g1_budget, 6, 0)
-            mode_layout.addWidget(self.g1_weight, 6, 1)
-            self.opposing_extract_button.clicked.connect(
-                lambda: self._load_external_opposing(show_errors=True)
-            )
-            self._load_external_opposing(show_errors=False)
-            self._refresh_opposing_options()
-        mode_layout.setColumnStretch(0, 1)
-        mode_layout.setColumnStretch(1, 1)
-        mode_layout.setColumnStretch(2, 1)
-        body_layout.addWidget(mode_panel)
-
-        import_panel = QFrame()
-        import_panel.setObjectName("panel")
-        import_layout = QVBoxLayout(import_panel)
-        import_layout.setContentsMargins(17, 14, 17, 14)
-        self.import_label = QLabel("")
-        self.import_picker = PathPicker(
-            context.store.get("uma_moe_response_path"),
-            title="Sélectionner une réponse JSON de l’API uma.moe",
-            file_filter="JSON (*.json);;Tous les fichiers (*)",
-        )
-        import_layout.addWidget(self.import_label)
-        import_layout.addWidget(self.import_picker)
-        body_layout.addWidget(import_panel)
-        body_layout.addStretch(1)
-        scroll.setWidget(body)
-        root.addWidget(scroll, 1)
-
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        self.buttons.accepted.connect(self._accept)
-        self.buttons.rejected.connect(self.reject)
-        root.addWidget(self.buttons)
-
-        self.auto_pairs.toggled.connect(self.fixed_combo.setDisabled)
-        context.language_changed.connect(self._language_changed)
-        self.retranslate()
-
-    def _language_changed(self, _language: str) -> None:
-        self.retranslate()
-
-    def _pick_filter(self, kind: str) -> None:
-        selected = self._allowed_ids if kind == "allowed" else self._excluded_ids
-        title = self.context.t(
-            "Costumes autorisés" if kind == "allowed" else "Costumes exclus"
-        )
-        options = [(item.card_id, item.display_name) for item in self.ace_options]
-        dialog = CardFilterDialog(self.context, options, set(selected), title, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        if kind == "allowed":
-            self._allowed_ids = dialog.selected_ids()
-        else:
-            self._excluded_ids = dialog.selected_ids()
-        self._refresh_filter_labels()
-
-    def _load_external_opposing(self, *, show_errors: bool) -> None:
-        if self.mode != "grandparent":
-            return
-        path_text = self.opposing_picker.text().strip()
-        if not path_text:
-            self._external_opposing = []
-            self._refresh_opposing_options()
-            return
-        path = Path(path_text).expanduser()
-        if not path.is_file():
-            if show_errors:
-                QMessageBox.warning(
-                    self,
-                    self.context.t("Parent opposé (contexte)"),
-                    self.context.t("Sélectionne d’abord un JSON de parent opposé."),
-                )
-            return
-        try:
-            self._external_opposing = load_opposing_parent_candidates(
-                Path(self.context.master_path).expanduser(), path
-            )
-        except Exception as exc:
-            self._external_opposing = []
-            if show_errors:
-                QMessageBox.warning(
-                    self,
-                    self.context.t("Parent opposé (contexte)"),
-                    self.context.t(str(exc)),
-                )
-        self._refresh_opposing_options()
-
-    def _external_display(self, member: dict[str, Any]) -> str:
-        online = member.get("online") if isinstance(member.get("online"), dict) else {}
-        suffix = (
-            online.get("trainer_name")
-            or online.get("friend_code")
-            or member.get("trained_chara_id")
-            or f"card:{member.get('card_id')}"
-        )
-        return (
-            f"{self.context.t('Externe')} — {member.get('uma_name') or '?'} — "
-            f"{member.get('card_name') or member.get('card_id')} — {suffix}"
-        )
-
-    def _refresh_opposing_options(self) -> None:
-        if self.mode != "grandparent" or not hasattr(self, "opposing_combo"):
-            return
-        saved = self.context.store.get("uma_moe_opposing_selection", "none")
-        self.opposing_combo.blockSignals(True)
-        self.opposing_combo.clear()
-        self.opposing_combo.addItem(
-            self.context.t("(aucun — recherche GP polyvalente)"), "none"
-        )
-        for option in self.local_options:
-            self.opposing_combo.addItem(
-                f"{self.context.t('Local')} — {option.display_name}",
-                f"local:{option.trained_chara_id}",
-            )
-        for index, member in enumerate(self._external_opposing):
-            self.opposing_combo.addItem(
-                self._external_display(member), f"external:{index}"
-            )
-        selected = self.opposing_combo.findData(saved)
-        if selected < 0:
-            legacy = _integer(self.context.store.get("uma_moe_opposing_id"))
-            selected = self.opposing_combo.findData(f"local:{legacy}")
-        self.opposing_combo.setCurrentIndex(selected if selected >= 0 else 0)
-        self.opposing_combo.blockSignals(False)
-
-    def _refresh_filter_labels(self) -> None:
-        if self.mode != "parent":
-            return
-        self.allowed_button.setText(
-            f"{self.context.t('Autorisés')} ({len(self._allowed_ids)})"
-        )
-        self.excluded_button.setText(
-            f"{self.context.t('Exclus')} ({len(self._excluded_ids)})"
-        )
-
-    def _lineage_filter(
-        self, combo: ThemedComboBox, spin: QSpinBox
-    ) -> tuple[str, int] | None:
-        name = str(combo.currentData() or "").strip()
-        stars = int(spin.value())
-        return (name, stars) if name and stars > 0 else None
-
-    def values(self) -> dict[str, Any]:
-        self.fixed_combo.resolve_current_text()
-        fixed = _integer(self.fixed_combo.currentData())
-        opposing_id: int | None = None
-        opposing_payload: dict[str, Any] | None = None
-        opposing_selection = "none"
-        if self.mode == "grandparent":
-            self.opposing_combo.resolve_current_text()
-            opposing_selection = str(self.opposing_combo.currentData() or "none")
-            if opposing_selection.startswith("local:"):
-                opposing_id = _integer(opposing_selection.split(":", 1)[1]) or None
-            elif opposing_selection.startswith("external:"):
-                index = _integer(opposing_selection.split(":", 1)[1], -1)
-                if 0 <= index < len(self._external_opposing):
-                    opposing_payload = copy.deepcopy(self._external_opposing[index])
-        required: int | None = None
-        if self.mode == "parent":
-            self.required_combo.resolve_current_text()
-            required_raw = self.required_combo.currentData()
-            required = int(required_raw) if required_raw is not None else None
-        return {
-            "automatic_pairs": self.auto_pairs.isChecked(),
-            "fixed_local_id": None if self.auto_pairs.isChecked() else (fixed or None),
-            "local_pool_size": self.local_pool.value(),
-            "remote_pool_size": self.remote_pool.value(),
-            "limit": self.fetch_spin.value(),
-            "uql_options": {
-                "prefer_profile_whites": self.prefer_profile.isChecked(),
-                "prefer_lineage_whites": self.prefer_lineage.isChecked(),
-                "require_main_surface": self.require_surface.isChecked(),
-                "require_main_distance": self.require_distance.isChecked(),
-                "require_main_style": self.require_style.isChecked(),
-                "pink_min_stars": self.pink_spin.value(),
-                "enable_surface_retrieval": self.surface_cohort.isChecked(),
-            },
-            "planned_g1_budget": (
-                self.g1_budget.value() if self.mode == "grandparent" else 20
-            ),
-            "g1_win_probability_cutoff": (
-                self.g1_weight.value() if self.mode == "grandparent" else 0.6
-            ),
-            "required_parent_card_id": required,
-            "allowed_parent_card_ids": tuple(sorted(self._allowed_ids)),
-            "excluded_parent_card_ids": tuple(sorted(self._excluded_ids)),
-            "opposing_parent_trained_id": opposing_id,
-            "opposing_parent_payload": opposing_payload,
-            "opposing_selection": opposing_selection,
-            "lineage_blue_filter": self._lineage_filter(
-                self.lineage_blue_combo, self.lineage_blue_stars
-            ),
-            "lineage_pink_filter": self._lineage_filter(
-                self.lineage_pink_combo, self.lineage_pink_stars
-            ),
-            "response_path": self.import_picker.text().strip(),
-        }
-
-    def _accept(self) -> None:
-        values = self.values()
-        required = values["required_parent_card_id"]
-        if required in self._excluded_ids:
-            QMessageBox.warning(
-                self,
-                self.context.t("Configuration incomplète"),
-                self.context.t("Le costume requis est également exclu."),
-            )
-            return
-        if self._allowed_ids and required is not None and required not in self._allowed_ids:
-            QMessageBox.warning(
-                self,
-                self.context.t("Configuration incomplète"),
-                self.context.t(
-                    "Le costume requis doit être présent dans les costumes autorisés."
-                ),
-            )
-            return
-        blue = values["lineage_blue_filter"]
-        pink = values["lineage_pink_filter"]
-        options = values["uql_options"]
-        self.context.store.update(
-            {
-                "uma_moe_auto_pairs": int(values["automatic_pairs"]),
-                "uma_moe_fixed_gp_id": values["fixed_local_id"] or 0,
-                "uma_moe_local_pool": values["local_pool_size"],
-                "uma_moe_remote_pool": values["remote_pool_size"],
-                "uma_moe_limit": values["limit"],
-                "uma_moe_response_path": values["response_path"],
-                "uma_moe_parent_g1_budget": values["planned_g1_budget"],
-                "uma_moe_g1_win_probability_cutoff": values[
-                    "g1_win_probability_cutoff"
-                ],
-                "uma_moe_required_parent_card_id": required or 0,
-                "uma_moe_parent_allowed_card_ids": ",".join(
-                    map(str, sorted(self._allowed_ids))
-                ),
-                "uma_moe_parent_excluded_card_ids": ",".join(
-                    map(str, sorted(self._excluded_ids))
-                ),
-                "uql_prefer_whites": int(options["prefer_profile_whites"]),
-                "uql_lineage_whites": int(options["prefer_lineage_whites"]),
-                "uql_surface_cohort": int(options["enable_surface_retrieval"]),
-                "uql_require_surface": int(options["require_main_surface"]),
-                "uql_require_distance": int(options["require_main_distance"]),
-                "uql_require_style": int(options["require_main_style"]),
-                "uql_pink_min_stars": options["pink_min_stars"],
-                "uql_lineage_blue_name": blue[0] if blue else "",
-                "uql_lineage_blue_stars": blue[1] if blue else 0,
-                "uql_lineage_pink_name": pink[0] if pink else "",
-                "uql_lineage_pink_stars": pink[1] if pink else 0,
-                "uma_moe_opposing_id": values["opposing_parent_trained_id"] or 0,
-                "uma_moe_opposing_selection": values["opposing_selection"],
-                "uma_moe_opposing_path": (
-                    self.opposing_picker.text().strip()
-                    if self.mode == "grandparent"
-                    else self.context.store.get("uma_moe_opposing_path")
-                ),
-            }
-        )
-        self.accept()
-
-    def retranslate(self) -> None:
-        t = self.context.t
-        mode_name = t("parents distants" if self.mode == "parent" else "grands-parents distants")
-        self.setWindowTitle(t("Options de recherche uma.moe"))
-        self.header.setText(t("Options uma.moe") + f" · {mode_name}")
-        self.header_hint.setText(
-            t(
-                "Ces filtres changent la récupération et la combinaison des candidats. La clé et l’URL se règlent dans Paramètres."
-            )
-        )
-        self.pair_title.setText(t("Combinaison local × distant"))
-        self.auto_pairs.setText(t("Tester automatiquement toutes les paires local × distant"))
-        self.fixed_label.setText(
-            t("Parent local fixé (manuel)" if self.mode == "parent" else "GP local fixé (manuel)")
-        )
-        self.local_pool_label.setText(t("Pool local"))
-        self.remote_pool_label.setText(t("Pool distant"))
-        self.fetch_label.setText(t("Fetch API"))
-        self.retrieval_title.setText(t("Récupération et filtres"))
-        self.retrieval_hint.setText(
-            t(
-                "Les préférences orientent l’API ; les contraintes excluent réellement les candidats avant le classement local exact."
-            )
-        )
-        self.prefer_profile.setText(t("Favoriser les whites du profil"))
-        self.prefer_lineage.setText(t("Favoriser leur répétition dans la lignée"))
-        self.surface_cohort.setText(t("Cohorte Surface dédiée (récupération API)"))
-        self.require_surface.setText(t("Exiger la surface cible"))
-        self.require_distance.setText(t("Exiger la distance cible"))
-        self.require_style.setText(t("Exiger le style cible"))
-        self.pink_label.setText(t("Étoiles pink minimum"))
-        self.lineage_title.setText(t("Qualité minimale de la lignée distante"))
-        self.lineage_hint.setText(
-            t("Somme sur le Main distant et ses deux parents, appliquée avant pagination.")
-        )
-        self.lineage_blue_label.setText(t("Stat Blue"))
-        self.lineage_pink_label.setText(t("Aptitude Pink"))
-        for spin in (self.lineage_blue_stars, self.lineage_pink_stars):
-            spin.setSpecialValueText(t("désactivé"))
-        self.mode_title.setText(
-            t("Filtres de costumes")
-            if self.mode == "parent"
-            else t("Contexte de production du parent")
-        )
-        if self.mode == "parent":
-            self.required_label.setText(t("Costume requis dans la paire"))
-            self.required_combo.setItemText(0, t("Aucun costume requis"))
-            self._refresh_filter_labels()
-        else:
-            self.opposing_label.setText(t("Parent opposé (contexte)"))
-            self.opposing_json_label.setText(t("JSON du parent opposé"))
-            self.opposing_extract_button.setText(t("Extraire les candidats"))
-            self.opposing_picker.set_button_text(t("Parcourir…"))
-            self.g1_budget_label.setText(t("G1 prévues sur le parent"))
-            self.g1_weight_label.setText(
-                t("Chance de victoire minimale (Independent Training)")
-            )
-            self._refresh_opposing_options()
-        self.import_label.setText(t("Réponse JSON à classer hors ligne"))
-        self.import_picker.set_button_text(t("Parcourir…"))
-        save_button = self.buttons.button(QDialogButtonBox.StandardButton.Save)
-        cancel_button = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        if save_button is not None:
-            save_button.setText(t("Enregistrer"))
-        if cancel_button is not None:
-            cancel_button.setText(t("Annuler"))
 
 
 class SearchPage(QWidget):
@@ -793,6 +169,16 @@ class SearchPage(QWidget):
             self.race_editor.advanced_body
         )
         rail_body_layout.addWidget(self.section_conditions)
+
+        # Shared retrieval first, then one section per remote search: the split
+        # mirrors what each setting describes, so the rail no longer implies
+        # two independent configurations over one shared set of keys.
+        self.section_retrieval = OnlineRetrievalSection(context)
+        rail_body_layout.addWidget(self.section_retrieval)
+        self.section_online_parent = OnlineModeSection(context, PARENT_MODE)
+        rail_body_layout.addWidget(self.section_online_parent)
+        self.section_online_gp = OnlineModeSection(context, GRANDPARENT_MODE)
+        rail_body_layout.addWidget(self.section_online_gp)
 
         rail_body_layout.addStretch(1)
         self.rail_scroll.setWidget(rail_body)
@@ -958,6 +344,9 @@ class SearchPage(QWidget):
         self.section_conditions.reset_requested.connect(
             self.race_editor.clear_static_conditions
         )
+        self.section_retrieval.changed.connect(self._refresh_online_validation)
+        self.section_online_parent.changed.connect(self._refresh_online_validation)
+        self.section_online_gp.changed.connect(self._refresh_online_validation)
         self.ace_combo.currentIndexChanged.connect(self._ace_changed)
         self.target_combo.currentIndexChanged.connect(self._lineage_selection_changed)
         self.top_spin.valueChanged.connect(self._lineage_selection_changed)
@@ -1112,6 +501,10 @@ class SearchPage(QWidget):
         self.race_editor.set_track_options(
             sorted(self._track_options, key=lambda item: item.name.casefold())
         )
+        self.section_retrieval.set_ace_options(self._ace_options)
+        for section in (self.section_online_parent, self.section_online_gp):
+            section.set_options(self._ace_options, self._local_options)
+        self._refresh_online_validation()
         self._lineage_selection_changed()
         self._refresh_source_badges()
 
@@ -1223,6 +616,13 @@ class SearchPage(QWidget):
             else t("Aucune condition fixée")
         )
         self.section_conditions.set_modified(bool(static_labels), t("Modifié"))
+
+    def _refresh_online_validation(self) -> None:
+        """Surface a costume conflict where it can be fixed, not on a save click."""
+        allowed = self.section_retrieval.allowed_ids()
+        excluded = self.section_retrieval.excluded_ids()
+        for section in (self.section_online_parent, self.section_online_gp):
+            section.show_validation(section.validation_error(allowed, excluded))
 
     def _refresh_source_badges(self) -> None:
         self.local_badge.setText(
@@ -1344,30 +744,28 @@ class SearchPage(QWidget):
             widget = self.future_results
         self._show_results(widget, f"local:{kind}", self._last_profile)
 
-    def _online_options_values(self, mode: str) -> dict[str, Any]:
-        dialog = OnlineSearchOptionsDialog(
-            self.context,
-            mode,
-            self._ace_options,
-            self._local_options,
-            self,
+    def _mode_section(self, mode: str) -> OnlineModeSection:
+        return (
+            self.section_online_parent
+            if mode == PARENT_MODE
+            else self.section_online_gp
         )
-        values = dialog.values()
-        dialog.deleteLater()
+
+    def _online_options_values(self, mode: str) -> dict[str, Any]:
+        """Assemble one search's options from the shared and per-mode sections."""
+        values = dict(self.section_retrieval.values())
+        values.update(self._mode_section(mode).values())
         return values
 
     def open_online_options(self, mode: str | None = None) -> None:
-        mode = mode or self.context.store.get("uma_moe_search_mode", "parent")
-        dialog = OnlineSearchOptionsDialog(
-            self.context,
-            mode,
-            self._ace_options,
-            self._local_options,
-            self,
+        """Reveal a mode's options instead of opening a modal editor."""
+        mode = mode or self.context.store.get("uma_moe_search_mode", PARENT_MODE)
+        section = self._mode_section(
+            PARENT_MODE if mode == PARENT_MODE else GRANDPARENT_MODE
         )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._refresh_integration()
-        dialog.deleteLater()
+        self.set_rail_collapsed(False)
+        section.toggle.setChecked(True)
+        self.rail_scroll.ensureWidgetVisible(section)
 
     def start_online_import(self, mode: str | None = None) -> None:
         mode = mode or self.context.store.get("uma_moe_search_mode", "parent")
@@ -1710,6 +1108,10 @@ class SearchPage(QWidget):
         self.placeholder_hint.setText(
             t("Choisis un calcul local ou uma.moe ci-dessus ; son tableau et son diagnostic apparaîtront ici.")
         )
+        self.section_retrieval.retranslate()
+        self.section_online_parent.retranslate()
+        self.section_online_gp.retranslate()
+        self._refresh_online_validation()
         self.pair_results.retranslate()
         self.branch_results.retranslate()
         self.future_results.retranslate()

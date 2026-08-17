@@ -413,6 +413,105 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                     self.assertEqual(search.rail.isVisible(), expected_visible)
                     _dispose_widget(search, self.application)
 
+    def test_online_options_split_shared_and_per_mode_storage(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SettingsStore(Path(temp_dir) / "config.json")
+            # A configuration written by the former single dialog.
+            store.update(
+                {
+                    "uma_moe_local_pool": "42",
+                    "uma_moe_remote_pool": "77",
+                    "uma_moe_limit": "1300",
+                    "uma_moe_auto_pairs": "0",
+                    "uma_moe_response_path": "/tmp/legacy.json",
+                }
+            )
+            context = AppContext(store)
+            search = SearchPage(context)
+            search.show()
+            self.application.processEvents()
+
+            parent = search.section_online_parent
+            grandparent = search.section_online_gp
+            # Migration: both modes still resolve to the legacy shared values.
+            for section in (parent, grandparent):
+                values = section.values()
+                self.assertEqual(values["local_pool_size"], 42)
+                self.assertEqual(values["remote_pool_size"], 77)
+                self.assertEqual(values["limit"], 1300)
+                self.assertFalse(values["automatic_pairs"])
+                self.assertEqual(values["response_path"], "/tmp/legacy.json")
+
+            # Editing one mode must not rewrite the other's strategy.
+            parent.fetch_spin.setValue(2000)
+            parent.local_pool.setValue(10)
+            self.application.processEvents()
+            self.assertEqual(parent.values()["limit"], 2000)
+            self.assertEqual(parent.values()["local_pool_size"], 10)
+            self.assertEqual(grandparent.values()["limit"], 1300)
+            self.assertEqual(grandparent.values()["local_pool_size"], 42)
+            self.assertEqual(store.get("uma_moe_limit"), "1300")
+            self.assertEqual(store.get("uma_moe_parent_limit"), "2000")
+
+            # Retrieval constraints stay shared by both remote searches.
+            search.section_retrieval.pink_spin.setValue(3)
+            self.application.processEvents()
+            for mode in ("parent", "grandparent"):
+                self.assertEqual(
+                    search._online_options_values(mode)["uql_options"][
+                        "pink_min_stars"
+                    ],
+                    3,
+                )
+
+            _dispose_widget(search, self.application)
+
+    def test_costume_conflict_stays_visible_on_a_collapsed_section(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.core import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_search import SearchPage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
+            search = SearchPage(context)
+            # The rail has to be visible for a header badge to be observable.
+            search.resize(1460, 900)
+            search.show()
+            self.application.processEvents()
+
+            parent = search.section_online_parent
+            parent.required_combo.blockSignals(True)
+            parent.required_combo.clear()
+            parent.required_combo.addItem("", None)
+            parent.required_combo.addItem("Costume", 101)
+            parent.required_combo.blockSignals(False)
+            parent.required_combo.setCurrentIndex(1)
+
+            search.section_retrieval._excluded_ids = {101}
+            search._refresh_online_validation()
+            self.application.processEvents()
+            parent.toggle.setChecked(False)
+            self.application.processEvents()
+            # The panel is closed, so the header has to carry the conflict.
+            self.assertFalse(parent.content.isVisible())
+            self.assertTrue(parent.modified.isVisible())
+            self.assertEqual(parent.modified.objectName(), "pillWarning")
+            # The grandparent search has no required costume to conflict with.
+            self.assertFalse(search.section_online_gp.modified.isVisible())
+
+            search.section_retrieval._excluded_ids = set()
+            search._refresh_online_validation()
+            self.application.processEvents()
+            self.assertFalse(parent.modified.isVisible())
+
+            _dispose_widget(search, self.application)
+
     def test_search_workspace_loads_the_latest_remote_result_too(self) -> None:
         from ui_qt.context import AppContext
         from ui_qt.core import SettingsStore

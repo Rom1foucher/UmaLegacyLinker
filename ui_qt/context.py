@@ -156,6 +156,7 @@ class LineageContextState:
 class AppContext(QObject):
     configuration_changed = Signal()
     integration_changed = Signal()
+    online_options_changed = Signal()
     lineage_changed = Signal(object)
     language_changed = Signal(str)
 
@@ -278,6 +279,18 @@ class AppContext(QObject):
             }
         )
         self.integration_changed.emit()
+
+    def update_online_options(self, values: dict[str, object]) -> None:
+        """Persist a uma.moe search-option edit and notify every consumer.
+
+        Routing these writes through the context, rather than letting a widget
+        write ``store`` directly, is what lets result panes learn that a search
+        input moved without polling the store.
+        """
+        if not values:
+            return
+        self.store.update(dict(values))
+        self.online_options_changed.emit()
 
     def path(self, value: str) -> Path:
         return Path(value).expanduser()

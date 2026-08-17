@@ -121,9 +121,9 @@ on hover/expand. A collapsed section is a summary, never a hiding place.
 | **Objectif** (default expanded) | Ace, future parent, Top N — today's `objective` grid | `Oguri (Noël) → Tamamo · Top 30` |
 | **Course & profil** | surface / distance / style / preset / racecourse — today's compact `LineageRaceEditor` panel | `CM17 · Ooi Dirt 2000 · Late Surger` |
 | **Conditions statiques** | rotation, season, weather, ground, custom-scoring toggle, priorities file, course-overrides file — today's `advanced` grid, sole content of `RaceConditionsDialog` | `Été · Pluie · Lourd · scoring perso` |
-| **uma.moe · Récupération** | pools, fetch limit, `uql_*` retrieval flags, pink min stars, lineage blue/pink filters | `2000 · cohorte surface · rose ≥ 2★` |
-| **uma.moe · Parents** | required costume, allowed/excluded costume sets | `Requis: — · Autorisés 3 · Exclus 12` |
-| **uma.moe · Grands-parents** | auto pairs, fixed local GP, opposing parent (local/external JSON), G1 budget, win-probability cutoff | `Auto · opposé: local #1042 · G1 5` |
+| **uma.moe · Récupération** (shared) | `uql_*` retrieval flags, pink min stars, lineage blue/pink minima, costume allow/exclude lists | `Cohorte Surface · pink ≥ 3★ · 12 exclus` |
+| **moe · Parents distants** | pairing (auto / fixed local **parent**), pools, fetch limit, import path, required costume | `appariement auto · 2000 candidats API · 100×100` |
+| **moe · Grands-parents distants** | pairing (auto / fixed local **GP1**), pools, fetch limit, import path, opposing parent (local/external JSON), G1 budget, win-probability cutoff | `appariement auto · 500 candidats API · G1 20` |
 
 Notes:
 
@@ -137,6 +137,65 @@ Notes:
   entirely; both classes are deleted. Their persistence moves behind new
   `AppContext` methods (see staleness model) so edits emit signals instead of
   writing `context.store` directly from a dialog.
+
+### Shared versus per-mode storage
+
+The two per-mode dialogs implied independent settings while persisting mostly
+**shared** keys: `uma_moe_auto_pairs`, `uma_moe_fixed_gp_id`,
+`uma_moe_local_pool`, `uma_moe_remote_pool`, `uma_moe_limit` and
+`uma_moe_response_path` are written by both dialogs and read back by
+`start_online()` regardless of mode. Editing the parent filters therefore
+silently rewrites the grandparent search's pairing, and `uma_moe_fixed_gp_id`
+is outright overloaded: the same stored veteran means *fixed local parent* in
+one mode and *fixed local GP1* in the other — two different roles with
+different sensible candidates. The confusion is not a presentation bug; the
+presentation and the storage disagree, so one of them has to change.
+
+The split follows what each setting *describes*:
+
+- **Describes the target build → shared.** The `uql_*` retrieval preferences,
+  pink minimum, lineage blue/pink minima and the costume allow/exclude lists
+  constrain which remote candidates are acceptable at all, and derive from the
+  one shared context exactly like surface or distance. They live once, in the
+  common Récupération section, explicitly labelled as shared. The costume
+  lists in particular were *already* consumed by both searches while only the
+  parent dialog could edit them — the shared section makes that visible rather
+  than changing it. (If real usage ever wants different lineage minima per
+  mode, splitting them later is mechanical.)
+- **Describes one search's strategy → per mode.** Pairing mode, the fixed
+  local veteran, both pool sizes, the fetch limit and the import path are
+  decisions about *this* search: a fixed parent is not a fixed GP1, and a
+  2 000-candidate parent sweep does not imply the same appetite for a GP2
+  scan. New keys `uma_moe_parent_*` / `uma_moe_gp_*` replace the shared ones.
+- **Migration.** On first read each new key falls back to its legacy shared
+  value, so existing configurations keep behaving identically until the user
+  edits one side; only the new keys are written afterwards. The legacy keys
+  stay in the store as inert history.
+
+### The mode is the tab
+
+An explicit parent/grandparent mode switch on the page was considered and
+rejected: the family tabs already encode that choice, and a second selector
+for the same state guarantees desynchronisation — a "grandparent" switch over
+a visible parent-results tab leaves Run ambiguous. Instead, the active tab
+*is* the mode, and it drives the rail:
+
+- the three context sections and the shared Récupération section are always
+  present;
+- when an online tab becomes active, its mode section expands and the sibling
+  mode section collapses — never hides. `SummarySection` keeps the collapsed
+  sibling's effective values readable, so switching modes filters the
+  *controls* in view without making any state invisible or moving sections
+  around (spatial stability);
+- when a local tab is active, both mode sections rest collapsed; they remain
+  editable ahead of a future online run;
+- the existing `uma_moe_search_mode` key simply tracks the last active online
+  family, which also keeps JSON imports defaulting to the right mode.
+
+Until the tabs land, the two mode sections simply coexist in the rail;
+expanding one is the interim mode gesture, and nothing needs to be unlearned
+when the coupling arrives.
+
 - Later polish (not in scope now): when an online tab is active, softly
   highlight its relevant rail sections.
 
@@ -237,29 +296,30 @@ Each phase lands independently, is validated by `pytest tests/`,
 `tests/check_i18n.py`, and a reviewed `layout_audit` re-baseline, and ships
 with its i18n additions (French source strings + English entries).
 
-**P1 — Geometry.** Add the rail/main `QSplitter` to `SearchPage`; move the
-context panel and `LineageRaceEditor` into the rail as the first three
-`SummarySection`s, dissolving `RaceConditionsDialog` immediately (it only
-re-hosts the same editor widget). Source cards and result frame stay in the
-main column untouched. Rail collapse + persistence + width threshold. Audit:
-the `search-conditions` dialog scenario becomes a rail-expanded capture;
-expect a large screenshot diff, review for overflow at 1120 px with the rail
-in both states.
+**P1 — Geometry** *(landed)*. Rail/main `QSplitter`, the first three
+`SummarySection`s, `RaceConditionsDialog` dissolved, rail collapse with
+persistence and a width threshold. Source cards and result frame untouched in
+the main column.
 
-**P2 — Families.** Replace `result_stack` + source cards + the five run
+**P2 — Options dissolution** *(landed)*. Move `OnlineSearchOptionsDialog` content into
+the three uma.moe rail sections behind `AppContext.update_online_options`,
+applying the shared/per-mode storage split and its legacy-key migration; keep
+`CardFilterDialog` as picker; port the dialog's validation (required ∉
+excluded, required ∈ allowed) to inline section validation; delete the
+dialog. Pulled ahead of the tab work because it fixes the live confusion
+(per-mode entry points over shared storage) and shrinks `pages_search.py`
+before the riskier rewiring touches it. The interim mode gesture is simply
+expanding one of the two mode sections. Audit: `search-options-parent` /
+`search-options-grandparent` scenarios become rail-section captures.
+
+**P3 — Families.** Replace `result_stack` + source cards + the five run
 buttons and two menus with `FamilyTabBar`, five persistent panes (two
-`OnlineResultsPane` instances) and per-tab toolbars with empty states.
+`OnlineResultsPane` instances) and per-tab toolbars with empty states. Couple
+the two mode sections to the active online tab (expand/collapse, never hide).
 Extract panes to `ui_qt/result_panes.py`, delete dead `OptimizerPage` /
 `OnlinePage`, update the source-slicing assertions in `test_qt_ui.py` and the
 audit imports. Riskiest phase: `start_local` / `start_online` /
 `_local_done` / `_online_done` / `_show_results` rewire onto tabs.
-
-**P3 — Options dissolution.** Move `OnlineSearchOptionsDialog` content into
-the three uma.moe rail sections behind `AppContext.update_online_options`;
-keep `CardFilterDialog` as picker; port the dialog's validation (required ∉
-excluded, required ∈ allowed) to inline section validation; delete the
-dialog. Audit: `search-options-parent` / `search-options-grandparent`
-scenarios become rail-section captures.
 
 **P4 — State visibility.** Family fingerprints, badges, `▣` loaded state,
 `Ctrl+Enter`, detail-pane collapse toggle if not already landed with P1's

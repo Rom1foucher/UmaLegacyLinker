@@ -379,9 +379,22 @@ class SummarySection(CollapsibleSection):
     def set_summary(self, text: str) -> None:
         self.summary.setText(text)
 
-    def set_modified(self, modified: bool, label: str = "") -> None:
+    def set_modified(
+        self, modified: bool, label: str = "", *, warning: bool = False
+    ) -> None:
+        """Mark the header, optionally as a problem rather than a mere edit.
+
+        A validation error placed only inside the panel disappears the moment
+        the section is collapsed, which is exactly the state this widget exists
+        to prevent.
+        """
         self.modified.setText(label)
         self.modified.setVisible(bool(modified and label))
+        object_name = "pillWarning" if warning else "pillAccent"
+        if self.modified.objectName() != object_name:
+            self.modified.setObjectName(object_name)
+            self.modified.style().unpolish(self.modified)
+            self.modified.style().polish(self.modified)
 
     def set_reset_text(self, text: str, tooltip: str = "") -> None:
         self.reset_button.setText(text)

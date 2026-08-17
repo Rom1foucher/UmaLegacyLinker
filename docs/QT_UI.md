@@ -25,7 +25,7 @@ The PySide6 interface is the desktop application. It shares the engines, configu
 - rich, colour-coded Spark chips ordered Blue → Pink → Green → White, with resolved skill icons, the existing full-run White inheritance probability and gold emphasis for the three strongest White score contributions;
 - loading the latest generated ranking;
 - export of a selected final pair to the uma.moe Lineage Planner format;
-- live and imported uma.moe parent/grandparent searches, explicit per-mode filter/import menus, costume filters and Friend ID copy;
+- live and imported uma.moe parent/grandparent searches, with shared retrieval constraints and per-search pairing, pool, fetch and import settings edited in the context rail, plus costume filters and Friend ID copy;
 - stable uma.moe API URL/key configuration under Settings, separate from scoring weights and per-search filters;
 - Transfer Helper with visible Fast/Exhaustive (slow), upcoming-CM, Team Trials and generic-profile
   controls, portfolio verdict/search filters, lock and memo protection, and embedded portfolio or
@@ -42,7 +42,7 @@ The lineage view retains the compact identities, Sparks and skill IDs required f
 
 ## Visual QA
 
-The Windows workflow renders every page, the Search workspace with its context rail both expanded and collapsed, the per-mode uma.moe option dialogs, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 106 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
+The Windows workflow renders every page, the Search workspace with its context rail expanded, collapsed and focused on each uma.moe search mode, the embedded local and remote result panes, and all four lineage variants in French and English at 1120×720, 1366×768 and 1600×900. Its fixtures deliberately include long names, dense White summaries and all aptitude ranks. It fails on clipped button/label text, hidden horizontal overflow or a root rich-text table that collapses into a narrow strip, and currently covers 108 screenshots plus `layout-report.json`. Unit tests also enforce readable semantic-colour contrast, English coverage for visible Qt copy and safe result-pane construction before table sorting emits model callbacks.
 
 ## Artwork and offline behaviour
 
@@ -76,7 +76,8 @@ The **Windows release** GitHub Actions workflow runs the tests and visual audit,
 | `ui_qt/core.py` | GUI-independent configuration and workflow orchestration |
 | `ui_qt/main_window.py` | application shell, navigation, progress and log drawer |
 | `ui_qt/pages_home_data.py` | dashboard and local linking workflow |
-| `ui_qt/pages_search.py` | unified context, local/uma.moe actions, static filter dialogs and shared results workspace |
+| `ui_qt/pages_search.py` | unified context rail, local/uma.moe actions and shared results workspace |
+| `ui_qt/online_options.py` | shared uma.moe retrieval constraints and per-search strategy sections |
 | `ui_qt/pages_optimizer.py` | reusable local result explorer and diagnostics |
 | `ui_qt/pages_online.py` | reusable uma.moe result explorer and costume-filter dialog |
 | `ui_qt/pages_transfer.py` | Transfer Helper analysis and diagnostics |

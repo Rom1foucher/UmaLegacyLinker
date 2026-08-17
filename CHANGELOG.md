@@ -4,6 +4,7 @@ This project uses feature-level semantic versioning. Small internal iterations a
 
 ## Unreleased
 
+- Moved the uma.moe search options out of their two modal editors into the context rail, and split their storage to match: retrieval preferences, remote-lineage minima and costume allow/exclude lists are shared by both remote searches, while pairing, the fixed local veteran, pool sizes, the fetch limit and the offline import path now belong to each search. Editing the parent filters no longer rewrites the grandparent search, and the fixed local veteran is no longer one stored value meaning two different roles. Existing configurations keep their previous behaviour until one side is edited. A required costume that conflicts with the allow/exclude lists is reported inline and stays visible on the collapsed section.
 - Split the Search workspace into a collapsible context rail and a full-height result area instead of stacking configuration above the results. Every section header keeps stating its effective values, its modified state and its reset action, so a collapsed rail still shows what the next calculation will use. The static race conditions moved out of their modal editor into the rail, and the rail can be hidden entirely on narrow windows.
 
 ## 1.7.2 - Search, planning and Transfer Helper portfolio

@@ -29,7 +29,6 @@ from ui_qt.lineage_view import LineageDialog
 from ui_qt.main_window import MainWindow
 from ui_qt.pages_online import OnlineResultsPane
 from ui_qt.pages_optimizer import ResultPane
-from ui_qt.pages_search import OnlineSearchOptionsDialog
 from ui_qt.presentation import online_detail_html, result_detail_html
 from ui_qt.theme import application_stylesheet
 
@@ -182,6 +181,8 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                     variants = [
                         ("search", "rail-expanded"),
                         ("search-rail-collapsed", "rail-collapsed"),
+                        ("search-options-parent", "options-parent"),
+                        ("search-options-grandparent", "options-grandparent"),
                     ]
                 if page == "weights" and hasattr(current_page, "_all_rows"):
                     variants = [
@@ -197,6 +198,25 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         current_page.set_rail_collapsed(
                             mode == "rail-collapsed", persist=False
                         )
+                        if mode.startswith("options-"):
+                            # Replaces the former per-mode option dialogs: the
+                            # same controls, audited where they now live.
+                            focus = (
+                                current_page.section_online_parent
+                                if mode == "options-parent"
+                                else current_page.section_online_gp
+                            )
+                            for section in (
+                                current_page.section_objective,
+                                current_page.section_course,
+                                current_page.section_conditions,
+                                current_page.section_online_parent,
+                                current_page.section_online_gp,
+                            ):
+                                section.toggle.setChecked(section is focus)
+                            current_page.section_retrieval.toggle.setChecked(True)
+                            application.processEvents()
+                            current_page.rail_scroll.ensureWidgetVisible(focus)
                         application.processEvents()
                     if page == "weights" and mode is not None:
                         if mode == "distribution":
@@ -282,44 +302,6 @@ def run_audit(output_dir: Path) -> dict[str, object]:
                         report["screens"].append(entry)
                         for issue in issues:
                             report["issues"].append(f"{language}/{variant}/{width}x{height}: {issue}")
-
-            dialog_factories = [
-                (
-                    "search-options-parent",
-                    lambda: OnlineSearchOptionsDialog(
-                        context, "parent", [], []
-                    ),
-                ),
-                (
-                    "search-options-grandparent",
-                    lambda: OnlineSearchOptionsDialog(
-                        context, "grandparent", [], []
-                    ),
-                ),
-            ]
-            for variant, create_dialog in dialog_factories:
-                dialog = create_dialog()
-                print(f"Auditing {language}/{variant}...", flush=True)
-                dialog.resize(900, 760)
-                dialog.show()
-                application.processEvents()
-                name = f"{language}-{variant}-900x760.png"
-                dialog.grab().save(str(output_dir / name), "PNG")
-                issues = audit_window(dialog)
-                report["screens"].append(
-                    {
-                        "language": language,
-                        "page": variant,
-                        "size": [900, 760],
-                        "screenshot": name,
-                        "issues": issues,
-                    }
-                )
-                for issue in issues:
-                    report["issues"].append(
-                        f"{language}/{variant}/900x760: {issue}"
-                    )
-                _dispose_widget(dialog, application)
 
             def member(card_id: int, name: str, blue: int, pink: int) -> dict[str, object]:
                 shared_whites = (

@@ -609,7 +609,7 @@ def run_transfer_analysis(
     return result
 
 
-def _validated_online_request(request: OnlineSearchRequest) -> None:
+def _validated_online_request(request: OnlineSearchRequest) -> dict[int, int]:
     validate_link_request(
         LinkRequest(request.master_path, request.veterans_json_path, request.output_dir)
     )
@@ -619,10 +619,16 @@ def _validated_online_request(request: OnlineSearchRequest) -> None:
         raise UmaMoeError("Sélectionne l’Ace cible.")
     if request.search_mode == "grandparent" and not request.target_parent_card_id:
         raise UmaMoeError("Sélectionne le parent à produire.")
-    if request.search_mode == "grandparent" and request.target_parent_card_id:
+    # One MDB pass supplies validation, API affinity context and the documented
+    # main-parent character-ID filters. Imported parent searches do not consume
+    # any of these server-side fields and keep their lightweight path.
+    chara_by_card: dict[int, int] = {}
+    if request.search_mode == "grandparent" or not request.use_import:
         chara_by_card = {
-            option.card_id: option.chara_id for option in load_ace_options(request.master_path)
+            option.card_id: option.chara_id
+            for option in load_ace_options(request.master_path)
         }
+    if request.search_mode == "grandparent" and request.target_parent_card_id:
         ace_chara = chara_by_card.get(request.ace_card_id)
         target_chara = chara_by_card.get(request.target_parent_card_id)
         if ace_chara is not None and ace_chara == target_chara:
@@ -663,6 +669,7 @@ def _validated_online_request(request: OnlineSearchRequest) -> None:
         )
     if request.course_overrides_path is not None and not request.course_overrides_path.is_file():
         raise UmaMoeError("Le fichier d’overrides de course est invalide.")
+    return chara_by_card
 
 
 def run_online_search(
@@ -672,7 +679,7 @@ def run_online_search(
     progress: ProgressCallback,
 ) -> OnlineSearchResult | OnlineParentSearchResult:
     """Run the same online/local ranking pipeline used by the legacy UI."""
-    _validated_online_request(request)
+    chara_by_card = _validated_online_request(request)
     output = request.output_dir
     output.mkdir(parents=True, exist_ok=True)
     scoring_config = _materialize_scoring_profile(output, request.use_custom_scoring)
@@ -816,12 +823,28 @@ def run_online_search(
         client = UmaMoeApiClient(
             request.api_base.strip() or DEFAULT_API_BASE,
             token=(request.token.strip() or None),
+            logger=logger,
         )
         api_filters: dict[str, Any] = {
             key: value
             for key, value in search_filters.items()
             if value not in (None, "", [], (), {})
         }
+        ace_chara_id = chara_by_card.get(request.ace_card_id)
+        if ace_chara_id is None:
+            raise UmaMoeError(
+                "Impossible de résoudre l’Ace dans le master.mdb pour le contexte d’affinité uma.moe."
+            )
+        api_filters["player_chara_id"] = ace_chara_id
+        if request.search_mode == "grandparent":
+            target_chara_id = chara_by_card.get(
+                int(request.target_parent_card_id or 0)
+            )
+            if target_chara_id is None:
+                raise UmaMoeError(
+                    "Impossible de résoudre le parent cible dans le master.mdb pour le contexte d’affinité uma.moe."
+                )
+            api_filters["player_chara_id_2"] = target_chara_id
         if lineage_api_diagnostics:
             logger(
                 "Filtres lignée appliqués par l’API avant pagination puis "
@@ -837,10 +860,42 @@ def run_online_search(
             documented = client.documented_parent_card_filter_keys()
             allowed_key = documented.get("allowed")
             excluded_key = documented.get("excluded")
-            if allowed_key and request.allowed_parent_card_ids:
-                api_filters[allowed_key] = list(request.allowed_parent_card_ids)
-            if excluded_key and request.excluded_parent_card_ids:
-                api_filters[excluded_key] = list(request.excluded_parent_card_ids)
+            selected_cards = set(request.allowed_parent_card_ids) | set(
+                request.excluded_parent_card_ids
+            )
+            unresolved_cards = sorted(selected_cards - set(chara_by_card))
+            if unresolved_cards:
+                logger(
+                    "Filtres costume incomplets dans le master.mdb : "
+                    "contrôle local uniquement, aucun filtre partiel envoyé."
+                )
+            else:
+                allowed_charas = sorted(
+                    {chara_by_card[card_id] for card_id in request.allowed_parent_card_ids}
+                )
+                cards_by_chara: dict[int, set[int]] = {}
+                for card_id, chara_id in chara_by_card.items():
+                    cards_by_chara.setdefault(chara_id, set()).add(card_id)
+                excluded_cards = set(request.excluded_parent_card_ids)
+                excluded_charas = sorted(
+                    {
+                        chara_by_card[card_id]
+                        for card_id in excluded_cards
+                        if cards_by_chara.get(chara_by_card[card_id], set())
+                        <= excluded_cards
+                    }
+                )
+                if allowed_key and allowed_charas:
+                    api_filters[allowed_key] = allowed_charas
+                if excluded_key and excluded_charas:
+                    api_filters[excluded_key] = excluded_charas
+                if excluded_cards and len(excluded_charas) < len(
+                    {chara_by_card[card_id] for card_id in excluded_cards}
+                ):
+                    logger(
+                        "Certaines exclusions visent un costume et non le personnage entier : "
+                        "elles restent contrôlées localement pour préserver les autres costumes."
+                    )
             if not documented:
                 logger(
                     "Filtres costume non détectés dans l’OpenAPI : contrôle local uniquement."

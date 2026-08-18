@@ -920,7 +920,10 @@ class QtUiCoreTests(unittest.TestCase):
                 course_weights_path=root / "courses.json",
             )
             client = SimpleNamespace(
-                documented_parent_card_filter_keys=lambda: {},
+                documented_parent_card_filter_keys=lambda: {
+                    "allowed": "main_parent_id",
+                    "excluded": "exclude_main_parent_id",
+                },
                 search_many_planned=Mock(
                     return_value=(
                         {"items": []},
@@ -959,6 +962,8 @@ class QtUiCoreTests(unittest.TestCase):
                 distance="medium",
                 style="pace_chaser",
                 lineage_blue_filter=("Stamina", 5),
+                allowed_parent_card_ids=(2001,),
+                excluded_parent_card_ids=(3001,),
                 limit=2000,
             )
             expected = object()
@@ -989,6 +994,15 @@ class QtUiCoreTests(unittest.TestCase):
                     return_value=client,
                 ),
                 patch(
+                    "ui_qt.core.load_ace_options",
+                    return_value=[
+                        SimpleNamespace(card_id=1001, chara_id=1),
+                        SimpleNamespace(card_id=2001, chara_id=2),
+                        SimpleNamespace(card_id=3001, chara_id=3),
+                        SimpleNamespace(card_id=3002, chara_id=3),
+                    ],
+                ),
+                patch(
                     "ui_qt.core.rank_online_parent_pairs",
                     return_value=expected,
                 ),
@@ -1010,11 +1024,91 @@ class QtUiCoreTests(unittest.TestCase):
                     "optional_main_white_factors": [201900],
                     "min_white_count": 12,
                     "blue_sparks": [205, 206, 207, 208, 209],
+                    "player_chara_id": 1,
+                    "main_parent_id": [2],
                 },
             )
             self.assertEqual(
                 call.kwargs["retrieval_plan"],
                 generated["retrieval_plan"],
+            )
+
+    def test_live_grandparent_search_adds_both_affinity_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            master = root / "master.mdb"
+            veterans = root / "data.json"
+            master.touch()
+            veterans.write_text("[]", encoding="utf-8")
+            linked_path = root / "linked.json"
+            linked_path.write_text(json.dumps({"veterans": []}), encoding="utf-8")
+            linked = SimpleNamespace(
+                json_path=linked_path,
+                skills_catalog_path=root / "skills.json",
+                race_factor_skills_path=root / "race.json",
+            )
+            manual = SimpleNamespace(
+                weights_path=root / "weights.json",
+                course_weights_path=root / "courses.json",
+            )
+            client = SimpleNamespace(
+                search_many_planned=Mock(
+                    return_value=(
+                        {"items": []},
+                        {"method": "GET", "path": "/api/v3/search"},
+                    )
+                )
+            )
+            request = OnlineSearchRequest(
+                search_mode="grandparent",
+                master_path=master,
+                veterans_json_path=veterans,
+                output_dir=root,
+                ace_card_id=1001,
+                target_parent_card_id=2002,
+                fixed_local_id=None,
+                automatic_pairs=True,
+                local_pool_size=20,
+                remote_pool_size=40,
+                surface="turf",
+                distance="medium",
+                style="pace_chaser",
+            )
+            expected = object()
+            with (
+                patch(
+                    "ui_qt.core._validated_online_request",
+                    return_value={1001: 11, 2002: 22},
+                ),
+                patch("ui_qt.core.link_veterans", return_value=linked),
+                patch(
+                    "ui_qt.core.generate_manual_skill_weights",
+                    return_value=manual,
+                ),
+                patch(
+                    "ui_qt.core.generate_auto_uql",
+                    return_value=("", {"search_filters": {}, "retrieval_plan": {}}),
+                ),
+                patch(
+                    "ui_qt.core.build_lineage_factor_api_filters",
+                    return_value=({}, {}),
+                ),
+                patch("ui_qt.core.UmaMoeApiClient", return_value=client),
+                patch(
+                    "ui_qt.core.rank_online_grandparent_pairs",
+                    return_value=expected,
+                ),
+            ):
+                result = run_online_search(
+                    request,
+                    logger=lambda _message: None,
+                    progress=lambda _value, _message: None,
+                )
+
+            self.assertIs(result, expected)
+            self.assertEqual(
+                client.search_many_planned.call_args.kwargs["base_filters"],
+                {"player_chara_id": 11, "player_chara_id_2": 22},
             )
 
     def test_fixed_gp_cannot_match_target_parent_character(self) -> None:

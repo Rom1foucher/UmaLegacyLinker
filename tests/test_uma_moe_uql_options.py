@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from uma_moe import (
+    UmaMoeError,
     UmaMoeApiClient,
     build_lineage_factor_api_filters,
     generate_auto_uql,
@@ -51,6 +54,143 @@ class UmaMoeUqlOptionTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_search_uses_explicit_quality_sort_and_allows_override(self) -> None:
+        payload = {
+            "items": [
+                {"inheritance": {"inheritance_id": 1, "factor_ids": [101]}}
+            ]
+        }
+        client = UmaMoeApiClient("https://example.invalid/api")
+        with patch.object(client, "_request_json", return_value=payload) as request:
+            client.search()
+        query = request.call_args.kwargs["query"]
+        self.assertEqual(query["sort_by"], "white_count")
+        self.assertEqual(query["sort_order"], "desc")
+
+        with patch.object(client, "_request_json", return_value=payload) as request:
+            client.search(filters={"sort_by": "affinity_score", "sort_order": "asc"})
+        query = request.call_args.kwargs["query"]
+        self.assertEqual(query["sort_by"], "affinity_score")
+        self.assertEqual(query["sort_order"], "asc")
+
+    def test_search_distinguishes_empty_and_malformed_responses(self) -> None:
+        client = UmaMoeApiClient("https://example.invalid/api")
+        with patch.object(
+            client,
+            "_request_json",
+            return_value={"items": [], "total": "0"},
+        ):
+            payload, operation = client.search()
+        self.assertEqual(payload["items"], [])
+        self.assertTrue(operation["empty_result"])
+
+        with patch.object(client, "_request_json", return_value={"status": "ok"}):
+            with self.assertRaisesRegex(UmaMoeError, "sans records"):
+                client.search()
+
+    def test_transient_http_failure_retries_with_bounded_retry_after(self) -> None:
+        logs: list[str] = []
+        client = UmaMoeApiClient(
+            "https://example.invalid/api",
+            logger=logs.append,
+            max_retries=1,
+            retry_backoff=0.25,
+            max_retry_delay=1.5,
+        )
+        errors = [
+            urllib.error.HTTPError(
+                "https://example.invalid/api/v3/search",
+                503,
+                "unavailable",
+                {"Retry-After": "30"},
+                io.BytesIO(b"down"),
+            ),
+            urllib.error.HTTPError(
+                "https://example.invalid/api/v3/search",
+                503,
+                "unavailable",
+                {},
+                io.BytesIO(b"down"),
+            ),
+        ]
+        with (
+            patch("uma_moe.urllib.request.urlopen", side_effect=errors) as request,
+            patch("uma_moe.time.sleep") as sleep,
+        ):
+            with self.assertRaises(UmaMoeError):
+                client._request_document("https://example.invalid/api/v3/search")
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(1.5)
+        self.assertTrue(any("HTTP 503" in message for message in logs))
+
+    def test_documented_parent_filters_use_only_fixed_parameter_names(self) -> None:
+        client = UmaMoeApiClient("https://example.invalid/api")
+        spec = {
+            "paths": {
+                "/api/v3/search": {
+                    "get": {
+                        "parameters": [
+                            {"name": "main_parent_id"},
+                            {"name": "exclude_main_parent_id"},
+                            {
+                                "name": "parent_costume_whitelist_guess",
+                                "description": "Allowed parent costume cards",
+                            },
+                        ]
+                    }
+                }
+            }
+        }
+        with patch.object(client, "discover_openapi", return_value=(spec, "spec")):
+            keys = client.documented_parent_card_filter_keys()
+        self.assertEqual(
+            keys,
+            {
+                "allowed": "main_parent_id",
+                "excluded": "exclude_main_parent_id",
+            },
+        )
+
+    def test_api_soft_white_filter_is_capped_at_top_sixteen(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            weights = root / "weights.json"
+            catalog = root / "catalog.json"
+            skills = {
+                f"skill_{index}": {
+                    "spark_name": f"Skill {index}",
+                    "weight_matrix": {
+                        "turf": {
+                            "mile": {
+                                "late_surger": {"weight": 1.0 - index / 100.0}
+                            }
+                        }
+                    },
+                }
+                for index in range(24)
+            }
+            weights.write_text(json.dumps({"skills": skills}), encoding="utf-8")
+            catalog.write_text(json.dumps({"skills": []}), encoding="utf-8")
+            captured: list[list[str]] = []
+
+            def resolve(_master: object, names: list[str]) -> list[int]:
+                captured.append(list(names))
+                return list(range(len(names)))
+
+            with patch("uma_moe.resolve_white_factor_group_ids", side_effect=resolve):
+                uql, metadata = generate_auto_uql(
+                    weights,
+                    catalog,
+                    surface="turf",
+                    distance="mile",
+                    style="late_surger",
+                    master_path="master.mdb",
+                )
+
+        self.assertEqual(len(captured[0]), 16)
+        self.assertEqual(len(metadata["search_filters"]["optional_main_white_factors"]), 16)
+        self.assertIn("Skill 23", uql)
 
     def test_quality_thresholds_use_documented_api_parameters(self) -> None:
         _uql, metadata = self._generate(

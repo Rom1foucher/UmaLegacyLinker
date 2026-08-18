@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - handled with a clear runtime error
     yaml = None
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -61,6 +62,7 @@ from parent_optimizer import (
 DEFAULT_API_BASE = "https://uma.moe/api"
 DEFAULT_DOCS_URL = "https://uma.moe/api/docs"
 MAX_FETCH_CANDIDATES = 2000
+API_OPTIONAL_WHITE_LIMIT = 16
 
 
 _FUTURE_GP_COMPONENT_KEYS = (
@@ -664,11 +666,19 @@ class UmaMoeApiClient:
         timeout: float = 25.0,
         user_agent: str = "UmaLegacyLinker/23 (+https://uma.moe/api/docs)",
         token: str | None = None,
+        logger: Callable[[str], None] | None = None,
+        max_retries: int = 3,
+        retry_backoff: float = 0.5,
+        max_retry_delay: float = 4.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.user_agent = user_agent
         self.token = token.strip() if token else None
+        self.logger = logger or (lambda _message: None)
+        self.max_retries = max(0, int(max_retries))
+        self.retry_backoff = max(0.0, float(retry_backoff))
+        self.max_retry_delay = max(0.0, float(max_retry_delay))
         parsed = urllib.parse.urlparse(self.base_url)
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         self._spec: dict[str, Any] | None = None
@@ -715,51 +725,90 @@ class UmaMoeApiClient:
         data = None
         if body is not None:
             data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            url,
-            data=data,
-            method=method.upper(),
-            headers=self._headers(json_body=body is not None),
-        )
         context = ssl.create_default_context()
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout, context=context) as response:
-                raw = response.read()
-                content_type = response.headers.get("content-type", "").lower()
-                decoded = raw.decode("utf-8-sig")
-                stripped = decoded.lstrip()
-                if "json" in content_type or stripped.startswith(("{", "[")):
-                    return json.loads(decoded)
-                if (
-                    "yaml" in content_type
-                    or "yml" in content_type
-                    or url.lower().endswith((".yaml", ".yml"))
-                    or stripped.startswith(("openapi:", "swagger:"))
-                ):
-                    if yaml is None:
-                        raise UmaMoeError(
-                            "Le document OpenAPI est en YAML mais PyYAML n'est pas installé. "
-                            "Réinstalle l'application complète ou lance: pip install pyyaml"
-                        )
-                    return yaml.safe_load(decoded)
-                raise UmaMoeError(
-                    f"Réponse ni JSON ni YAML depuis {url} ({content_type or 'type inconnu'})."
-                )
-        except urllib.error.HTTPError as exc:
-            detail = ""
+        for attempt in range(self.max_retries + 1):
+            request = urllib.request.Request(
+                url,
+                data=data,
+                method=method.upper(),
+                headers=self._headers(json_body=body is not None),
+            )
             try:
-                detail = exc.read(1200).decode("utf-8", errors="replace")
-            except Exception:
-                pass
-            raise UmaMoeError(f"HTTP {exc.code} sur {url}: {detail[:500]}") from exc
-        except urllib.error.URLError as exc:
-            raise UmaMoeError(f"Connexion impossible à {url}: {exc.reason}") from exc
-        except (TimeoutError, json.JSONDecodeError) as exc:
-            raise UmaMoeError(f"Réponse API invalide depuis {url}: {exc}") from exc
-        except Exception as exc:
-            if isinstance(exc, UmaMoeError):
-                raise
-            raise UmaMoeError(f"Document API invalide depuis {url}: {exc}") from exc
+                with urllib.request.urlopen(request, timeout=self.timeout, context=context) as response:
+                    raw = response.read()
+                    content_type = response.headers.get("content-type", "").lower()
+                    decoded = raw.decode("utf-8-sig")
+                    stripped = decoded.lstrip()
+                    if "json" in content_type or stripped.startswith(("{", "[")):
+                        return json.loads(decoded)
+                    if (
+                        "yaml" in content_type
+                        or "yml" in content_type
+                        or url.lower().endswith((".yaml", ".yml"))
+                        or stripped.startswith(("openapi:", "swagger:"))
+                    ):
+                        if yaml is None:
+                            raise UmaMoeError(
+                                "Le document OpenAPI est en YAML mais PyYAML n'est pas installé. "
+                                "Réinstalle l'application complète ou lance: pip install pyyaml"
+                            )
+                        return yaml.safe_load(decoded)
+                    raise UmaMoeError(
+                        f"Réponse ni JSON ni YAML depuis {url} ({content_type or 'type inconnu'})."
+                    )
+            except urllib.error.HTTPError as exc:
+                retryable = exc.code == 429 or 500 <= exc.code <= 599
+                if retryable and attempt < self.max_retries:
+                    delay = self._retry_delay(attempt, exc.headers.get("Retry-After"))
+                    self.logger(
+                        f"uma.moe : HTTP {exc.code}, nouvel essai "
+                        f"{attempt + 2}/{self.max_retries + 1} dans {delay:.1f} s…"
+                    )
+                    time.sleep(delay)
+                    continue
+                detail = ""
+                try:
+                    detail = exc.read(1200).decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+                raise UmaMoeError(f"HTTP {exc.code} sur {url}: {detail[:500]}") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                if attempt < self.max_retries:
+                    delay = self._retry_delay(attempt)
+                    self.logger(
+                        "uma.moe : connexion interrompue, nouvel essai "
+                        f"{attempt + 2}/{self.max_retries + 1} dans {delay:.1f} s…"
+                    )
+                    time.sleep(delay)
+                    continue
+                detail = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+                raise UmaMoeError(f"Connexion impossible à {url}: {detail}") from exc
+            except json.JSONDecodeError as exc:
+                raise UmaMoeError(f"Réponse API invalide depuis {url}: {exc}") from exc
+            except Exception as exc:
+                if isinstance(exc, UmaMoeError):
+                    raise
+                raise UmaMoeError(f"Document API invalide depuis {url}: {exc}") from exc
+        raise UmaMoeError(f"Connexion impossible à {url}.")
+
+    def _retry_delay(self, attempt: int, retry_after: str | None = None) -> float:
+        """Return a bounded delay for a transient API failure."""
+        delay = self.retry_backoff * (2 ** max(0, int(attempt)))
+        if retry_after:
+            try:
+                delay = max(delay, float(retry_after.strip()))
+            except (TypeError, ValueError):
+                try:
+                    retry_at = parsedate_to_datetime(retry_after)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=timezone.utc)
+                    delay = max(
+                        delay,
+                        (retry_at - datetime.now(timezone.utc)).total_seconds(),
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        return min(delay, self.max_retry_delay)
 
     def _request_json(
         self,
@@ -997,6 +1046,37 @@ class UmaMoeApiClient:
 
         return walk(payload)
 
+    @staticmethod
+    def _is_well_formed_empty_search_payload(payload: Any) -> bool:
+        """Recognise a valid search response containing no inheritance rows."""
+        if isinstance(payload, list):
+            return not payload
+        if not isinstance(payload, dict):
+            return False
+        queue = [payload]
+        seen = 0
+        candidate_keys = {
+            "items",
+            "results",
+            "records",
+            "rows",
+            "parents",
+            "inheritances",
+        }
+        while queue and seen < 100:
+            current = queue.pop(0)
+            seen += 1
+            for key, value in current.items():
+                normalized = str(key).lower()
+                if normalized in candidate_keys and isinstance(value, list):
+                    return not value
+                if normalized == "data":
+                    if isinstance(value, list):
+                        return not value
+                    if isinstance(value, dict):
+                        queue.append(value)
+        return False
+
     def search(
         self, *, filters: dict[str, Any] | None = None, limit: int = 100, page: int = 0
     ) -> tuple[Any, dict[str, Any]]:
@@ -1019,7 +1099,10 @@ class UmaMoeApiClient:
         documented parameter names (e.g. ``main_parent_pink_sparks``), built from
         game ``factor_id`` values resolved against ``master.mdb`` by the caller.
         Array-valued parameters must be a single comma-joined value (confirmed
-        empirically; repeated keys silently return zero results).
+        empirically; repeated keys silently return zero results). Sorting is
+        explicit: the server default in ascending order returned the low-quality
+        end of the pool (measured median 15.48 versus 53.14 with the profile-white
+        retrieval strategy).
         """
         limit = max(1, min(int(limit), 100))
         page = max(0, int(page))
@@ -1028,7 +1111,8 @@ class UmaMoeApiClient:
             "search_type": "inheritance",
             "page": page,
             "limit": limit,
-            "sort_order": "asc",
+            "sort_by": "white_count",
+            "sort_order": "desc",
         }
         for key, value in (filters or {}).items():
             if value is not None:
@@ -1040,7 +1124,8 @@ class UmaMoeApiClient:
                 f"Échec de GET /api/v3/search : {exc}\n"
                 "Utilise le bouton d'import JSON si le problème persiste."
             ) from exc
-        if not self._contains_candidate_records(payload):
+        empty_result = self._is_well_formed_empty_search_payload(payload)
+        if not empty_result and not self._contains_candidate_records(payload):
             raise UmaMoeError(
                 f"Réponse /api/v3/search sans records d'héritage détectables (query={sorted(query)})."
             )
@@ -1053,15 +1138,17 @@ class UmaMoeApiClient:
             "body_keys": None,
             "page": page,
             "limit": limit,
+            "empty_result": empty_result,
         }
 
 
     def documented_parent_card_filter_keys(self) -> dict[str, str]:
-        """Return exact /api/v3/search costume filter parameter names from OpenAPI.
+        """Return supported main-parent identity filters from OpenAPI.
 
-        The uma.moe API has changed parameter naming over time. We therefore only
-        send costume filters that are explicitly present in the live OpenAPI
-        document, while retaining local filtering as the correctness fallback.
+        The endpoint documents character IDs, not costume-card IDs. Callers must
+        resolve that ID space before using these fixed parameter names. We still
+        check the live specification before sending either filter and retain local
+        costume filtering as the correctness fallback.
         """
         try:
             spec, _ = self.discover_openapi()
@@ -1075,23 +1162,17 @@ class UmaMoeApiClient:
                 params.extend(item for item in source if isinstance(item, dict))
             elif isinstance(source, dict):
                 params.append(source)
-        names: dict[str, str] = {}
+        documented_names: set[str] = set()
         for raw in params:
             param = self._resolve_ref(spec, raw) or {}
             name = str(param.get("name") or "")
-            lname = name.lower()
-            description = str(param.get("description") or "").lower()
-            haystack = f"{lname.replace('_', ' ')} {description}"
-            if not name or "parent" not in haystack:
-                continue
-            if not any(token in haystack for token in ("card", "costume", "character card", "main parent")):
-                continue
-            is_exclusion = any(token in haystack for token in ("exclude", "excluded", "blacklist", "deny"))
-            is_inclusion = any(token in haystack for token in ("include", "included", "whitelist", "allow", "main_parent"))
-            if is_exclusion and "excluded" not in names:
-                names["excluded"] = name
-            elif is_inclusion and "allowed" not in names:
-                names["allowed"] = name
+            if name:
+                documented_names.add(name)
+        names: dict[str, str] = {}
+        if "main_parent_id" in documented_names:
+            names["allowed"] = "main_parent_id"
+        if "exclude_main_parent_id" in documented_names:
+            names["excluded"] = "exclude_main_parent_id"
         return names
 
     @staticmethod
@@ -1269,6 +1350,7 @@ class UmaMoeApiClient:
                     "filters": filters,
                     "received": 0,
                     "unique_added": 0,
+                    "outcome": "error",
                     "error": str(exc),
                 })
                 logger(f"uma.moe : cohorte {name} indisponible ({exc}); budget rendu à la recherche large.")
@@ -1293,8 +1375,14 @@ class UmaMoeApiClient:
                 "filters": filters,
                 "received": len(items),
                 "unique_added": added,
+                "outcome": "empty" if not items else "success",
                 "operation": operation,
             })
+            if not items:
+                logger(
+                    f"uma.moe : cohorte {name} sans résultat; "
+                    "budget rendu à la recherche large."
+                )
 
         allocated = 0
         for cohort in targeted:
@@ -2018,9 +2106,17 @@ def generate_auto_uql(
     main_parent_pink_sparks = (
         resolve_main_pink_factor_ids(master_path, hard_filters) if master_path and hard_filters else []
     )
+    # Only the API soft filter is capped. The displayed/audited UQL keeps the
+    # broader list requested by ``max_optional_skills``. Live measurements found
+    # the best global-top-100 contribution at 16 whites (53%, versus 41% at 8 and
+    # 38% at 24).
+    api_optional = optional[:API_OPTIONAL_WHITE_LIMIT]
     optional_main_white_factors = (
-        resolve_white_factor_group_ids(master_path, [str(row["name"]) for row in optional])
-        if master_path and use_optional_whites and optional
+        resolve_white_factor_group_ids(
+            master_path,
+            [str(row["name"]) for row in api_optional],
+        )
+        if master_path and use_optional_whites and api_optional
         else []
     )
     optional_white_sparks = (

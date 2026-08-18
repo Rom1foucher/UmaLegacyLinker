@@ -70,6 +70,11 @@ class ReleaseConsistencyTests(unittest.TestCase):
         self.assertNotIn("QT_UI_VERSION", package)
         self.assertNotIn("Tkinter reste disponible", home)
 
+    def test_run_bat_launches_without_a_lingering_console(self) -> None:
+        script = (ROOT / "run.bat").read_text(encoding="utf-8")
+        self.assertIn("where pyw", script)
+        self.assertIn('start "" pyw qt_app.py', script)
+
     def test_release_docs_and_dependencies_are_qt_only(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         spec = (ROOT / "UmaLegacyLinkerQt.spec").read_text(encoding="utf-8")

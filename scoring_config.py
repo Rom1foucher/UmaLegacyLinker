@@ -354,7 +354,7 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
             "affinity", "g1_potential", "blue", "pink", "white_skill", "white_generation", "unique"
         },
     }
-    mode_weights = _require_dict(config, ("mode_weights",))
+    _require_dict(config, ("mode_weights",))
     for mode, expected_keys in required_mode_keys.items():
         weights = _require_dict(config, ("mode_weights", mode))
         missing = sorted(expected_keys - set(weights))

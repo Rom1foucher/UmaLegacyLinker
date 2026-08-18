@@ -6,7 +6,6 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QPushButton,

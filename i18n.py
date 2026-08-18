@@ -522,6 +522,10 @@ EXACT_EN.update({
 # Longer fragments must be processed first. These cover formatted status lines,
 # logs and detailed result panels whose variable values are inserted at runtime.
 FRAGMENTS_EN: dict[str, str] = {
+    "connexion interrompue, nouvel essai ": "connection interrupted, retry ",
+    "nouvel essai ": "retry ",
+    " dans ": " in ",
+    " sans résultat; budget rendu à la ": " with no result; budget handed back to the ",
     "Export Lineage Planner : ": "Lineage Planner export: ",
     "Filtres lignée appliqués par l’API avant pagination puis revalidés localement : ": "Lineage filters applied by the API before pagination and then validated again locally: ",
     "Garde-fou de rappel : le filtre dur a réduit le pool ; ": "Recall guard: the hard filter reduced the pool; ",
@@ -1308,6 +1312,10 @@ EXACT_EN.update({
     "Import Umalator terminé.": "Umalator import complete.",
     "Le classement doit contenir un objet JSON.": "The ranking must contain a JSON object.",
     "Type de recherche uma.moe invalide.": "Invalid uma.moe search type.",
+    "Impossible de résoudre l’Ace dans le master.mdb pour le contexte d’affinité uma.moe.": "Unable to resolve the Ace in master.mdb for the uma.moe affinity context.",
+    "Impossible de résoudre le parent cible dans le master.mdb pour le contexte d’affinité uma.moe.": "Unable to resolve the target parent in master.mdb for the uma.moe affinity context.",
+    "Filtres costume incomplets dans le master.mdb : contrôle local uniquement, aucun filtre partiel envoyé.": "Incomplete costume filters in master.mdb: local-only control, no partial filter sent.",
+    "Certaines exclusions visent un costume et non le personnage entier : elles restent contrôlées localement pour préserver les autres costumes.": "Some exclusions target a costume rather than the whole character: they stay controlled locally to preserve the other costumes.",
 })
 
 SCORING_LABELS_EN: dict[str, str] = {

@@ -1316,6 +1316,8 @@ EXACT_EN.update({
     "Impossible de résoudre le parent cible dans le master.mdb pour le contexte d’affinité uma.moe.": "Unable to resolve the target parent in master.mdb for the uma.moe affinity context.",
     "Filtres costume incomplets dans le master.mdb : contrôle local uniquement, aucun filtre partiel envoyé.": "Incomplete costume filters in master.mdb: local-only control, no partial filter sent.",
     "Certaines exclusions visent un costume et non le personnage entier : elles restent contrôlées localement pour préserver les autres costumes.": "Some exclusions target a costume rather than the whole character: they stay controlled locally to preserve the other costumes.",
+    "Branche parent": "Parent branch",
+    "Paire de parents finale": "Final parent pair",
 })
 
 SCORING_LABELS_EN: dict[str, str] = {
@@ -1352,8 +1354,6 @@ SCORING_LABELS_EN: dict[str, str] = {
     "race_base_proc_rates": "Race Spark proc rates by star level",
     "system": "Affinity system",
     "mode_weights": "Component weights",
-    "parent_branch": "Parent branch",
-    "parent_pair": "Final parent pair",
     "parent_final": "Legacy shared parent score",
     "future_grandparent": "Future grandparent",
     "future_grandparent_heuristics": "Future grandparent — simple factor model",
@@ -1544,8 +1544,6 @@ SCORING_LABELS_FR: dict[str, str] = {
     "race_base_proc_rates": "Taux de proc des Race Sparks par étoiles",
     "system": "Système d’affinité",
     "mode_weights": "Poids des composantes",
-    "parent_branch": "Branche parent",
-    "parent_pair": "Paire de parents finale",
     "parent_final": "Ancien score parent partagé",
     "future_grandparent": "Futur grand-parent",
     "future_grandparent_heuristics": "Futur grand-parent — modèle simple des factors",

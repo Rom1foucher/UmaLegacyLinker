@@ -32,7 +32,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from i18n import scoring_label
+from i18n import scoring_label, translate_text
+
+# `scoring_label` is a flat leaf-name lookup shared with course_conditions,
+# which reuses the same "parent_branch" / "parent_pair" leaf names for its own
+# per-mode overrides. Give the mode_weights breadcrumb, editor title and
+# distribution list their own more specific French source wording here
+# instead of changing the shared dict, so course_conditions keeps its
+# current generic labels. Routed through translate_text like every other
+# source string, so the EN side stays covered by tests/check_i18n.py.
+_MODE_WEIGHTS_LABEL_OVERRIDES = {
+    "parent_branch": "Branche parent",
+    "parent_pair": "Paire de parents finale",
+}
+
+
+def _mode_weights_aware_label(path: tuple[str, ...], key: str, language: str) -> str:
+    if path and path[0] == "mode_weights":
+        override = _MODE_WEIGHTS_LABEL_OVERRIDES.get(key)
+        if override is not None:
+            return str(translate_text(override, language))
+    return scoring_label(key, language)
 from scoring_config import (
     ScoringConfigError,
     build_overrides,
@@ -522,7 +542,7 @@ class WeightsPage(QWidget):
                 default_value = get_path_value(self.default, path)
             except KeyError:
                 default_value = None
-            labels = [scoring_label(key, self.context.language) for key in path]
+            labels = [_mode_weights_aware_label(path, key, self.context.language) for key in path]
             help_info = describe_weight(path, value, self.context.language)
             help_info = WeightHelp(
                 help_info.summary,
@@ -917,7 +937,7 @@ class WeightsPage(QWidget):
         help_info = row.get("help") or describe_weight(path, value, self.context.language)
         self._active_help = help_info
         self.editor_breadcrumb.setText(str(row.get("breadcrumb") or ""))
-        self.editor_title.setText(scoring_label(path[-1], self.context.language))
+        self.editor_title.setText(_mode_weights_aware_label(path, path[-1], self.context.language))
         self.scope_badge.setText(help_info.scope)
         self.type_badge.setVisible(True)
         self.state_badge.setVisible(True)
@@ -1337,7 +1357,7 @@ class WeightsPage(QWidget):
             self.current, self._selected_path, selected_value
         )
         items = [
-            (scoring_label(path[-1], self.context.language), share)
+            (_mode_weights_aware_label(path, path[-1], self.context.language), share)
             for path, share in distribution
         ]
         selected_index = next(

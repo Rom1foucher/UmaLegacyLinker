@@ -26,6 +26,7 @@ from ui_qt.core import (
     run_transfer_analysis,
 )
 from ui_qt.lineage_nodes import build_pair_lineage_nodes
+from ui_qt.pages_weights import _mode_weights_aware_label
 from ui_qt.presentation import (
     online_detail_html,
     result_detail_html,
@@ -268,6 +269,30 @@ class QtUiCoreTests(unittest.TestCase):
                     if "_" in key and scoring_label(key, language) == key:
                         missing.append(f"{language}: {key}")
         self.assertEqual(missing, [])
+
+    def test_mode_weights_parent_labels_stay_distinct_from_course_conditions(self) -> None:
+        # SCORING_LABELS_EN/FR only carry the generic "Parent pair" / "Parent
+        # branch" wording shared with course_conditions; the weight-editor
+        # rows for mode_weights must still read as the final-pair-specific
+        # variant instead of silently falling back to the generic one.
+        for language, branch, pair in (
+            ("fr", "Branche parent", "Paire de parents finale"),
+            ("en", "Parent branch", "Final parent pair"),
+        ):
+            with self.subTest(language=language):
+                self.assertEqual(
+                    _mode_weights_aware_label(("mode_weights", "parent_branch"), "parent_branch", language),
+                    branch,
+                )
+                self.assertEqual(
+                    _mode_weights_aware_label(("mode_weights", "parent_pair"), "parent_pair", language),
+                    pair,
+                )
+                # Any other root keeps today's generic course_conditions wording.
+                self.assertEqual(
+                    _mode_weights_aware_label(("course_conditions", "modes", "parent_pair"), "parent_pair", language),
+                    scoring_label("parent_pair", language),
+                )
 
     def test_every_visible_weight_has_bilingual_contextual_help(self) -> None:
         config = read_json_object(PROJECT_DIR / "default_parent_scoring.json")

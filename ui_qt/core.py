@@ -44,7 +44,7 @@ from uma_moe import (
 
 
 APP_NAME = "Uma Legacy Linker"
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.8.0"
 
 LogCallback = Callable[[str], None]
 ProgressCallback = Callable[[int, str], None]

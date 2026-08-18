@@ -20,8 +20,8 @@
 7. Create and push the matching tag:
 
    ```powershell
-   git tag v1.7.2
-   git push origin v1.7.2
+   git tag v1.8.0
+   git push origin v1.8.0
    ```
 
 The `Windows release` workflow runs the tests and full visual layout audit on Windows, builds the packaged bundle, computes its SHA-256 checksum and attaches both files to the GitHub release. The visual QA report is uploaded even when the audit fails.

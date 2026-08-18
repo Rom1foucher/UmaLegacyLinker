@@ -4,6 +4,10 @@ This project uses feature-level semantic versioning. Small internal iterations a
 
 ## Unreleased
 
+## 1.8.0 - Search workspace redesign and uma.moe retrieval overhaul
+
+- The desktop launcher (`run.bat`) no longer leaves a blank console window open behind the app for the whole session; it now starts through the windowed Python interpreter when one is available.
+- The weight editor's mode_weights rows for the final-pair score keep their own wording instead of silently falling back to the shorter label `course_conditions` overrides use for the same field names.
 - Reworked uma.moe retrieval around the measured `/api/v3/search` behaviour: requests now sort by White count descending, send Ace/target-parent affinity context and cap the API soft-white set to the 16 strongest profile skills. Valid empty cohorts no longer masquerade as API failures, main-parent filters use the documented fixed names after complete card-to-character resolution, and transient 429/5xx/network failures retry with bounded exponential backoff and visible diagnostics.
 - Result tabs now report whether they still match your settings. Each family digests exactly the inputs it consumes, so a grandparent option no longer marks a local ranking out of date, and a result read from disk stays labelled as loaded rather than being guessed fresh or stale. The active family also states it in words beside the result.
 - The detail browser can be hidden outright instead of squeezed below the width its diagnostics were built for, handing the full width back to the table on narrow workspaces.

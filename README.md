@@ -319,8 +319,8 @@ The uma.moe API key can be remembered from the application. On Windows it is enc
 The `Windows release` GitHub Actions workflow builds the same package on every `v*` tag and attaches the archive and checksum to the corresponding GitHub release:
 
 ```powershell
-git tag v1.7.2
-git push origin v1.7.2
+git tag v1.8.0
+git push origin v1.8.0
 ```
 
 The workflow can also be started manually to obtain a downloadable build artifact without creating a release.

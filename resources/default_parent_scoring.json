@@ -378,8 +378,8 @@
     }
   },
   "transfer_helper": {
-    "description": "Collection-portfolio cleanup analysis. Fast mode covers a permanent matrix of useful surface/distance/style archetypes with naturally viable Aces, then retains the smallest same-costume set that stays within the configured score regret and collectively preserves strategic inheritance assets. Upcoming CM profiles are optional extra evidence, never the long-term safety baseline.",
-    "analysis_mode": "fast",
+    "description": "Collection-portfolio cleanup analysis. Exhaustive mode evaluates all Ace variants and styles by default, then minimizes the retained same-costume set subject to matched-Ace score regret and inheritance-asset coverage. Bounded exact search reports whether cardinality is proven optimal. Protected copies remain mandatory but receive a separate redundancy diagnostic. Upcoming CM profiles use the Global calendar and never replace the permanent safety baseline.",
+    "analysis_mode": "exhaustive",
     "competitive_score_floor": 67.5,
     "competitive_utility_floor": 0.78,
     "portfolio_regret_tolerance": 2.5,
@@ -390,7 +390,8 @@
     "upcoming_cm_limit": 5,
     "include_team_trials": false,
     "include_generic_profiles": false,
-    "dominance_tolerance": 0.75,
+    "dominance_tolerance": 0.0,
+    "portfolio_node_budget": 50000,
     "dominance_mean_margin": 1.0,
     "minimum_competitive_contexts": 3,
     "minimum_distinct_profiles": 2,
@@ -466,7 +467,27 @@
           "review_min_total_stars": 2,
           "strong_min_total_stars": 3
         }
-      ]
+      ],
+      "build_defining_skill_keys": [
+        "straight_descent"
+      ],
+      "preserve_local_g1_pair_support": false
+    },
+    "branch_weights": {
+      "distance_s": 0.29,
+      "surface_aptitude": 0.05,
+      "pink_other": 0.02,
+      "white_skill": 0.35,
+      "race_scenario": 0.04,
+      "blue": 0.2,
+      "unique": 0.05
+    },
+    "grandparent_weights": {
+      "g1_potential": 0.17,
+      "blue": 0.25,
+      "pink": 0.35,
+      "white_skill": 0.2,
+      "unique": 0.03
     }
   },
   "aptitude_inheritance": {

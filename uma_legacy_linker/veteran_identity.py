@@ -82,3 +82,26 @@ def canonical_veteran_labels(
             for index, total in zip(indexes, blue_totals):
                 resolved[index] = f"{label} · {total}★ {blue_label}"
     return resolved
+
+
+def game_rank_label(value: object) -> str:
+    """Decode the exported game rank; never invent a missing score."""
+    try:
+        rank = int(value)
+    except (TypeError, ValueError):
+        return '—'
+    labels = ['G', 'G+', 'F', 'F+', 'E', 'E+', 'D', 'D+', 'C', 'C+',
+              'B', 'B+', 'A', 'A+', 'S', 'S+', 'SS', 'SS+']
+    if 1 <= rank <= len(labels):
+        return labels[rank - 1]
+    index = rank - 19
+    families = ['UG', 'UF', 'UE', 'UD', 'UC', 'UB', 'UA', 'US']
+    if 0 <= index < 10 * len(families):
+        family, suffix = divmod(index, 10)
+        return families[family] + (str(suffix) if suffix else '')
+    return '—'
+
+
+def game_veteran_label(identity: Mapping[str, Any] | None) -> str:
+    identity = identity or {}
+    return f"{veteran_name(identity)} · {game_rank_label(identity.get('rank'))} · {format_rank_score(identity.get('rank_score'))}"

@@ -28,9 +28,9 @@ def _label(key: str, language: str) -> str:
 def _scope(path: Sequence[str], language: str) -> str:
     if "parent_pair" in path:
         return _pick(language, "Paire finale", "Final pair")
-    if "parent_branch" in path:
+    if "branch_weights" in path or "parent_branch" in path:
         return _pick(language, "Branche parent", "Parent branch")
-    if "future_grandparent" in path:
+    if "grandparent_weights" in path or "future_grandparent" in path:
         return _pick(language, "Futur grand-parent", "Future grandparent")
     if path and path[0] in {"uma_moe_pair", "uma_moe_parent_search"}:
         return "uma.moe"
@@ -303,11 +303,29 @@ _CONTEXTUAL_OPPONENT_HELP: dict[str, tuple[str, str, str, str]] = {
 
 
 _TRANSFER_HELP: dict[str, tuple[str, str, str, str]] = {
+    "build_defining_skill_keys": (
+        "Liste explicite des skills rares autorisées à imposer une conservation, sous réserve de leur utilité contextuelle.",
+        "Explicit list of rare skills allowed to impose retention, subject to contextual utility.",
+        "Ajouter une skill peut garder davantage de copies. Les Whites ordinaires continuent de compter dans le score sans créer cette obligation.",
+        "Adding a skill may retain more copies. Ordinary Whites still count in the score without creating this obligation.",
+    ),
+    "preserve_local_g1_pair_support": (
+        "Option avancée désactivée : les paires locales ne pilotent pas la conservation par défaut.",
+        "Disabled advanced option: local pairs do not drive default retention.",
+        "L’activer garde les meilleurs recouvrements G1 avec chaque autre local et peut augmenter fortement le portefeuille.",
+        "Enabling it preserves best G1 overlaps with every other local and may significantly enlarge the portfolio.",
+    ),
+    "portfolio_node_budget": (
+        "Effort maximal pour minimiser le nombre de copies conservées.",
+        "Maximum search effort to minimize the retained copy count.",
+        "Une limite atteinte conserve une solution valide, sans preuve de minimum ; les exigences ne sont jamais relâchées.",
+        "Reaching the limit retains a feasible solution without proving minimality; requirements are never relaxed.",
+    ),
     "analysis_mode": (
         "Le mode rapide utilise le socle permanent et filtre les Aces naturellement viables ; l’audit exhaustif réactive tous les styles et toutes les variantes d’Ace.",
         "Fast mode uses the permanent baseline and naturally viable Aces; exhaustive audit restores every style and Ace variant.",
-        "Le mode exhaustif sert de contrôle ponctuel, peut prendre plusieurs minutes et autorise le verdict strictement sûr.",
-        "Exhaustive mode is intended as an occasional control, may take several minutes, and enables the strictly safe verdict.",
+        "Le mode exhaustif est recommandé par défaut, peut prendre plusieurs minutes et autorise le verdict strictement sûr.",
+        "Exhaustive mode is recommended by default, may take several minutes, and enables the strictly safe verdict.",
     ),
     "portfolio_regret_tolerance": (
         "Écart maximal accepté entre la meilleure copie du costume et le portefeuille conservé dans chaque niche compétitive.",
@@ -348,8 +366,8 @@ _TRANSFER_HELP: dict[str, tuple[str, str, str, str]] = {
     "competitive_score_floor": (
         "Score absolu à partir duquel un rôle commence à être considéré comme compétitif.",
         "Absolute score at which a role starts to count as competitive.",
-        "L’augmenter ignore davantage de niches faibles et rend le verdict plus conservateur.",
-        "Increasing it ignores more weak niches and makes verdicts more conservative.",
+        "L’augmenter ignore davantage de niches faibles et peut donc réduire le nombre de copies conservées.",
+        "Increasing it ignores more weak niches and can therefore reduce the retained copy count.",
     ),
     "dominance_tolerance": (
         "Petit écart autorisé lorsqu’une copie est comparée à son remplaçant dans chaque niche viable.",
@@ -530,7 +548,7 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
     low, high = _scale_labels(path, value, language)
     advanced = isinstance(value, (list, dict))
 
-    if root == "mode_weights" and len(path) >= 3:
+    if (root == "mode_weights" or root == "transfer_helper" and path[1] in {"branch_weights", "grandparent_weights"}) and len(path) >= 3:
         component = path[-1]
         summary = _pick(
             language,

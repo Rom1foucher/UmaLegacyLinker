@@ -472,86 +472,90 @@ Generic grandparent search preselects individual candidates with the future-GP c
 
 UQL text is an audit/copy representation. The live `/api/v3/search` request uses structured API parameters, not free-form UQL.
 
-## 12. Transfer Helper
+## 12. Transfer Helper prototype
 
-The Transfer Helper is a conservative collection analysis. It never performs an in-game transfer.
+This prototype analyzes **individual alternative branches**. It never transfers
+an Uma, and never publishes a machine-actionable transfer authorization.
+`transfer_eligible=false` on every prototype record; `model_transfer_candidate`
+records the pre-review model result. Refarming effort and current racing/team
+use remain unknown and require manual review.
 
-### 12.1 Evaluation scope
+### 12.1 Evaluation and dates
 
-Fast mode evaluates seven permanent surface/distance archetypes:
+Exhaustive mode evaluates seven permanent surface/distance archetypes, all four
+styles, and all viable Ace variants (28 permanent contexts). Additional CM
+contexts use the current UTC date and the Global MDB's `champions_schedule`.
+When available, `champions_round_schedule` final team registration (round 3,
+detail 1) is the preparation cutoff. League selection is not the preparation
+cutoff. Without round data, the inclusive event end is the fallback. Later
+numbered presets have explicitly unknown Global dates; JP dates are ignored.
+The report records calendar provenance and the next transition. Open reports
+become stale on input changes, calendar day changes or cutoff expiry.
 
-- Turf Sprint, Mile, Medium, and Long;
-- Dirt Sprint, Mile, and Medium.
+A Parent is evaluated with its own factors and two frozen GP snapshots.
+A future GP uses **its own factors and G1 wins**. Future compatibility is unknown:
+its affinity has zero weight. Historical White-generation support also has zero
+weight and remains a farming-history diagnostic. This is not an exact simulation
+of the future production run or a refarming-cost estimate.
 
-Each is evaluated for Front Runner, Pace Chaser, and Late Surger as the Backline representative: 21 permanent contexts. Only Ace variants naturally at least B in surface, distance, and style are considered. Up to five upcoming Champion Meetings are enabled by default as additional evidence. Team Trials and the complete generic matrix are optional.
+The Transfer Helper has dedicated weights, isolated from other optimizers:
 
-Exhaustive mode uses all four styles and removes the natural-B Ace filter. Only this mode may emit a strictly safe transfer verdict; fast-mode redundancy remains a recommendation.
+| Component | Parent branch | Own future GP |
+| --- | ---: | ---: |
+| Distance S | 29% | — |
+| Surface aptitude | 5% | — |
+| Other Pinks | 2% | — |
+| Own Pinks heuristic | — | 35% |
+| Whites | 35% | 20% |
+| Race/scenario | 4% | — |
+| Blue/stat factors | 20% | 25% |
+| Unique | 5% | 3% |
+| Own G1 potential | — | 17% |
 
-For every context and viable Ace variant, the helper reuses:
+These are prototype assumptions, configurable under
+`transfer_helper.branch_weights` and `grandparent_weights`. They do not encode
+any local pair combination. Long-distance stat weighting favors Stamina over
+Power. Ordinary useful Whites, including Uma Stan, still contribute to score.
 
-- parent-branch scoring for the veteran plus its current lineage;
-- future-GP scoring for the veteran's own direct factors and its lineage's generation support.
+### 12.2 Same-costume portfolio
 
-Future-GP affinity is fixed optimistically at 100 in this global scan. This avoids discarding a candidate merely because its compatibility niche is absent from the selected Ace set; the GP comparison therefore emphasizes intrinsic factor value.
+A bounded exact set-cover search preserves each competitive role/context for
+**the same Ace**, within `portfolio_regret_tolerance` (2.5 index points by default).
+It also retains at least one copy per costume/Unique signature, represented own
+3★ stat Blue and 3★ Distance/Surface Pink specialists, and every lock, memo or
+explicitly supplied protected ID. White Loop project files are not read on
+`main`. A feasible solution survives search-budget exhaustion;
+`optimal` certifies minimum cardinality only under these model requirements.
 
-### 12.2 Context utility
+Local-partner G1 overlap is not a default requirement. The advanced opt-in
+`preserve_local_g1_pair_support` restores the previous behavior. Ordinary White
+coverage and generic multi-White packages cannot impose retention. Only the
+explicit `build_defining_skill_keys` list (default: `straight_descent`) may create
+conditional White protection, subject to contextual utility and source quality.
 
-Within each role/context, raw score is converted into a quality utility:
+### 12.3 Diagnostic verdicts and comparison
 
-``` text
-utility =
-    50% * clamp(score / absolute_floor)
-  + 40% * clamp(score / context_leader_score)
-  + 10% * percentile_quality
-```
+**Equivalent in the model** requires an exhaustive same-target dominance witness
+from a retained same-costume/same-Unique copy. **Redundant in the model** can rely
+on several retained copies, each covering different contexts. Neither certifies
+an affordable refarm or absence of racing use. **Keep** means required by the
+portfolio, and **Review** means evidence is insufficient. **Protected** copies
+participate in comparisons and have a separate leave-one-out `analysis_status`,
+but their final lock remains effective.
 
-The absolute score, proximity to the local leader, and percentile must therefore be interpreted together. Same-costume dominance comparisons only count a role/context where at least one copy is globally competitive against the full local pool.
+The comparison dialog presents two disconnected alternative branches. Parent
+mode shows each copy and its two GPs. GP mode shows only the candidate's own
+factors; optional historical parents are explicitly excluded from score.
+Portraits, game rank and evaluation score identify copies. Missing snapshot
+scores remain unknown. Technical IDs are confined to report data.
 
-### 12.3 Same-costume portfolio
-
-Replacement groups use `card_id` plus inherited-Unique signature. Alternate costumes are never interchangeable.
-
-For each group, the helper greedily builds and then prunes a retained portfolio that covers:
-
-1.  at least one copy of the costume;
-2.  every globally competitive parent or GP context within the configured regret of that group's best copy;
-3.  every direct 3★ Distance or Surface Pink represented in the group;
-4.  protected White skills and configured strategic packages;
-5.  every manually locked or memo-bearing veteran.
-
-This is collective coverage. A redundant copy can be covered by different retained veterans in different contexts; the tool must not invent a universal one-to-one replacement.
-
-### 12.4 Verdicts
-
-| Verdict                | Meaning                                                                                           |
-|------------------------|---------------------------------------------------------------------------------------------------|
-| Protected              | Locked in game or carrying a memo                                                                 |
-| Keep                   | Required by the retained same-costume portfolio                                                   |
-| Strictly safe transfer | In exhaustive mode, one retained same-costume/same-Unique copy proves strict individual dominance |
-| Recommended transfer   | Redundant under collective portfolio coverage, without a universal replacement proof              |
-| Review                 | Coverage or evidence is insufficient                                                              |
-
-Strict dominance requires the replacement to:
-
-- be no worse beyond tolerance in every viable parent and future-GP comparison;
-- preserve at least as many shared G1s with every possible local partner;
-- clear the configured mean-score lead;
-- individually preserve every protected Spark signal.
-
-The report records `replacement - candidate` per context. Positive deltas favor the replacement or retained portfolio; negative deltas reveal a niche where the proposed transfer remains better. For collective recommendations, the best retained copy may differ by row.
-
-### 12.5 Independent Spark protection
-
-Spark protection does not change the primary score. It builds normalized per-skill heritage from direct White sources and Race Sparks granting the same skill, across the veteran and its current parents. It records carriers, stars, neutral two-event inheritance probability, direct ownership, generation carriers, and the maximum contextual skill priority.
-
-Protection can require coverage for:
-
-- repeated useful sources;
-- hard-to-obtain hints when support metadata is available;
-- strong direct future-GP White factors;
-- configured strategic skill packages.
-
-Collective portfolio coverage preserves at least the configured probability ratio and absolute tolerance. Direct signals additionally require an equivalent direct source. The strict verdict applies the same constraints to one replacement.
+Selecting a context/Ace shows matched-target index deltas, additive contributions,
+exact Whites, source-specific stars, G1 differences and exclusive retained roles.
+Every visible shortened inventory has a full card inspector. GP White values
+are heuristics, not Ace inheritance probabilities. Frozen configuration, factors,
+affinities, scenario effects and game identity allow historical reconstruction.
+An incompatible historical engine disables the breakdown instead of inventing
+an explanation.
 
 ## 13. Diagnostics and reproducibility
 

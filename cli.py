@@ -30,6 +30,7 @@ from uma_legacy_linker.skill_catalog import generate_skill_catalogs
 from uma_legacy_linker.transfer_helper import TransferHelperError, analyze_transfer_candidates
 from uma_legacy_linker.application import (
     APP_NAME,
+    active_white_loop_ids,
     default_scoring_path,
     default_skill_priorities_path,
     resource_base_dir,
@@ -90,6 +91,7 @@ def run_cli(args: argparse.Namespace) -> int:
                 args.output,
                 course_weights_path=manual_weights.course_weights_path,
                 scoring_config_path=scoring,
+                active_loop_ids=active_white_loop_ids(Path(args.output).expanduser().resolve()),
                 logger=lambda message: print(message, flush=True),
             )
             print(f"Rapport : {result.report_json_path}")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -383,6 +384,7 @@ class AppContext(QObject):
                 str(key): scope[key]
                 for key in sorted(scope)
             },
+            "calendar_date": datetime.now().astimezone().date().isoformat(),
             "master": self._file_signature(self.master_path),
             "data": self._file_signature(self.veterans_json_path),
             "courses": self._file_signature(self.course_overrides_path),

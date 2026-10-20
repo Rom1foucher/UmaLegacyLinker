@@ -1331,8 +1331,8 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
         return result_detail_html(None, "pair", language)
     replacement = row.get("dominated_by") or {}
     statuses = {
-        "safe_transfer": "Transfert strictement sûr",
-        "recommended_transfer": "Transfert recommandé",
+        "safe_transfer": "Équivalent dans le modèle",
+        "recommended_transfer": "Redondant dans le modèle",
         "review": "À examiner",
         "keep": "Conserver",
         "protected": "Protégé",
@@ -1590,7 +1590,7 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
             return ""
         return (
             f"<h3>{escape(_t('Écarts par contexte', language))}</h3>"
-            f"<p class='muted'>{escape(_t('Chaque score est la meilleure enveloppe obtenue parmi les Aces viables du profil ; un delta positif favorise la couverture conservée.', language))}</p>"
+            f"<p class='muted'>{escape(_t('Chaque score est comparé pour le même Ace ; le tableau retient le cas le moins favorable de chaque contexte. Un delta positif favorise la couverture conservée.' if any(item.get('ace_card_id') for item in evidence.get('context_deltas') or []) else 'Chaque score est la meilleure enveloppe obtenue parmi les Aces viables du profil ; un delta positif favorise la couverture conservée.', language))}</p>"
             "<table><tr>"
             f"<td><b>{escape(_t('Rôle', language))}</b></td>"
             f"<td><b>{escape(_t('Contexte', language))}</b></td>"
@@ -1621,21 +1621,27 @@ def transfer_detail_html(row: dict[str, Any] | None, language: str) -> str:
     <h2>{escape(title)}</h2>
     <div class='muted'>{escape(reason)}</div>
     {_facts_table([
-        (_t('Score Uma', language), format_rank_score(row.get('rank_score'))),
+        (_t('Score en jeu', language), format_rank_score(row.get('rank_score'))),
         (_t('Verrouillé en jeu', language), _t('Oui', language) if row.get('is_locked') else _t('Non', language)),
         (_t('Mémo', language), str(row.get('memo') or '—')),
         (_t('Copies comparables', language), int(row.get('same_card_copy_count') or 0)),
         (
-            _t('Meilleur potentiel parent', language),
+            _t('Indice du modèle — parent', language),
             f"{_number(row.get('best_parent_score'), 2)} · top {_number(row.get('best_parent_percentile'), 1)}%",
         ),
         (
-            _t('Meilleur potentiel grand-parent', language),
+            _t('Indice du modèle — GP', language),
             f"{_number(row.get('best_grandparent_score'), 2)} · top {_number(row.get('best_grandparent_percentile'), 1)}%",
         ),
     ])}
     """
     parent_evidence = row.get("parent_evidence") or {}
+    if row.get("manual_protection_reasons") and row.get("analysis_status"):
+        analytical = _t(statuses.get(str(row["analysis_status"]), str(row["analysis_status"])), language)
+        html += (
+            f"<div class='protection'><b>{escape(_t('Protégé — diagnostic seulement', language))}</b><br>"
+            f"{escape(_t('Valeur calculée', language))} : {escape(analytical)}</div>"
+        )
     grandparent_evidence = row.get("grandparent_evidence") or {}
     html += (
         f"<h3>{escape(_t('Preuves du verdict', language))}</h3>"

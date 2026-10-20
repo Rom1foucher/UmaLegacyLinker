@@ -368,7 +368,8 @@ class SparkProtectionTests(unittest.TestCase):
         )
         return records[0]
 
-    def test_protected_white_keeps_an_outclassed_veteran_out_of_transfers(self) -> None:
+    def test_explicit_critical_white_keeps_an_outclassed_veteran_out_of_transfers(self) -> None:
+        self.protection["build_defining_skill_keys"] = ["nimble_navigator"]
         # A veteran outclassed on every scored context is still retained when it
         # is the only holder of a protected direct White. The paired control
         # below keeps this from passing for an unrelated reason.

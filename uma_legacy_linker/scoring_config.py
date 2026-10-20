@@ -597,6 +597,18 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
             raise ScoringConfigError(f"{'.'.join(path)} doit être strictement positif.")
 
     transfer = _require_dict(config, ("transfer_helper",))
+    for weight_key, allowed in (("branch_weights", {"distance_s", "surface_aptitude", "pink_other", "white_skill", "race_scenario", "blue", "unique"}),
+                                ("grandparent_weights", {"g1_potential", "blue", "pink", "white_skill", "unique"})):
+        if weight_key not in transfer:
+            continue
+        weights = transfer[weight_key]
+        if not isinstance(weights, dict) or not weights or set(weights) - allowed:
+            raise ScoringConfigError(f"transfer_helper.{weight_key} contient des composantes invalides.")
+        for value in weights.values():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ScoringConfigError(f"transfer_helper.{weight_key} doit contenir des poids finis positifs ou nuls.")
+        if sum(weights.values()) <= 0:
+            raise ScoringConfigError(f"transfer_helper.{weight_key} doit contenir un poids positif.")
     for key in (
         "competitive_score_floor",
         "competitive_utility_floor",
@@ -637,6 +649,9 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
         raise ScoringConfigError(
             "transfer_helper.minimum_ace_aptitude_rank ne peut pas dépasser 8 (S)."
         )
+    node_budget = transfer.get("portfolio_node_budget", 50000)
+    if isinstance(node_budget, bool) or not isinstance(node_budget, int) or node_budget < 1:
+        raise ScoringConfigError("transfer_helper.portfolio_node_budget doit être un entier strictement positif.")
     for key in (
         "include_permanent_archetypes",
         "include_course_presets",

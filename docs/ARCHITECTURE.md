@@ -14,7 +14,8 @@ Paths below are relative to the repository root.
 | Inputs | `legacy_linker.py`, `skill_catalog.py`, `course_presets.py` in `uma_legacy_linker/` | MDB/export resolution and generated catalogues |
 | Ranking | `parent_optimizer.py`, `uma_moe.py`, `g1_race_planning.py` in `uma_legacy_linker/` | Parent/GP scoring, remote retrieval and schedules |
 | Solver execution | `solver_runtime.py`, `solver_math.py`, `solver_pairs.py`, `solver_parallel.py` in `uma_legacy_linker/` | Search-local caches, prepared pair inputs, ordered workers |
-| Collection analysis | `uma_legacy_linker/transfer_helper.py`, `spark_protection.py` | Same-costume portfolios, dominance and inheritance protection |
+| Collection analysis | `uma_legacy_linker/transfer_helper.py`, `transfer_portfolio.py`, `spark_protection.py` | Matched-Ace evidence, bounded minimum portfolios and inheritance protection |
+| Transfer explanations | `uma_legacy_linker/transfer_comparison.py`, `ui_qt/transfer_comparison_dialog.py` | Frozen scoring-model reconstruction and component-level copy comparisons |
 | Shell | `ui_qt/main_window.py`, `context.py` | Lazy pages, navigation, shared state, task lifecycle |
 | Results | `ui_qt/result_families.py`, `result_panes.py`, `presentation.py`, `lineage_view.py` | Independent result views and backend-produced explanations |
 | Provenance/comparison | `uma_legacy_linker/output_history.py`, `result_comparison.py`; `ui_qt/provenance.py`, `comparison_dialog.py` | Retained generations, stable identities, original-value comparison |

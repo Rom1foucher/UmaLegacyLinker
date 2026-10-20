@@ -370,7 +370,7 @@ class QtUiCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 229)
+        self.assertEqual(checked, 244)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

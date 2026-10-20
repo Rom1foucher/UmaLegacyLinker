@@ -1855,6 +1855,7 @@ def _future_grandparent_white_score(
     config: dict[str, Any],
     race_skill_map: dict[str, list[str]] | None = None,
     include_details: bool = True,
+    detail_limit: int | None = 30,
 ) -> tuple[float, dict[str, Any]]:
     """Score direct useful factors on a future GP without affinity proc maths.
 
@@ -1944,7 +1945,7 @@ def _future_grandparent_white_score(
         "white_base_proc_rates": white_rates,
         "race_base_proc_rates": race_rates,
         "star_tiers": star_quality,
-        "top_factors": details[:30],
+        "top_factors": details if detail_limit is None else details[:detail_limit],
         "factor_count": len(details),
     }
 
@@ -2198,6 +2199,7 @@ def _white_score(
     inheritance_affinities: dict[str, float] | None = None,
     race_skill_map: dict[str, list[str]] | None = None,
     checkpoint: Callable[[], None] | None = None,
+    detail_limit: int | None = 20,
 ) -> tuple[float, dict[str, Any]]:
     """Score useful inherited skills from direct white and Race Sparks.
 
@@ -2366,7 +2368,7 @@ def _white_score(
         "uses_position_transmission": False,
         "race_skill_policy": "no arbitrary multiplier: Race Sparks use their lower 1/2/3% base rates and merge with direct white copies of the same granted skill",
         "diversity_policy": "very low chances are suppressed; useful distinct skills receive separate utility; repeated copies only increase the same skill probability with diminishing returns",
-        "top_skills": skill_details[:20],
+        "top_skills": skill_details if detail_limit is None else skill_details[:detail_limit],
         "top_factors": factor_details[:30],
         "skill_count": len(skill_details),
         "factor_count": len(factor_details),

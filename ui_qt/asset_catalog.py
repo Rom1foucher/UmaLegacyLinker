@@ -77,3 +77,8 @@ def image_cache_filename(url: str) -> str:
 
 def image_cache_path(cache_dir: str | Path, url: str) -> Path:
     return Path(cache_dir) / image_cache_filename(url)
+
+
+def trainee_portrait_url(card_id: object) -> str | None:
+    number = _positive_integer(card_id)
+    return f'https://media.gametora.com/umamusume/characters/portrait/trainee/256/{number}.png' if number else None

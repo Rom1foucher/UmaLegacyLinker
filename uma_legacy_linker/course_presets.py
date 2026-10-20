@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -138,6 +140,122 @@ def ordered_course_presets(payload: Mapping[str, Any]) -> list[tuple[str, dict[s
         if isinstance(value, Mapping)
     ]
     return sorted(normalized, key=course_preset_sort_key)
+
+
+def upcoming_cm_presets(
+    payload: Mapping[str, Any],
+    master_path: str | Path | None = None,
+    *,
+    as_of: datetime | None = None,
+    limit: int = 5,
+) -> tuple[list[tuple[str, dict[str, Any]]], dict[str, Any]]:
+    """Select the current and next CMs using the Global calendar, never JP dates.
+
+    A fresh Global MDB often knows only the current event. Later numbered
+    presets remain useful, but their dates are explicitly unknown. The legacy
+    ``event_window`` field contains historical Japanese dates and is ignored.
+    """
+    moment = as_of or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    now = moment.timestamp()
+    schedule: dict[int, tuple[float, float]] = {}
+    preparation_cutoffs: dict[int, float] = {}
+    source = "unavailable"
+    if master_path is not None:
+        path = Path(master_path).expanduser().resolve()
+        if path.is_file():
+            with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as connection:
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='champions_schedule'"
+                ).fetchone():
+                    schedule = {
+                        int(number): (float(start), float(end))
+                        for number, start, end in connection.execute(
+                            "SELECT id, start_date, end_date FROM champions_schedule"
+                        )
+                        if float(end or 0) > 0
+                    }
+                    if schedule:
+                        source = "master.champions_schedule"
+                    if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='champions_round_schedule'").fetchone():
+                        columns = {row[1] for row in connection.execute('PRAGMA table_info(champions_round_schedule)')}
+                        if {'champions_id', 'round', 'round_detail', 'end_date'} <= columns:
+                            preparation_cutoffs = {
+                                int(number): float(end) for number, end in connection.execute(
+                                    'SELECT champions_id, end_date FROM champions_round_schedule WHERE round=3 AND round_detail=1')
+                                if int(number) in schedule and schedule[int(number)][0] <= float(end or 0) <= schedule[int(number)][1]
+                            }
+    courses = [
+        (key, course) for key, course in ordered_course_presets(payload)
+        if str(course.get("category") or "").startswith("champions_meeting")
+    ]
+    # Custom files may supply explicit ISO Global dates, independent of the MDB.
+    for key, course in courses:
+        number = _cm_number(key, course)
+        window = course.get("global_event_window") or {}
+        if number is None or number in schedule or not isinstance(window, Mapping):
+            continue
+        try:
+            start = datetime.fromisoformat(str(window["start"]).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(window["end"]).replace("Z", "+00:00"))
+            if start.tzinfo is None or end.tzinfo is None or end < start:
+                continue
+            schedule[number] = (start.timestamp(), end.timestamp())
+            if source == "unavailable":
+                source = "global_event_window"
+        except (ValueError, TypeError, KeyError):
+            continue
+    latest_known = max(schedule, default=None)
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    for key, course in sorted(courses, key=lambda item: (_cm_number(*item) or 9999, item[0])):
+        number = _cm_number(key, course)
+        window = schedule.get(number) if number is not None else None
+        if window is not None:
+            if preparation_cutoffs.get(number, window[1]) < now:
+                continue
+            state = "current" if window[0] <= now else "scheduled"
+        elif latest_known is not None:
+            if number is None or number <= latest_known:
+                continue
+            state = "undated_after_latest_known"
+        elif course.get("category") == "champions_meeting_upcoming":
+            state = "legacy_category_unverified"
+        else:
+            continue
+        selected = dict(course)
+        selected["calendar_status"] = state
+        if window is not None:
+            selected["global_event_window"] = {
+                "start": datetime.fromtimestamp(window[0], timezone.utc).isoformat(),
+                "end": datetime.fromtimestamp(window[1], timezone.utc).isoformat(),
+            }
+        if number in preparation_cutoffs:
+            selected['preparation_cutoff_utc'] = datetime.fromtimestamp(preparation_cutoffs[number], timezone.utc).isoformat()
+        candidates.append((key, selected))
+    selected = candidates[:max(0, int(limit))]
+    transitions = [value for start, end in schedule.values()
+                   for value in (start, end + 1) if value > now]
+    transitions += [value + 1 for value in preparation_cutoffs.values() if value + 1 > now]
+    audit = {
+        "as_of_utc": moment.astimezone(timezone.utc).isoformat(),
+        "source": source,
+        "latest_known_cm": latest_known,
+        "next_transition_utc": datetime.fromtimestamp(min(transitions), timezone.utc).isoformat()
+            if selected and transitions else None,
+        "selected": [
+            {"key": key, "sequence": _cm_number(key, course),
+             "status": course["calendar_status"],
+             "global_event_window": course.get("global_event_window"),
+             "preparation_cutoff_utc": course.get("preparation_cutoff_utc")}
+            for key, course in selected
+        ],
+        "unknown_date_count": sum(
+            course["calendar_status"] in {"undated_after_latest_known", "legacy_category_unverified"}
+            for _, course in selected
+        ),
+    }
+    return selected, audit
 
 
 def course_preset_label(course_key: str, course: Mapping[str, Any], language: str = "en") -> str:

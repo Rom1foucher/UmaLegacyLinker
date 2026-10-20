@@ -256,11 +256,12 @@ class TransferRequest:
     course_overrides_path: Path | None = None
     use_custom_scoring: bool = False
     skill_priorities_path: Path | None = None
-    analysis_mode: str = "fast"
+    analysis_mode: str = "exhaustive"
     include_upcoming_cm_context: bool = True
     upcoming_cm_limit: int = 5
     include_team_trials: bool = False
     include_generic_profiles: bool = False
+    active_loop_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -543,6 +544,15 @@ def load_local_veteran_options(
     return records
 
 
+def active_white_loop_ids(output_dir: Path, explicit_ids: tuple[int, ...] = ()) -> tuple[int, ...]:
+    """Preserve explicit protections without loading White Loop project files.
+
+    Main has no White Loop persistence. Keep the helper signature for existing
+    desktop and CLI callers; only IDs explicitly supplied by callers are used.
+    """
+    return tuple(sorted(set(explicit_ids)))
+
+
 def run_transfer_analysis(
     request: TransferRequest,
     *,
@@ -554,6 +564,7 @@ def run_transfer_analysis(
     )
     if request.course_overrides_path is not None and not request.course_overrides_path.is_file():
         raise TransferHelperError("Le fichier d’overrides de course est invalide.")
+    active_loop_ids = active_white_loop_ids(request.output_dir, request.active_loop_ids)
 
     progress(5, "Préparation des profils de pondération…")
     scoring_config = _materialize_scoring_profile(
@@ -588,7 +599,7 @@ def run_transfer_analysis(
         linked.skills_catalog_path,
         skill_priorities,
         request.output_dir,
-        course_overrides_path=request.course_overrides_path,
+        course_overrides_path=active_course_overrides_path(request.course_overrides_path),
         logger=logger,
     )
     progress(62, "Analyse de tous les rôles et profils…")
@@ -602,6 +613,7 @@ def run_transfer_analysis(
         course_weights_path=manual_weights.course_weights_path,
         scoring_config_path=scoring_config,
         logger=logger,
+        active_loop_ids=active_loop_ids,
     )
     progress(100, "Transfer Helper terminé.")
     return result

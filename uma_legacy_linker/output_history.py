@@ -177,8 +177,8 @@ def write_text_with_history(
             history_temporary.unlink(missing_ok=True)
 
 
-def write_json_with_history(path: str | Path, payload: Any) -> Path:
+def write_json_with_history(path: str | Path, payload: Any, *, indent: int | None = 2) -> Path:
     return write_text_with_history(
         path,
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(payload, ensure_ascii=False, indent=indent) + "\n",
     )

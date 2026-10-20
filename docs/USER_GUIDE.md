@@ -71,14 +71,31 @@ current inputs. Rerun that family when a current result is needed.
 
 ## Transfer Helper and profiles
 
-Transfer Helper is a work in progress. It evaluates same-costume portfolios and
-never transfers a veteran in game. **Protected** copies have a lock or memo; **Keep** copies are required by
-the portfolio. **Recommended transfer** can rely on collective coverage.
-**Strictly safe transfer** requires exhaustive mode and one retained replacement
-that passes the individual checks. Inspect the evidence and score deltas before
-acting. **Review** is the fallback when portfolio coverage cannot be established.
-Missing local ancestry IDs can limit reference diagnostics even when
-frozen lineage factors are available for scoring.
+Transfer Helper is a prototype. It evaluates individual branches and never
+transfers a veteran in game. **Protected** copies have a lock, memo or an
+explicitly supplied protected ID. White Loop project files are not read on `main`.
+Protected copies remain visible in comparisons and redundant-copy filters.
+**Keep** copies are required by the portfolio. **Equivalent in the model** and
+**Redundant in the model** explain different forms of redundancy; verify racing
+use and refarming effort before acting. No prototype record is transfer-eligible.
+
+Select a row and use **Compare…**. The **Compared lineage** tab presents two
+alternative branches, not a local pair. Portraits and actual game rank/score help
+find each copy. Click a card or use the member selector to inspect every factor.
+Parent mode counts the copy and its two GPs. Future-GP mode counts only own
+factors. The optional farming-history view does not add old ancestors to score.
+Zoom and Fit controls support narrow windows. Text works with images disabled.
+
+Use the other tabs to inspect the same Ace/course/role: worst matched-target
+witnesses, weighted index points, exact Whites, factors/G1 and retained roles.
+For collective redundancy, one comparison can have a negative delta: another
+retained copy covers that niche. Historical reports freeze their model. Rerun old
+reports to obtain the new prototype rules.
+
+Upcoming CMs are selected dynamically from Global MDB dates, through final team
+registration when the round schedule is available. Future dates are explicitly
+unknown. Permanent roles remain evaluated when the CM rotation changes.
+See [local prototype instructions](TRANSFER_HELPER_PROTOTYPE.md).
 
 The Weights page edits overrides over bundled defaults. **Save profile** persists
 and activates the draft. Structural weights and White priorities are separate.

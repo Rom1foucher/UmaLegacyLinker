@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QItemSelection, Qt, Signal
+from PySide6.QtCore import QItemSelection, QTimer, Qt, Signal, QUrl
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from uma_legacy_linker.backend_process import ProcessTask
@@ -43,8 +45,11 @@ from uma_legacy_linker.result_comparison import (
     transfer_comparison_dataset,
 )
 from ui_qt.accessibility import describe_control, label_control
-from ui_qt.components import PageHeader, StatusCard, ThemedComboBox, muted_label
+from ui_qt.components import PageHeader, StatusCard, ThemedComboBox, CollapsibleSection, muted_label
 from ui_qt.comparison_dialog import ResultComparisonDialog
+from ui_qt.transfer_comparison_dialog import TransferComparisonDialog
+from ui_qt.transfer_decision import decision_examples, decision_html
+from ui_qt.transfer_decision_panel import TransferDecisionPanel
 from ui_qt.context import AppContext
 from uma_legacy_linker.application import (
     TransferRequest,
@@ -60,11 +65,14 @@ from ui_qt.provenance import (
     revision_title,
 )
 from ui_qt.table_typography import enable_tabular_numbers
+from ui_qt.theme import COLORS
 from ui_qt.view_state import bind_splitter_state, bind_table_view_state
 from uma_legacy_linker.veteran_identity import (
     canonical_veteran_label,
     canonical_veteran_labels,
-    technical_veteran_tooltip,
+    game_veteran_label,
+    game_rank_label,
+    format_rank_score,
 )
 
 
@@ -75,6 +83,9 @@ STATE_RUNNING = "running"
 STATE_READY = "ready"
 STATE_STALE = "stale"
 STATE_LOADED = "loaded"
+
+TRANSFER_CANDIDATES = "transfer_candidates"
+GAME_SCORE_COLUMN = 11
 
 STATE_LABELS = {
     STATE_EMPTY: "Aucun rapport affiché",
@@ -90,9 +101,19 @@ class TransferPage(QWidget):
 
     def __init__(self, context: AppContext, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName("transferPage")
+        self.setStyleSheet(f"#transferPage {{ background-color: {COLORS['background']}; }}")
         self.context = context
         self._busy = False
         self._records: list[dict[str, Any]] = []
+        self._comparison_model: dict[str, Any] = {}
+        self._decision_examples = []
+        self._detail_expanded = False
+        self._focused_example = 0
+        self._calendar_day = ""
+        self._calendar_unknown = False
+        self._calendar_valid_until: datetime | None = None
         self._result_state = STATE_EMPTY
         self._result_origin_state = STATE_EMPTY
         self._result_fingerprint = ""
@@ -128,28 +149,38 @@ class TransferPage(QWidget):
         self.open_button = QPushButton("")
         self.result_state = QLabel("")
         self.result_state.setObjectName("pill")
+        self.result_state.setWordWrap(True)
         self.revision_badge = QLabel("")
         self.revision_badge.setObjectName("pill")
         self.revision_badge.setVisible(False)
         self.generated_at = muted_label("", wrap=False)
+        self.cm_calendar = muted_label("")
         safety_layout.addWidget(self.safety_text, 0, 0, 1, 8)
-        safety_layout.addWidget(self.mode_label, 1, 0)
-        safety_layout.addWidget(self.mode_combo, 1, 1)
-        safety_layout.addWidget(self.upcoming_cm_check, 1, 2)
-        safety_layout.addWidget(self.upcoming_cm_limit, 1, 3)
-        safety_layout.addWidget(self.team_trials_check, 2, 0, 1, 2)
-        safety_layout.addWidget(self.generic_profiles_check, 2, 2, 1, 2)
-        safety_layout.setColumnStretch(4, 1)
+        self.safety_text.setVisible(False)
+        self.scope_section = CollapsibleSection("")
+        scope_grid = QGridLayout()
+        scope_grid.addWidget(self.mode_label, 0, 0)
+        scope_grid.addWidget(self.mode_combo, 0, 1)
+        scope_grid.addWidget(self.upcoming_cm_check, 1, 0)
+        scope_grid.addWidget(self.upcoming_cm_limit, 1, 1)
+        scope_grid.addWidget(self.team_trials_check, 2, 0)
+        scope_grid.addWidget(self.generic_profiles_check, 2, 1)
+        self.scope_section.content_layout.addLayout(scope_grid)
+        safety_layout.addWidget(self.scope_section, 2, 0, 1, 8)
         action_layout = QHBoxLayout()
         action_layout.setContentsMargins(0, 0, 0, 0)
         action_layout.addWidget(self.result_state)
-        action_layout.addWidget(self.revision_badge)
-        action_layout.addWidget(self.generated_at)
+        metadata_layout = QHBoxLayout()
+        metadata_layout.addWidget(self.revision_badge)
+        metadata_layout.addWidget(self.generated_at)
+        metadata_layout.addStretch(1)
+        self.scope_section.content_layout.addWidget(self.cm_calendar)
+        self.scope_section.content_layout.addLayout(metadata_layout)
         action_layout.addStretch(1)
         action_layout.addWidget(self.run_button)
         action_layout.addWidget(self.load_button)
         action_layout.addWidget(self.open_button)
-        safety_layout.addLayout(action_layout, 3, 0, 1, 8)
+        safety_layout.addLayout(action_layout, 1, 0, 1, 8)
         root.addWidget(safety)
 
         self.upcoming_cm_check.setChecked(
@@ -182,25 +213,56 @@ class TransferPage(QWidget):
             self.keep_card,
             self.protected_card,
         )):
+            card.title_label.setWordWrap(True)
+            card.detail_label.setVisible(False)
+            card.layout().setContentsMargins(10, 6, 10, 6)
+            card.layout().setSpacing(2)
             cards.addWidget(card, 0, index)
             cards.setColumnStretch(index, 1)
-        root.addLayout(cards)
+        self.collection_summary = muted_label("")
+        self.scope_section.content_layout.addWidget(self.collection_summary)
+        self.scope_section.content_layout.addLayout(cards)
 
         filters = QFrame()
         filters.setObjectName("panel")
-        filter_layout = QHBoxLayout(filters)
+        filter_layout = QGridLayout(filters)
         filter_layout.setContentsMargins(12, 8, 12, 8)
         self.filter_label = QLabel("")
+        self.family_combo = ThemedComboBox()
+        self.family_combo.setMaximumWidth(250)
+        self.family_combo.setMinimumWidth(160)
+        self.family_combo.setMinimumContentsLength(12)
+        self.family_combo.setSizeAdjustPolicy(ThemedComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.family_combo.currentIndexChanged.connect(self.apply_filters)
         self.status_combo = ThemedComboBox()
+        self.status_combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.status_combo.setMinimumContentsLength(12)
+        self.status_combo.setSizeAdjustPolicy(ThemedComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.status_combo.setMaximumWidth(200)
+        self.status_combo.setMinimumWidth(160)
+        self.family_combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.search = QLineEdit()
         self.search.setClearButtonEnabled(True)
         self.count_label = muted_label("")
-        filter_layout.addWidget(self.filter_label)
-        filter_layout.addWidget(self.status_combo)
-        filter_layout.addWidget(self.search, 1)
-        filter_layout.addWidget(self.compare_button)
-        filter_layout.addWidget(self.count_label)
+        filter_layout.addWidget(self.filter_label, 0, 0)
+        filter_layout.addWidget(self.status_combo, 0, 1)
+        filter_layout.addWidget(self.family_combo, 0, 2)
+        filter_layout.addWidget(self.search, 0, 3)
+        filter_layout.addWidget(self.count_label, 0, 4)
+        filter_layout.setColumnStretch(3, 1)
+        self.selection_button = QPushButton("")
+        self.selection_button.clicked.connect(self._prepare_transfer_selection)
+        self.selection_hint = muted_label("")
+        filter_layout.addWidget(self.selection_button, 1, 0, 1, 2)
+        filter_layout.addWidget(self.selection_hint, 1, 2, 1, 3)
         root.addWidget(filters)
+        self.empty_results = QLabel("")
+        self.empty_results.setWordWrap(True)
+        self.empty_results.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reset_filters = QPushButton("")
+        self.reset_filters.clicked.connect(self._reset_filters)
+        root.addWidget(self.empty_results)
+        root.addWidget(self.reset_filters, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.table = QTableView()
@@ -211,14 +273,21 @@ class TransferPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setDefaultSectionSize(54)
         self.model = ResultTableModel([], self._columns())
         self.table.setModel(self.model)
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(-1, Qt.SortOrder.AscendingOrder)
-        self.detail = QTextBrowser()
-        self.detail.setMinimumWidth(520)
+        self.decision_panel = TransferDecisionPanel(context)
+        self.decision_panel.actions_layout.addWidget(self.compare_button)
+        self.detail = self.decision_panel.browser
+        self.detail.anchorClicked.connect(self._decision_link)
+        self.decision_panel.example_changed.connect(self._example_changed)
+        self.decision_panel.verification_requested.connect(lambda index: self._decision_link(QUrl(f"example:{index}")))
+        self.detail.setMinimumWidth(300)
         self.splitter.addWidget(self.table)
-        self.splitter.addWidget(self.detail)
+        self.splitter.addWidget(self.decision_panel)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setStretchFactor(0, 5)
         self.splitter.setStretchFactor(1, 4)
@@ -232,8 +301,8 @@ class TransferPage(QWidget):
         self._save_table_state = bind_table_view_state(
             self.table,
             self.context.store,
-            "ui_table_transfer",
-            default_hidden=(6, 9, 10),
+            "ui_table_transfer_readable_v3",
+            default_hidden=(2, 3, 4, 5, 6, 7, 8, 9, 10),
         )
         root.addWidget(self.splitter, 1)
 
@@ -245,6 +314,7 @@ class TransferPage(QWidget):
         self.team_trials_check.toggled.connect(self._scope_changed)
         self.generic_profiles_check.toggled.connect(self._scope_changed)
         self.compare_button.clicked.connect(self.compare_selected_veteran)
+        self.table.doubleClicked.connect(lambda _index: self.compare_selected_veteran())
         self.open_button.clicked.connect(self.open_output)
         self.status_combo.currentIndexChanged.connect(self._status_filter_changed)
         self.search.textChanged.connect(self.apply_filters)
@@ -252,6 +322,9 @@ class TransferPage(QWidget):
         self.context.language_changed.connect(self._language_changed)
         self.context.configuration_changed.connect(self._refresh_freshness)
         self.context.lineage_changed.connect(self._refresh_freshness)
+        self._freshness_timer = QTimer(self)
+        self._freshness_timer.timeout.connect(self._refresh_freshness)
+        self._freshness_timer.start(60_000)
         self.retranslate()
         self.load_latest(show_errors=False)
 
@@ -265,12 +338,21 @@ class TransferPage(QWidget):
             "best_grandparent_percentile", default=100.0
         )
         labels = {
-            "safe_transfer": t("Transfert strictement sûr"),
-            "recommended_transfer": t("Transfert recommandé"),
+            "safe_transfer": t("Équivalent dans le modèle"),
+            "recommended_transfer": t("Redondant dans le modèle"),
             "review": t("À examiner"),
             "keep": t("Conserver"),
             "protected": t("Protégé"),
         }
+        def verdict_label(row: dict[str, Any]) -> str:
+            analysis = str(row.get("analysis_status") or row.get("status") or "")
+            if row.get("status") == "protected" and row.get("analysis_status"):
+                return t("Protégé") + " · " + t("Redondant" if analysis in {"safe_transfer", "recommended_transfer"} else "Utile")
+            if analysis == "safe_transfer":
+                return t("Équivalent (modèle)")
+            if analysis == "recommended_transfer":
+                return t("Redondant")
+            return labels.get(analysis, analysis or "—")
 
         def coverage_label(row: dict[str, Any]) -> str:
             replacement = row.get("dominated_by") or {}
@@ -288,33 +370,35 @@ class TransferPage(QWidget):
         def coverage_tooltip(row: dict[str, Any]) -> str:
             replacement = row.get("dominated_by") or {}
             if replacement:
-                return technical_veteran_tooltip(replacement)
+                return game_veteran_label(replacement)
             return ", ".join(
                 tooltip
                 for tooltip in (
-                    technical_veteran_tooltip(item)
+                    game_veteran_label(item)
                     for item in row.get("covered_by_portfolio") or []
                 )
                 if tooltip
             )
 
         return [
-            Column(t("Verdict"), lambda row: labels.get(str(row.get("status")), row.get("status") or "—")),
+            Column(t("Verdict"), verdict_label, tooltip_getter=lambda row: labels.get(
+                str(row.get("analysis_status") or row.get("status")), "—")),
             Column(
                 t("Vétéran"),
-                canonical_veteran_label,
+                lambda row: str(row.get("card_name") or row.get("uma_name") or "—")
+                + "\n" + game_rank_label(row.get("rank")) + " · " + format_rank_score(row.get("rank_score")),
                 sort_getter=nested("rank_score"),
-                tooltip_getter=technical_veteran_tooltip,
+                tooltip_getter=game_veteran_label,
             ),
             Column(t("Copies"), nested("same_card_copy_count"), RIGHT),
-            Column(t("Meilleur parent"), nested("best_parent_score"), RIGHT),
+            Column(t("Indice parent"), nested("best_parent_score"), RIGHT),
             Column(
                 t("Rang parent"),
                 lambda row: f"top {parent_percentile(row):.1f}%",
                 RIGHT,
                 sort_getter=parent_percentile,
             ),
-            Column(t("Meilleur GP"), nested("best_grandparent_score"), RIGHT),
+            Column(t("Indice GP"), nested("best_grandparent_score"), RIGHT),
             Column(
                 t("Rang GP"),
                 lambda row: f"top {grandparent_percentile(row):.1f}%",
@@ -328,7 +412,10 @@ class TransferPage(QWidget):
             ),
             Column(t("Avance moy."), lambda row: (row.get("dominated_by") or {}).get("mean_score_lead", "—"), RIGHT),
             Column(t("Référencé par"), nested("referenced_by_local_veterans"), RIGHT),
-            Column(t("ID technique"), nested("trained_chara_id"), RIGHT),
+            Column(t("Protection"), lambda row: t("Protégé — diagnostic seulement")
+                   if row.get("manual_protection_reasons") else "—"),
+            Column(t("Score en jeu"), lambda row: format_rank_score(row.get("rank_score")), RIGHT,
+                   sort_getter=number("rank_score", default=-float("inf"))),
         ]
 
     def _configure_header(self) -> None:
@@ -337,9 +424,9 @@ class TransferPage(QWidget):
         for index in range(self.model.columnCount()):
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
         self.table.resizeColumnsToContents()
-        for index in (1, 7):
-            if index < self.model.columnCount():
-                header.setSectionResizeMode(index, QHeaderView.ResizeMode.Stretch)
+        for index, width in ((0, 175), (1, 265), (3, 110), (5, 100), (7, 245), (GAME_SCORE_COLUMN, 135)):
+            header.resizeSection(index, width)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
 
     def retranslate(self) -> None:
         t = self.context.t
@@ -348,14 +435,14 @@ class TransferPage(QWidget):
             t("Identifie les copies redondantes sans jamais modifier l’export source ni prendre une décision à ta place."),
         )
         self.safety_text.setText(
-            t("Le socle permanent protège les usages futurs. L’audit exhaustif peut prouver un transfert strictement sûr ; en mode rapide, les redondances restent recommandées.")
+            t("Prototype par branche individuelle. Les indices expliquent la redondance ; le coût de refarm et l’usage en course restent à vérifier avant un transfert.")
         )
         self.mode_label.setText(t("Mode d’analyse"))
-        selected_mode = self.mode_combo.currentData() or self.context.store.get("transfer_analysis_mode", "fast")
+        selected_mode = self.mode_combo.currentData() or self.context.store.get("transfer_analysis_mode", "exhaustive")
         self.mode_combo.blockSignals(True)
         self.mode_combo.clear()
-        self.mode_combo.addItem(t("Rapide (recommandé)"), "fast")
-        self.mode_combo.addItem(t("Audit exhaustif (lent)"), "exhaustive")
+        self.mode_combo.addItem(t("Rapide"), "fast")
+        self.mode_combo.addItem(t("Audit exhaustif (recommandé)"), "exhaustive")
         selected_index = self.mode_combo.findData(selected_mode)
         self.mode_combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
         self.mode_combo.blockSignals(False)
@@ -365,12 +452,15 @@ class TransferPage(QWidget):
         self.generic_profiles_check.setText(t("Inclure les profils génériques"))
         self.run_button.setText(t("Analyser les vétérans locaux"))
         self.load_button.setText(t("Historique"))
-        self.compare_button.setText(t("Comparer…"))
+        self.compare_button.setText(t("Explorer…"))
+        self.compare_button.setAccessibleName(t("Comparer les branches…"))
+        self.collection_summary.setText(t("Résumé de la collection"))
+        self.reset_filters.setText(t("Réinitialiser les filtres"))
         self.open_button.setText(t("Ouvrir la sortie"))
         self.filter_label.setText(t("Afficher"))
         self.search.setPlaceholderText(t("Rechercher un nom, un score ou un remplaçant…"))
         self.mode_combo.setToolTip(
-            t("Le mode rapide repère les redondances ; seul l’audit exhaustif peut conclure à un transfert strictement sûr.")
+            t("Le mode exhaustif compare tous les Ace compatibles. Il ne certifie pas le coût de refarm ni l’usage actuel en course.")
         )
         self.upcoming_cm_check.setToolTip(
             t("Évalue chaque vétéran dans le contexte des prochaines Champion Meetings configurées.")
@@ -412,7 +502,7 @@ class TransferPage(QWidget):
             t("Un remplaçant du même costume et de la même unique couvre toutes les niches viables sans perte de patrimoine Spark protégé.")
         )
         self.recommended_card.setToolTip(
-            t("La copie paraît redondante, mais le mode rapide ne fournit pas une preuve suffisante pour la déclarer strictement sûre.")
+            t("Redondance couverte collectivement par les copies conservées ; un choix manuel reste nécessaire.")
         )
         self.review_card.setToolTip(
             t("Une niche, une couverture incomplète ou une protection de Spark impose une vérification manuelle.")
@@ -432,8 +522,9 @@ class TransferPage(QWidget):
         self.status_combo.clear()
         for label, value in (
             ("Tous les verdicts", None),
-            ("Transfert strictement sûr", "safe_transfer"),
-            ("Transfert recommandé", "recommended_transfer"),
+            ("À transférer", TRANSFER_CANDIDATES),
+            ("Équivalent dans le modèle", "safe_transfer"),
+            ("Redondant dans le modèle", "recommended_transfer"),
             ("À examiner", "review"),
             ("Conserver", "keep"),
             ("Protégé", "protected"),
@@ -442,6 +533,9 @@ class TransferPage(QWidget):
         index = self.status_combo.findData(selected)
         self.status_combo.setCurrentIndex(index if index >= 0 else 0)
         self.status_combo.blockSignals(False)
+        self.selection_button.setText(t("Préparer les transferts"))
+        self.selection_hint.setText(t("Dans le jeu : Rating / Desc. Retrouve les copies par leur costume et leur score."))
+        self.selection_button.setToolTip(t("Affiche les copies équivalentes ou redondantes, sans les protégées, triées par score en jeu décroissant. Les cas à examiner restent séparés."))
         label_control(
             self.mode_label,
             self.mode_combo,
@@ -479,6 +573,8 @@ class TransferPage(QWidget):
             f"{t('Transfer Helper')} · {t('Détail')}",
             self.detail.toolTip(),
         )
+        self._fill_families()
+        self._scope_summary()
         self._refresh_cards()
         self._render_result_state()
         self.apply_filters()
@@ -486,7 +582,7 @@ class TransferPage(QWidget):
 
     def _scope_values(self) -> dict[str, object]:
         return {
-            "analysis_mode": str(self.mode_combo.currentData() or "fast"),
+            "analysis_mode": str(self.mode_combo.currentData() or "exhaustive"),
             "include_upcoming_cm_context": self.upcoming_cm_check.isChecked(),
             "upcoming_cm_limit": self.upcoming_cm_limit.value(),
             "include_team_trials": self.team_trials_check.isChecked(),
@@ -516,13 +612,60 @@ class TransferPage(QWidget):
 
     def _scope_changed(self, *_args: object) -> None:
         self._persist_scope()
+        self._scope_summary()
         self._refresh_freshness()
+
+    def _scope_summary(self) -> None:
+        t = self.context.t
+        parts = [t("Rapide") if self.mode_combo.currentData() == "fast" else t("Exhaustif")]
+        if self.upcoming_cm_check.isChecked():
+            parts.append(str(self.upcoming_cm_limit.value()) + " " + t("CM max."))
+        if self.team_trials_check.isChecked():
+            parts.append(t("Team Trials"))
+        if self.generic_profiles_check.isChecked():
+            parts.append(t("Profils génériques"))
+        if self._calendar_unknown:
+            parts.append(t("Dates CM à vérifier"))
+        self.scope_section.set_title(t("Périmètre de l’analyse") + " · " + " · ".join(parts))
+        self.scope_section.toggle.setToolTip(self.cm_calendar.text())
+
+    def _fill_families(self) -> None:
+        selected = self.family_combo.currentData()
+        groups = {}
+        for record in self._records:
+            group = record.get("comparison_group")
+            if group:
+                card_name = str(record.get("card_name") or "—")
+                uma_name = str(record.get("uma_name") or "")
+                name = uma_name + " · " + card_name if uma_name and uma_name != card_name else card_name
+                name, count = groups.get(group, (name, 0))
+                groups[group] = (name, count + 1)
+        self.family_combo.blockSignals(True)
+        self.family_combo.clear()
+        self.family_combo.addItem(self.context.t("Tous les costumes"), None)
+        for key, (name, count) in sorted(groups.items(), key=lambda item: item[1][0].casefold()):
+            self.family_combo.addItem(f"{name} · {count}", key)
+            self.family_combo.setItemData(self.family_combo.count()-1, f"{name} · {count}", Qt.ItemDataRole.ToolTipRole)
+        self.family_combo.setCurrentIndex(max(0, self.family_combo.findData(selected)))
+        self.family_combo.setAccessibleName(self.context.t("Filtrer par costume"))
+        self.family_combo.setToolTip(self.context.t("Filtrer par costume"))
+        self.family_combo.blockSignals(False)
 
     def _status_filter_changed(self, *_args: object) -> None:
         self.context.store.update(
             {"ui_transfer_status_filter": self.status_combo.currentData() or ""}
         )
         self.apply_filters()
+
+    def _prepare_transfer_selection(self) -> None:
+        # Start with the complete candidate list; the costume/search filters remain usable afterwards.
+        self.search.clear()
+        self.family_combo.setCurrentIndex(0)
+        self.status_combo.setCurrentIndex(self.status_combo.findData(TRANSFER_CANDIDATES))
+        self.apply_filters()
+        if self.model.rowCount():
+            self.table.selectRow(0)
+            self.table.scrollToTop()
 
     def _set_result_state(self, state: str) -> None:
         self._result_state = state
@@ -568,10 +711,42 @@ class TransferPage(QWidget):
             return
         state = (
             self._result_origin_state
-            if self._current_fingerprint() == self._result_fingerprint
+            if self._current_fingerprint() == self._result_fingerprint and (
+                not self._calendar_day or self._calendar_day == datetime.now().astimezone().date().isoformat()
+            ) and (
+                not self._calendar_valid_until or datetime.now(timezone.utc) < self._calendar_valid_until
+            )
             else STATE_STALE
         )
         self._set_result_state(state)
+
+    def _capture_report_context(self, payload: dict[str, Any]) -> None:
+        self._comparison_model = payload.get("comparison_model") or {}
+        audit = (payload.get("settings") or {}).get("cm_calendar") or {}
+        try:
+            self._calendar_valid_until = datetime.fromisoformat(str(audit.get("next_transition_utc") or ""))
+            if self._calendar_valid_until.tzinfo is None:
+                self._calendar_valid_until = None
+        except ValueError:
+            self._calendar_valid_until = None
+        try:
+            moment = datetime.fromisoformat(str(audit.get("as_of_utc") or ""))
+            self._calendar_day = moment.astimezone().date().isoformat()
+        except ValueError:
+            self._calendar_day = ""
+        entries = []
+        t = self.context.t
+        for item in audit.get("selected") or []:
+            state = item.get("status")
+            label = t("En cours") if state == "current" else (
+                t("Date connue") if state == "scheduled" else t("Date Global inconnue")
+            )
+            entries.append(f"CM{item.get('sequence')} · {label}")
+        self.cm_calendar.setText(t("Calendrier CM") + " : " + " ; ".join(entries) if entries else "")
+        self._calendar_unknown = any(item.get("status") not in {"current", "scheduled"}
+                                     for item in audit.get("selected") or [])
+        self._scope_summary()
+        self._render_decision()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -593,14 +768,15 @@ class TransferPage(QWidget):
             key = str(record.get("status") or "")
             if key in counts:
                 counts[key] += 1
-        self.safe_card.set_content(t("Strictement sûr"), str(counts["safe_transfer"]), t("Confirmé par audit exhaustif"), "ok")
-        self.recommended_card.set_content(t("Recommandé"), str(counts["recommended_transfer"]), t("Redondant dans le portefeuille"), "ok")
+        self.safe_card.set_content(t("Équivalent (modèle)"), str(counts["safe_transfer"]), t("Coût et usage en course à vérifier"), "ok")
+        self.recommended_card.set_content(t("Redondant"), str(counts["recommended_transfer"]), t("Redondant dans le portefeuille"), "ok")
         self.review_card.set_content(t("À examiner"), str(counts["review"]), t("Rôle incertain ou Spark à vérifier"), "warning")
         self.keep_card.set_content(t("Conserver"), str(counts["keep"]), t("Nécessaire au portefeuille"), "info")
         self.protected_card.set_content(t("Protégé"), str(counts["protected"]), t("Verrou ou mémo en jeu"), "neutral")
 
     def set_records(self, records: list[dict[str, Any]]) -> None:
         self._records = list(records)
+        self._fill_families()
         self._refresh_cards()
         self.apply_filters()
         self._update_compare_button()
@@ -610,7 +786,16 @@ class TransferPage(QWidget):
         query = self.search.text().strip().casefold()
         rows = []
         for record in self._records:
-            if status is not None and record.get("status") != status:
+            if self.family_combo.currentData() and record.get("comparison_group") != self.family_combo.currentData():
+                continue
+            if status == TRANSFER_CANDIDATES:
+                if (record.get("status") not in {"safe_transfer", "recommended_transfer"}
+                        or record.get("manual_protection_reasons")
+                        or record.get("selected_in_portfolio")):
+                    continue
+            elif status is not None and record.get("status") != status and (
+                status == "protected" or record.get("analysis_status") != status
+            ):
                 continue
             replacement = record.get("dominated_by") or {}
             coverage = record.get("covered_by_portfolio") or []
@@ -624,13 +809,19 @@ class TransferPage(QWidget):
                     *(item.get("rank_score") for item in coverage),
                 )
             ).casefold()
-            if query and query not in haystack:
+            if query and query not in haystack and ''.join(query.split()) not in ''.join(haystack.split()):
                 continue
             rows.append(record)
         selected = self.selected_row()
         selected_id = selected.get("trained_chara_id") if selected else None
         self.model.set_columns(self._columns())
         self.model.set_rows(rows)
+        if status == TRANSFER_CANDIDATES:
+            self.table.setColumnHidden(GAME_SCORE_COLUMN, False)
+            self.table.horizontalHeader().moveSection(
+                self.table.horizontalHeader().visualIndex(GAME_SCORE_COLUMN), 0
+            )
+            self.table.sortByColumn(GAME_SCORE_COLUMN, Qt.SortOrder.DescendingOrder)
         sort_column = self.table.horizontalHeader().sortIndicatorSection()
         if sort_column >= 0:
             self.model.sort(
@@ -642,6 +833,14 @@ class TransferPage(QWidget):
             .replace("{shown}", str(len(rows)))
             .replace("{total}", str(len(self._records)))
         )
+        has_rows = bool(rows)
+        self.splitter.setVisible(has_rows)
+        self.empty_results.setVisible(not has_rows)
+        self.reset_filters.setVisible(not has_rows and bool(self._records))
+        self.empty_results.setText(self.context.t(
+            "Aucune copie ne correspond aux filtres. Modifie la recherche ou réinitialise les filtres."
+            if self._records else "Lance une analyse ou charge un rapport pour comparer tes copies."
+        ))
         target = -1
         if selected_id is not None:
             for index in range(self.model.rowCount()):
@@ -655,14 +854,64 @@ class TransferPage(QWidget):
             self.table.selectRow(target)
         else:
             self.detail.setHtml(transfer_detail_html(None, self.context.language))
+        self._update_compare_button()
+
+    def _reset_filters(self) -> None:
+        self.search.clear()
+        self.status_combo.setCurrentIndex(0)
+        self.family_combo.setCurrentIndex(0)
 
     def selected_row(self) -> dict[str, Any] | None:
         indexes = self.table.selectionModel().selectedRows()
         return self.model.row(indexes[0].row()) if indexes else None
 
     def _selection_changed(self, _selected: QItemSelection, _deselected: QItemSelection) -> None:
-        self.detail.setHtml(transfer_detail_html(self.selected_row(), self.context.language))
+        self._detail_expanded = False
+        self._focused_example = 0
+        indexes = self.table.selectionModel().selectedRows()
+        if indexes:
+            self.table.scrollTo(indexes[0])
+        self._render_decision()
         self._update_compare_button()
+
+    def _render_decision(self) -> None:
+        record = self.selected_row()
+        self._decision_examples = decision_examples(record, self._records, self._comparison_model) if record else []
+        self._focused_example = max(0, min(self._focused_example, len(self._decision_examples)-1))
+        self.decision_panel.set_identity(record, self._records, self._decision_examples, self._focused_example)
+        html = decision_html(record, self._decision_examples, self.context.language,
+                             self.context.t, self._detail_expanded, model=self._comparison_model,
+                             focus=self._focused_example, show_identity=False)
+        if self._detail_expanded:
+            html += transfer_detail_html(record, self.context.language)
+        self.detail.setHtml(html)
+
+    def _example_changed(self, index) -> None:
+        self._focused_example = max(0, index)
+        self._render_decision()
+
+    def _decision_link(self, url) -> None:
+        if url.toString() == "details:toggle":
+            self._detail_expanded = not self._detail_expanded
+            self._render_decision()
+        elif url.scheme() == "example":
+            try:
+                index = int(url.path())
+            except ValueError:
+                return
+            if self._busy or not 0 <= index < len(self._decision_examples):
+                return
+            example = self._decision_examples[index]
+            selected = self.selected_row()
+            if selected is None:
+                return
+            dialog = TransferComparisonDialog(
+                self.context, selected, [example["target"]], self._comparison_model, parent=self,
+            )
+            if dialog.select_example(example):
+                dialog.exec()
+            else:
+                dialog.deleteLater()
 
     @staticmethod
     def _record_id(record: dict[str, Any]) -> str:
@@ -687,6 +936,10 @@ class TransferPage(QWidget):
             if self._record_id(candidate)
         }
         own_id = self._record_id(record)
+        group = record.get("comparison_group")
+        if group:
+            target_ids.extend(self._record_id(candidate) for candidate in self._records
+                              if candidate.get("comparison_group") == group)
         return [
             by_id[target_id]
             for target_id in dict.fromkeys(target_ids)
@@ -694,6 +947,7 @@ class TransferPage(QWidget):
         ]
 
     def _update_compare_button(self) -> None:
+        self.decision_panel.verify_button.setEnabled(not self._busy and bool(self._decision_examples))
         self.compare_button.setEnabled(
             not self._busy and bool(self._comparison_targets(self.selected_row()))
         )
@@ -715,6 +969,14 @@ class TransferPage(QWidget):
             self._show_comparison_error(
                 "Ce vétéran n’a aucun remplaçant ou élément de couverture comparable dans le rapport."
             )
+            return
+        if self._comparison_model:
+            dialog = TransferComparisonDialog(
+                self.context, selected, targets, self._comparison_model, parent=self,
+            )
+            if self._decision_examples:
+                dialog.select_example(self._decision_examples[self._focused_example])
+            dialog.exec()
             return
         source = transfer_comparison_dataset(
             [selected],
@@ -739,7 +1001,7 @@ class TransferPage(QWidget):
 
     def start_analysis(self) -> None:
         priority_text = self.context.store.get("skill_priorities_path")
-        analysis_mode = str(self.mode_combo.currentData() or "fast")
+        analysis_mode = str(self.mode_combo.currentData() or "exhaustive")
         self._persist_scope()
         self._state_before_running = self._result_state
         self._running_fingerprint = self._current_fingerprint()
@@ -772,8 +1034,11 @@ class TransferPage(QWidget):
             _payload, self._provenance = read_json_output_revision(
                 Path(report_path), CURRENT_REVISION
             )
+            self._capture_report_context(_payload)
         except (OSError, TypeError, json.JSONDecodeError, ValueError):
             self._provenance = None
+            self._comparison_model = {}
+            self._calendar_day = ""
         self._generated_at = format_output_timestamp(
             self._provenance.generated_at_utc if self._provenance else ""
         )
@@ -874,6 +1139,7 @@ class TransferPage(QWidget):
             if not isinstance(records, list):
                 raise ValueError("Le rapport Transfer Helper ne contient pas de liste de résultats.")
             self.set_records([row for row in records if isinstance(row, dict)])
+            self._capture_report_context(payload)
             self._provenance = provenance
             self._generated_at = format_output_timestamp(
                 provenance.generated_at_utc
@@ -881,6 +1147,7 @@ class TransferPage(QWidget):
             self._result_fingerprint = self._current_fingerprint()
             self._result_origin_state = STATE_LOADED
             self._set_result_state(STATE_LOADED)
+            self._refresh_freshness()
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             if show_errors:
                 QMessageBox.information(

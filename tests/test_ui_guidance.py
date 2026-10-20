@@ -64,7 +64,7 @@ class TransferGuidanceTests(unittest.TestCase):
             "Extraire ma collection",
             "Relier un export existant",
             "Maintenance et fichiers",
-            "Le mode rapide repère les redondances ; seul l’audit exhaustif peut conclure à un transfert strictement sûr.",
+            "Le mode exhaustif compare tous les Ace compatibles. Il ne certifie pas le coût de refarm ni l’usage actuel en course.",
             "La couverture désigne le remplaçant ou l’ensemble de vétérans qui préserve les rôles compétitifs de la copie.",
             "Un verrou ou un mémo en jeu interdit toute recommandation de transfert, quel que soit le score.",
         )
@@ -72,8 +72,8 @@ class TransferGuidanceTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertNotEqual(translate_text(source, "en"), source)
 
-    def test_transfer_detail_has_the_documented_readable_width(self) -> None:
-        self.assertIn("self.detail.setMinimumWidth(520)", self.source)
+    def test_transfer_detail_allows_narrowing_without_changing_default_width(self) -> None:
+        self.assertIn("self.detail.setMinimumWidth(300)", self.source)
         self.assertIn('"ui_splitter_transfer"', self.source)
         self.assertIn("[700, 560]", self.source)
 

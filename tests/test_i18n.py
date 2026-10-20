@@ -104,10 +104,10 @@ class I18nTests(unittest.TestCase):
         )
         self.assertEqual(
             translate_text(
-                "Transfert strictement sûr détaillé : Alice [#1] — Sparks : Turf 3★",
+                "Équivalence dans le modèle détaillée : Alice · 9 602 — Sparks : Turf 3★",
                 "en",
             ),
-            "Detailed strictly safe transfer: Alice [#1] — Sparks: Turf 3★",
+            "Detailed model equivalence: Alice · 9 602 — Sparks: Turf 3★",
         )
         self.assertEqual(
             translate_text("Remplaçant vérifié : Bob [#2]", "en"),

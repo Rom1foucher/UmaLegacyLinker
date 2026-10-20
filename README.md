@@ -1,3 +1,6 @@
+> Transfer Helper prototype: individual-branch diagnostics and visual lineage
+> comparison. See [local test instructions](docs/TRANSFER_HELPER_PROTOTYPE.md).
+
 <div align="center">
 
 <img src="resources/branding/app.png" alt="Uma Legacy Linker icon" width="80">
@@ -90,12 +93,14 @@ Save a profile and rerun the search to apply it. Effective profiles are written 
 
 The helper selects a collection of same-costume copies that covers useful parent and GP roles while preserving protected inheritance assets.
 
+Exhaustive analysis is the default. A bounded exact portfolio search reports whether the retained count is proven minimal. Comparisons use the same Ace and expose weighted score components, exact Whites, Spark carriers and G1s. Protected copies receive a separate redundancy diagnostic and remain ineligible for transfer. Upcoming CMs follow the Global MDB calendar; unknown dates are shown explicitly.
+
 | Verdict | Meaning |
 | --- | --- |
-| **Protected** | Preserved because of an in-game lock or memo |
+| **Protected** | Preserved because of an in-game lock, memo or active White Loop use; still analysed |
 | **Keep** | Required by the selected collection portfolio |
-| **Recommended transfer** | Covered by retained copies collectively, without a verified strict individual replacement |
-| **Strictly safe transfer** | One retained same-costume, same-Unique replacement passes the individual checks; exhaustive mode only |
+| **Redundant in the model** | Covered by retained copies collectively, without a verified strict individual replacement |
+| **Equivalent in the model** | One retained same-costume, same-Unique replacement passes the model checks; manual cost/racing review still required |
 | **Review** | Portfolio coverage could not be established |
 
 ## Data and network use

@@ -17,7 +17,11 @@ from uma_legacy_linker.veteran_identity import (
     canonical_veteran_labels,
 )
 
-from uma_legacy_linker.course_presets import ordered_course_presets
+from uma_legacy_linker.course_presets import ordered_course_presets, upcoming_cm_presets
+from uma_legacy_linker.solver_pairs import PairPreparation
+from uma_legacy_linker.solver_runtime import solver_search, optimized_solver
+from uma_legacy_linker.transfer_portfolio import minimum_portfolio
+from uma_legacy_linker.transfer_comparison import frozen_veteran
 from uma_legacy_linker.parent_optimizer import (
     DISTANCES,
     STYLES,
@@ -261,7 +265,7 @@ def _read_json(path: Path) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    write_json_with_history(path, payload)
+    write_json_with_history(path, payload, indent=None)
 
 
 def _sha256(path: Path) -> str:
@@ -371,6 +375,8 @@ def _build_profile_contexts(
     upcoming_cm_limit: int = 5,
     include_team_trials: bool = False,
     include_generic_profiles: bool = False,
+    master_path: str | Path | None = None,
+    as_of: datetime | None = None,
 ) -> list[ProfileContext]:
     """Build a stable cleanup scope, independent from the current CM rotation.
 
@@ -414,12 +420,9 @@ def _build_profile_contexts(
         return contexts
 
     ordered = ordered_course_presets(course_payload)
-    upcoming = [
-        (course_key, course)
-        for course_key, course in ordered
-        if include_upcoming_cm_context
-        and str(course.get("category") or "") == "champions_meeting_upcoming"
-    ][: max(0, int(upcoming_cm_limit))]
+    upcoming = upcoming_cm_presets(
+        course_payload, master_path, as_of=as_of, limit=upcoming_cm_limit,
+    )[0] if include_upcoming_cm_context else []
     team_trials = [
         (course_key, course)
         for course_key, course in ordered
@@ -437,7 +440,7 @@ def _build_profile_contexts(
         conditions = dict(course.get("conditions") or {})
         scope = (
             "upcoming_cm"
-            if str(course.get("category") or "") == "champions_meeting_upcoming"
+            if str(course.get("category") or "").startswith("champions_meeting")
             else "team_trials"
         )
         for style in styles:
@@ -574,6 +577,7 @@ def _update_group_dominance_for_scores(
     minimum_absolute_floor_ratio: float,
     dominance_tolerance: float,
     context: ProfileContext | None = None,
+    capture_details: bool = True,
 ) -> tuple[bool, bool]:
     """Update same-costume dominance only in globally viable role contexts.
 
@@ -618,7 +622,7 @@ def _update_group_dominance_for_scores(
                         loser_parent,
                         winner_parent,
                         dominance_tolerance,
-                        context,
+                        context if capture_details else None,
                     )
             if grandparent_viable:
                 loser_gp = grandparent_scores.get(loser_index)
@@ -628,7 +632,7 @@ def _update_group_dominance_for_scores(
                         loser_gp,
                         winner_gp,
                         dominance_tolerance,
-                        context,
+                        context if capture_details else None,
                     )
     return parent_viable, grandparent_viable
 
@@ -712,6 +716,8 @@ def _manual_protection(record: dict[str, Any]) -> list[str]:
         reasons.append("locked_in_game")
     if str(record.get("memo") or "").strip():
         reasons.append("memo_present")
+    if bool(record.get("active_loop_project")):
+        reasons.append("active_loop_project")
     return reasons
 
 
@@ -759,33 +765,70 @@ def _portfolio_requirements(
                 for index in group_indices
             }
             entries = {index: profile for index, profile in entries.items() if profile}
-            if not entries or not any(
-                _is_globally_competitive(
-                    float(profile.get("score") or 0.0),
-                    profile,
-                    competitive_score_floor=competitive_score_floor,
-                    competitive_utility_floor=competitive_utility_floor,
-                    minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
-                )
-                for profile in entries.values()
-            ):
+            if not entries:
                 continue
-            best_score = max(float(profile.get("score") or 0.0) for profile in entries.values())
-            covered_by = {
-                index
-                for index, profile in entries.items()
-                if float(profile.get("score") or 0.0)
-                >= best_score - float(regret_tolerance) - 1e-9
-            }
-            sample = max(entries.values(), key=lambda item: float(item.get("score") or 0.0))
-            requirements[f"performance:{role}:{context_key}"] = {
-                "kind": "performance",
-                "label": f"{role}: {sample.get('profile') or context_key}",
-                "role": role,
-                "context_key": context_key,
-                "best_score": round(best_score, 6),
-                "covered_by": covered_by,
-            }
+            sample = next(iter(entries.values()))
+            has_axis = "ace_scores" in sample
+            for ace_index in range(len(sample["ace_scores"])) if has_axis else [None]:
+                scores = {
+                    index: profile["ace_scores"][ace_index] if has_axis else profile.get("score")
+                    for index, profile in entries.items()
+                }
+                scores = {index: float(score) for index, score in scores.items() if score is not None}
+                viable = any(
+                    entries[index]["ace_competitive"][ace_index] if has_axis else
+                    _is_globally_competitive(
+                        score, entries[index], competitive_score_floor=competitive_score_floor,
+                        competitive_utility_floor=competitive_utility_floor,
+                        minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
+                    ) for index, score in scores.items()
+                )
+                if not scores or not viable:
+                    continue
+                best_score = max(scores.values())
+                key = f"performance:{role}:{context_key}"
+                if ace_index is not None:
+                    key += f":ace:{sample['ace_ids'][ace_index]}"
+                requirements[key] = {
+                    "kind": "performance",
+                    "label": f"{role}: {sample.get('profile') or context_key}",
+                    "role": role, "context_key": context_key, "ace_index": ace_index,
+                    "ace_card_id": sample["ace_ids"][ace_index] if has_axis else None,
+                    "best_score": round(best_score, 6),
+                    "covered_by": {i for i, score in scores.items()
+                                   if score >= best_score - float(regret_tolerance) - 1e-9},
+                }
+
+    # Stat specialists and G1 pair support are concrete farming assets. A
+    # collective recommendation must preserve them as well as scored niches.
+    for name in sorted({str(f.get("name") or "") for i in group_indices
+                        for f in _factor_list(veterans[i], "blue_stat")
+                        if int(f.get("stars") or 0) >= 3}):
+        requirements[f"blue:{name}"] = {
+            "kind": "blue_3star", "label": f"3★ {name}",
+            "covered_by": {i for i in group_indices
+                           if any(str(f.get("name") or "") == name and int(f.get("stars") or 0) >= 3
+                                  for f in _factor_list(veterans[i], "blue_stat"))},
+        }
+    if spark_protection_config.get("preserve_local_g1_pair_support", False):
+        g1_sets = {i: _member_g1(veterans[i]) for i in group_indices}
+        group_chara = int(veterans[group_indices[0]].get("chara_id") or 0)
+        partner_signatures: set[frozenset[str]] = set()
+        for partner_index, partner in enumerate(veterans):
+            if group_chara and int(partner.get("chara_id") or 0) == group_chara:
+                continue
+            partner_g1 = frozenset(_member_g1(partner))
+            if not partner_g1 or partner_g1 in partner_signatures:
+                continue
+            partner_signatures.add(partner_g1)
+            overlaps = {i: len(wins & partner_g1) for i, wins in g1_sets.items()}
+            best_overlap = max(overlaps.values(), default=0)
+            if best_overlap:
+                requirements[f"g1_pair:{partner_index}"] = {
+                    "kind": "g1_pair", "label": f"G1 · {canonical_veteran_label(partner)}",
+                    "best_overlap": best_overlap,
+                    "covered_by": {i for i, count in overlaps.items() if count == best_overlap},
+                }
 
     # A direct 3-star distance/surface factor remains a collection asset even
     # when the current score model does not happen to need it.
@@ -840,13 +883,14 @@ def _portfolio_requirements(
             key
             for heritage in heritages.values()
             for key, skill in (heritage.get("skills") or {}).items()
-            if skill.get("protection_signals")
+            if key in set(spark_protection_config.get("build_defining_skill_keys", ["straight_descent"]))
+            and (skill.get("protection_signals")
             or (
                 int(skill.get("direct_white_max_stars") or 0)
                 >= portfolio_direct_min_stars
                 and float(skill.get("max_context_weight") or 0.0)
                 >= portfolio_direct_min_weight
-            )
+            ))
         }
     )
     for skill_key in skill_keys:
@@ -947,6 +991,7 @@ def _select_portfolio(
     minimum_absolute_floor_ratio: float,
     regret_tolerance: float,
     spark_protection_config: dict[str, Any],
+    node_budget: int = 50000,
 ) -> tuple[set[int], dict[str, dict[str, dict[str, Any]]]]:
     selected: set[int] = set()
     all_requirements: dict[str, dict[str, dict[str, Any]]] = {}
@@ -963,61 +1008,22 @@ def _select_portfolio(
             spark_protection_config=spark_protection_config,
         )
         all_requirements[group_key] = requirements
-        group_selected = {
-            index for index in group_indices if _manual_protection(records[index])
-        }
-
-        def covered(requirement: dict[str, Any], selection: set[int]) -> bool:
-            return bool(set(requirement["covered_by"]) & selection)
-
-        uncovered = {
-            key for key, requirement in requirements.items()
-            if not covered(requirement, group_selected)
-        }
-        while uncovered:
-            best_index: int | None = None
-            best_key: tuple[float, float, int] | None = None
-            for index in group_indices:
-                if index in group_selected:
-                    continue
-                newly_covered = [
-                    key for key in uncovered if index in requirements[key]["covered_by"]
-                ]
-                if not newly_covered:
-                    continue
-                coverage_value = sum(
-                    2.0 if requirements[key]["kind"] != "performance" else 1.0
-                    for key in newly_covered
-                )
-                score_sum = sum(
-                    float(profile.get("score") or 0.0)
-                    for role in ("parent", "grandparent")
-                    for profile in records[index].get(f"_{role}_profiles") or []
-                )
-                candidate_key = (
-                    coverage_value,
-                    score_sum,
-                    int(records[index].get("rank_score") or 0),
-                )
-                if best_key is None or candidate_key > best_key:
-                    best_index = index
-                    best_key = candidate_key
-            if best_index is None:
-                raise TransferHelperError(
-                    f"Portefeuille impossible à couvrir pour {group_key}: {sorted(uncovered)}"
-                )
-            group_selected.add(best_index)
-            uncovered = {
-                key for key in uncovered if best_index not in requirements[key]["covered_by"]
-            }
-
         mandatory = {
             index for index in group_indices if _manual_protection(records[index])
         }
-        for index in sorted(group_selected - mandatory):
-            trial = group_selected - {index}
-            if all(covered(requirement, trial) for requirement in requirements.values()):
-                group_selected = trial
+        try:
+            selection = minimum_portfolio(
+                group_indices, (r["covered_by"] for r in requirements.values()), mandatory,
+                priorities={i: (
+                    sum(float(p.get("score") or 0.0) for role in ("parent", "grandparent")
+                        for p in records[i].get(f"_{role}_profiles") or []),
+                    int(records[i].get("rank_score") or 0),
+                ) for i in group_indices},
+                node_budget=node_budget,
+            )
+        except ValueError as exc:
+            raise TransferHelperError(f"Portefeuille impossible à couvrir pour {group_key}: {exc}") from exc
+        group_selected = set(selection.selected)
 
         selected.update(group_selected)
         for index in group_indices:
@@ -1026,6 +1032,9 @@ def _select_portfolio(
                     "key": key,
                     "kind": requirement["kind"],
                     "label": requirement["label"],
+                    "role": requirement.get("role"),
+                    "context_key": requirement.get("context_key"),
+                    "ace_card_id": requirement.get("ace_card_id"),
                 }
                 for key, requirement in requirements.items()
                 if index in requirement["covered_by"]
@@ -1033,12 +1042,27 @@ def _select_portfolio(
             uniquely_required = [
                 item
                 for item in covered_requirements
-                if len(
-                    set(requirements[item["key"]]["covered_by"]) & group_selected
-                ) == 1
+                if set(requirements[item["key"]]["covered_by"]) & group_selected == {index}
             ]
-            records[index]["portfolio_assets"] = covered_requirements
-            records[index]["portfolio_required_for"] = uniquely_required
+            def compact(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                result: dict[str, dict[str, Any]] = {}
+                for item in items:
+                    key = (f"performance:{item['role']}:{item['context_key']}"
+                           if item["kind"] == "performance" else item["key"])
+                    if key not in result:
+                        result[key] = dict(item, matched_ace_count=0)
+                    if item["kind"] == "performance":
+                        result[key]["matched_ace_count"] += 1
+                return list(result.values())
+            records[index]["portfolio_assets"] = compact(covered_requirements)
+            records[index]["portfolio_required_for"] = compact(uniquely_required)
+            records[index]["_asset_keys"] = {item["key"] for item in covered_requirements
+                                             if item["kind"] != "performance"}
+            records[index]["selected_in_portfolio"] = index in group_selected
+            records[index]["portfolio_solver"] = {
+                "optimal": selection.optimal, "nodes": selection.nodes,
+                "greedy_count": selection.greedy_count, "retained_count": len(group_selected),
+            }
             records[index]["manual_protection_reasons"] = _manual_protection(records[index])
     return selected, all_requirements
 
@@ -1056,6 +1080,10 @@ def _strict_retained_replacement(
     for replacement_index in selected:
         relation = relations.get((index, replacement_index))
         if relation is None or relation.combined_count <= 0:
+            continue
+        if not set(records[index].get("_asset_keys") or ()) <= set(
+            records[replacement_index].get("_asset_keys") or ()
+        ):
             continue
         if not (
             relation.parent_no_worse
@@ -1094,6 +1122,8 @@ def _strict_retained_replacement(
         )
         direct_assets_preserved = True
         for skill_key, candidate_skill in candidate_skills.items():
+            if skill_key not in set(spark_protection_config.get("build_defining_skill_keys", ["straight_descent"])):
+                continue
             if not (
                 int(candidate_skill.get("direct_white_max_stars") or 0)
                 >= portfolio_direct_min_stars
@@ -1134,42 +1164,41 @@ def _portfolio_context_evidence(
 ) -> dict[str, Any]:
     """Compare one redundant copy with the retained portfolio per context."""
 
-    rows: list[dict[str, Any]] = []
+    rows_by_context: dict[tuple[str, str], dict[str, Any]] = {}
+    profile_maps = {
+        (i, role): {str(p.get("context_key") or ""): p
+                    for p in records[i].get(f"_{role}_profiles") or []}
+        for i in (selected | {index}) for role in ("parent", "grandparent")
+    }
+    total_delta = 0.0
+    count = 0
+    role_counts: Counter[str] = Counter()
+    best: dict[str, Any] | None = None
     for requirement in requirements.values():
         if requirement.get("kind") != "performance":
             continue
         role = str(requirement.get("role") or "")
         context_key = str(requirement.get("context_key") or "")
-        profile_key = f"_{role}_profiles"
-        candidate = next(
-            (
-                profile
-                for profile in records[index].get(profile_key) or []
-                if str(profile.get("context_key") or "") == context_key
-            ),
-            None,
-        )
-        retained = [
-            (selected_index, profile)
-            for selected_index in sorted(selected)
-            for profile in records[selected_index].get(profile_key) or []
-            if str(profile.get("context_key") or "") == context_key
-        ]
-        if candidate is None or not retained:
+        ace_index = requirement.get("ace_index")
+        def score(profile: dict[str, Any] | None) -> float | None:
+            if profile is None:
+                return None
+            value = profile["ace_scores"][ace_index] if ace_index is not None else profile.get("score")
+            return float(value) if value is not None else None
+        candidate = profile_maps[index, role].get(context_key)
+        candidate_score = score(candidate)
+        retained = [(i, score(profile_maps[i, role].get(context_key))) for i in sorted(selected)]
+        retained = [(i, value) for i, value in retained if value is not None]
+        if candidate_score is None or not retained:
             continue
-        replacement_score = max(
-            float(profile.get("score") or 0.0)
-            for _selected_index, profile in retained
-        )
+        replacement_score = max(value for _, value in retained)
         retained_best = [
             selected_index
-            for selected_index, profile in retained
-            if abs(float(profile.get("score") or 0.0) - replacement_score)
+            for selected_index, value in retained
+            if abs(value - replacement_score)
             <= 1e-9
         ]
-        candidate_score = float(candidate.get("score") or 0.0)
-        rows.append(
-            {
+        row = {
                 "role": role,
                 "context_key": context_key,
                 "profile": candidate.get("profile") or context_key,
@@ -1178,6 +1207,8 @@ def _portfolio_context_evidence(
                 "distance": candidate.get("distance"),
                 "style": candidate.get("style"),
                 "course_key": candidate.get("course_key"),
+                "ace_index": ace_index,
+                "ace_card_id": requirement.get("ace_card_id"),
                 "candidate_score": round(candidate_score, 6),
                 "replacement_score": round(replacement_score, 6),
                 "delta": round(replacement_score - candidate_score, 6),
@@ -1194,10 +1225,27 @@ def _portfolio_context_evidence(
                     for selected_index in retained_best
                 ],
             }
-        )
+        delta = replacement_score - candidate_score
+        total_delta += delta
+        count += 1
+        role_counts[role] += 1
+        key = (role, context_key)
+        if key not in rows_by_context or delta < rows_by_context[key]["delta"]:
+            rows_by_context[key] = row
+        if best is None or delta > best["delta"]:
+            best = row
+    rows = list(rows_by_context.values())
+    summary = _context_delta_summary(rows)
+    if count:
+        summary.update({"mean_score_lead": round(total_delta / count, 6),
+                        "best_context": best, "best_context_delta": best["delta"],
+                        "viable_parent_comparisons": role_counts["parent"],
+                        "viable_grandparent_comparisons": role_counts["grandparent"]})
     return {
         "comparison_kind": "retained_portfolio",
-        **_context_delta_summary(rows),
+        "target_policy": "matched_ace",
+        "context_rows_policy": "worst matched-Ace delta per role and context",
+        **summary,
     }
 
 
@@ -1218,15 +1266,16 @@ def classify_portfolio_records(
         group_selected = selected & set(group_indices)
         for index in group_indices:
             record = records[index]
+            alternatives = group_selected - {index}
             record["dominated_by"] = None
             record["portfolio_comparison"] = (
                 _portfolio_context_evidence(
                     index,
-                    group_selected,
+                    alternatives,
                     records,
                     requirements.get(group_key) or {},
                 )
-                if index not in selected
+                if alternatives
                 else None
             )
             record["covered_by_portfolio"] = [
@@ -1241,16 +1290,17 @@ def classify_portfolio_records(
                         "manual_protection_reasons"
                     ) or [],
                 }
-                for selected_index in sorted(group_selected)
+                for selected_index in sorted(alternatives)
             ]
             manual_reasons = list(record.get("manual_protection_reasons") or [])
-            if manual_reasons:
-                record["status"] = "protected"
-                record["reason_code"] = manual_reasons[0]
-                continue
-            if index in selected:
-                record["status"] = "keep"
-                record["reason_code"] = "required_by_collection_portfolio"
+            record["transfer_eligible"] = False
+            essential = any(set(r["covered_by"]) & group_selected == {index}
+                            for r in (requirements.get(group_key) or {}).values())
+            if index in selected and (not manual_reasons or essential):
+                record["analysis_status"] = "keep"
+                record["analysis_reason_code"] = "required_by_collection_portfolio"
+                record["status"] = "protected" if manual_reasons else "keep"
+                record["reason_code"] = manual_reasons[0] if manual_reasons else "required_by_collection_portfolio"
                 continue
 
             strict = None
@@ -1281,6 +1331,12 @@ def classify_portfolio_records(
                     "sparks": replacement.get("sparks") or {},
                     **_dominance_evidence(relation),
                 }
+                if not relation.context_deltas:
+                    evidence = _portfolio_context_evidence(
+                        index, {replacement_index}, records, requirements.get(group_key) or {},
+                    )
+                    record["dominated_by"].update({k: evidence[k] for k in
+                        ("context_deltas", "worst_context", "best_context", "comparison_kind")})
             elif group_selected:
                 record["status"] = "recommended_transfer"
                 record["reason_code"] = "redundant_in_collection_portfolio"
@@ -1289,8 +1345,17 @@ def classify_portfolio_records(
                 # valid group should never reach this branch.
                 record["status"] = "review"
                 record["reason_code"] = "portfolio_coverage_incomplete"
+            record["analysis_status"] = record["status"]
+            record["analysis_reason_code"] = record["reason_code"]
+            record["transfer_eligible"] = not manual_reasons and record["status"] in {
+                "safe_transfer", "recommended_transfer"
+            }
+            if manual_reasons:
+                record["status"] = "protected"
+                record["reason_code"] = manual_reasons[0]
 
 
+@solver_search
 def analyze_transfer_candidates(
     master_path: str | Path,
     linked_veterans_path: str | Path,
@@ -1302,6 +1367,8 @@ def analyze_transfer_candidates(
     course_weights_path: str | Path | None = None,
     scoring_config_path: str | Path | None = None,
     logger: Callable[[str], None] | None = None,
+    as_of: datetime | None = None,
+    active_loop_ids: Iterable[int] = (),
 ) -> TransferHelperResult:
     log = logger or _logger_default
     master = Path(master_path).expanduser().resolve()
@@ -1328,14 +1395,15 @@ def analyze_transfer_candidates(
     weights_payload = _read_json(weights_path)
     race_catalog = _read_json(race_catalog_path)
     skill_catalog = _read_json(skill_catalog_path_resolved)
-    config = _read_json(config_path)
+    from uma_legacy_linker.transfer_policy import transfer_scoring_config, restrict_heritage
+    config = transfer_scoring_config(_read_json(config_path))
     course_payload = _read_json(course_path) if course_path and course_path.is_file() else None
     veterans = list(linked_payload.get("veterans") or [])
     if not veterans:
         raise TransferHelperError("Aucun vétéran dans veterans_legacy_linked.json")
 
     helper_config = config.get("transfer_helper") or {}
-    analysis_mode = str(helper_config.get("analysis_mode") or "fast")
+    analysis_mode = str(helper_config.get("analysis_mode") or "exhaustive")
     if analysis_mode not in {"fast", "exhaustive"}:
         raise TransferHelperError(
             "transfer_helper.analysis_mode doit valoir 'fast' ou 'exhaustive'."
@@ -1349,7 +1417,7 @@ def analyze_transfer_candidates(
     utility_percentile_weight = float(helper_config.get("utility_percentile_weight", 0.10))
     minimum_competitive_contexts = max(1, int(helper_config.get("minimum_competitive_contexts", 3)))
     minimum_distinct_profiles = max(1, int(helper_config.get("minimum_distinct_profiles", 2)))
-    dominance_tolerance = float(helper_config.get("dominance_tolerance", 0.75))
+    dominance_tolerance = float(helper_config.get("dominance_tolerance", 0.0))
     dominance_mean_margin = float(helper_config.get("dominance_mean_margin", 1.0))
     portfolio_regret_tolerance = float(
         helper_config.get("portfolio_regret_tolerance", 2.5)
@@ -1364,6 +1432,7 @@ def analyze_transfer_candidates(
     upcoming_cm_limit = max(0, int(helper_config.get("upcoming_cm_limit", 5)))
     include_team_trials = bool(helper_config.get("include_team_trials", False))
     include_generic_profiles = bool(helper_config.get("include_generic_profiles", False))
+    portfolio_node_budget = max(1, int(helper_config.get("portfolio_node_budget", 50000)))
     minimum_ace_aptitude_rank = max(
         1, int(helper_config.get("minimum_ace_aptitude_rank", 6))
     )
@@ -1388,12 +1457,13 @@ def analyze_transfer_candidates(
         "upcoming_cm_limit": upcoming_cm_limit,
         "include_team_trials": include_team_trials,
         "include_generic_profiles": include_generic_profiles,
+        "portfolio_node_budget": portfolio_node_budget,
         "minimum_ace_aptitude_rank": minimum_ace_aptitude_rank,
         "course_preset_scope": "seven permanent archetypes by default; upcoming Champion Meetings and Team Trials are optional extra evidence",
         "portfolio_scope": "minimum same-costume collection covering every competitive permanent niche within the configured regret and every protected inheritance asset",
         "replacement_scope": "same costume ID and inherited Unique signature only",
-        "strict_transfer_scope": "strictly safe verdicts are emitted only in exhaustive mode; fast-mode redundancies remain recommendations",
-        "grandparent_affinity_mode": "optimistic constant ceiling; relative intrinsic ranking is target-independent",
+        "strict_transfer_scope": "model equivalence only; transfer requires manual review of racing use and refarming costs",
+        "grandparent_affinity_mode": "unknown future affinity has zero weight; old GP ancestry is diagnostic only",
         "dominance_context_scope": "same-costume comparisons only count roles where at least one copy is globally competitive against the full local veteran pool",
         "spark_protection": spark_protection_config,
         "spark_protection_utility_scope": "maximum skill utility across active Transfer Helper contexts; never averaged across unrelated profiles",
@@ -1413,7 +1483,13 @@ def analyze_transfer_candidates(
         upcoming_cm_limit=upcoming_cm_limit,
         include_team_trials=include_team_trials,
         include_generic_profiles=include_generic_profiles,
+        master_path=master,
+        as_of=as_of,
     )
+    settings["cm_calendar"] = upcoming_cm_presets(
+        course_payload or {}, master, as_of=as_of,
+        limit=upcoming_cm_limit if include_upcoming_cm_context else 0,
+    )[1]
     if not contexts:
         raise TransferHelperError(
             "Aucun profil actif pour le Transfer Helper. Activez le socle permanent "
@@ -1427,6 +1503,7 @@ def analyze_transfer_candidates(
     groups: dict[str, list[int]] = defaultdict(list)
     reference_counts: Counter[int] = Counter()
     records: list[dict[str, Any]] = []
+    loop_ids = {int(value) for value in active_loop_ids}
     for index, veteran in enumerate(veterans):
         group = comparison_group_key(veteran)
         groups[group].append(index)
@@ -1442,10 +1519,13 @@ def analyze_transfer_candidates(
             "is_saved": bool(veteran.get("is_saved")),
             "icon_type": int(veteran.get("icon_type") or 0),
             "memo": str(veteran.get("memo") or ""),
+            "active_loop_project": int(veteran.get("trained_chara_id") or 0) in loop_ids,
             "comparison_group": group,
             "same_card_copy_count": 0,
             "referenced_by_local_veterans": 0,
             "sparks": _factor_snapshot(veteran),
+            "comparison_veteran": frozen_veteran(veteran),
+            "comparison_affinities": {},
             "_best_parent_score": 0.0,
             "_best_grandparent_score": 0.0,
             "_best_parent_percentile": 100.0,
@@ -1472,16 +1552,17 @@ def analyze_transfer_candidates(
     # Pair-specific base compatibility is identical inside a same-costume group. The
     # only pair support that can differ is G1 overlap, so compare it against every
     # possible local partner once and carry the result into the dominance rule.
-    for (loser_index, winner_index), relation in relations.items():
-        loser_g1 = _member_g1(veterans[loser_index])
-        winner_g1 = _member_g1(veterans[winner_index])
-        for partner_index, partner in enumerate(veterans):
-            if partner_index in {loser_index, winner_index}:
-                continue
-            partner_g1 = _member_g1(partner)
-            if len(winner_g1 & partner_g1) < len(loser_g1 & partner_g1):
-                relation.pair_support_no_worse = False
-                break
+    if spark_protection_config.get("preserve_local_g1_pair_support", False):
+        for (loser_index, winner_index), relation in relations.items():
+            loser_g1 = _member_g1(veterans[loser_index])
+            winner_g1 = _member_g1(veterans[winner_index])
+            for partner_index, partner in enumerate(veterans):
+                if partner_index in {loser_index, winner_index}:
+                    continue
+                partner_g1 = _member_g1(partner)
+                if len(winner_g1 & partner_g1) < len(loser_g1 & partner_g1):
+                    relation.pair_support_no_worse = False
+                    break
 
     resolver = AffinityResolver(master)
     ace_options = load_ace_options(master)
@@ -1502,7 +1583,14 @@ def analyze_transfer_candidates(
     green_modes = {str(key): str(value) for key, value in (course_condition_config.get("modes") or {}).items()}
 
     affinity_cache: dict[tuple[int, int], dict[str, Any]] = {}
+    inheritance_cache: dict[tuple[int, int], dict[str, float]] = {}
     ace_cache: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    comparison_model: dict[str, Any] = {
+        "config": config, "race_skills": race_skills, "contexts": {},
+        "skill_labels": {str(row["catalog_key"]): str(row["spark_name"])
+                         for row in skill_catalog.get("white_skill_spark_groups") or []
+                         if row.get("catalog_key") and row.get("spark_name")},
+    }
     parent_weight_text = ", ".join(
         f"{key}={float(value):.1%}" for key, value in parent_weights.items()
     )
@@ -1548,6 +1636,11 @@ def analyze_transfer_candidates(
                 green_floors,
                 green_modes,
             )
+            comparison_model["contexts"][context.key] = {
+                **context.__dict__, "aces": aces,
+                "skill_weights": {key: float(weight_lookup(key)) for key in protection_skill_keys},
+            }
+            preparation = PairPreparation(resolver, {}, config, weight_lookup, race_skills) if optimized_solver() else None
             for skill_key in protection_skill_keys:
                 weight = max(0.0, float(weight_lookup(skill_key)))
                 current = active_skill_utility.get(skill_key)
@@ -1568,7 +1661,7 @@ def analyze_transfer_candidates(
             gp_static: list[dict[str, float]] = []
             for veteran in veterans:
                 parent_members = _lineage_members(veteran)
-                blue, _ = _blue_score(parent_members, context.distance, config)
+                blue, _ = _blue_score(parent_members, context.distance, config, include_details=False)
                 race, _ = _race_scenario_score(
                     parent_members, weight_lookup, race_skills, config, "parent_branch"
                 )
@@ -1582,12 +1675,12 @@ def analyze_transfer_candidates(
                 )
 
                 own_member = [(veteran, "grandparent", "candidate")]
-                gp_blue, _ = _blue_score(own_member, context.distance, config)
+                gp_blue, _ = _blue_score(own_member, context.distance, config, include_details=False)
                 gp_white, _ = _future_grandparent_white_score(
-                    own_member, weight_lookup, config, race_skills
+                    own_member, weight_lookup, config, race_skills, include_details=False,
                 )
                 gp_generation, _ = _white_generation_support_score(
-                    _lineage_members(veteran), weight_lookup, config
+                    _lineage_members(veteran), weight_lookup, config, include_details=False,
                 )
                 gp_unique, _ = _unique_score(
                     own_member, config, "future_grandparent"
@@ -1611,6 +1704,8 @@ def analyze_transfer_candidates(
             profile_parent_max: dict[int, float | None] = {index: None for index in range(len(veterans))}
             profile_gp_max: dict[int, float | None] = {index: None for index in range(len(veterans))}
             gp_score_cache: dict[tuple[int, int, int], list[float]] = {}
+            parent_vectors: list[list[float | None]] = [[] for _ in veterans]
+            gp_vectors: list[list[float]] = [[] for _ in veterans]
 
             for ace in aces:
                 ace_chara = int(ace.get("chara_id") or 0)
@@ -1631,6 +1726,7 @@ def analyze_transfer_candidates(
                             context.distance,
                             context.style,
                             config,
+                            include_details=False,
                         )
                         gp_components["pink"] = gp_pink
                         cached_gp_scores.append(
@@ -1650,17 +1746,27 @@ def analyze_transfer_candidates(
                             )
                             affinity_cache[affinity_key] = affinity
                         parent_components = dict(parent_static[veteran_index])
-                        parent_inheritance_affinities = _branch_inheritance_affinities(
-                            resolver, ace_chara, veteran, g1_bonus_value
-                        )
-                        parent_white, _ = _white_score(
-                            _lineage_members(veteran),
-                            weight_lookup,
-                            config,
-                            "parent_branch",
-                            inheritance_affinities=parent_inheritance_affinities,
-                            race_skill_map=race_skills,
-                        )
+                        parent_inheritance_affinities = inheritance_cache.get(affinity_key)
+                        if parent_inheritance_affinities is None:
+                            parent_inheritance_affinities = _branch_inheritance_affinities(
+                                resolver, ace_chara, veteran, g1_bonus_value,
+                            )
+                            inheritance_cache[affinity_key] = parent_inheritance_affinities
+                            records[veteran_index]["comparison_affinities"][str(ace_chara)] = [
+                                parent_inheritance_affinities.get(key, 0.0)
+                                for key in ("parent", "grandparent_1", "grandparent_2")
+                            ] + [float(affinity["total"])]
+                        if preparation is not None:
+                            parent_white, _ = preparation.white_score(
+                                _lineage_members(veteran), parent_inheritance_affinities,
+                                "parent_branch", lambda: None,
+                            )
+                        else:
+                            parent_white, _ = _white_score(
+                                _lineage_members(veteran), weight_lookup, config, "parent_branch",
+                                inheritance_affinities=parent_inheritance_affinities,
+                                race_skill_map=race_skills,
+                            )
                         parent_components["white_skill"] = parent_white
                         parent_pink, parent_pink_detail = _pink_score(
                             _lineage_members(veteran),
@@ -1671,6 +1777,7 @@ def analyze_transfer_candidates(
                             config,
                             mode="parent_branch",
                             inheritance_affinities=parent_inheritance_affinities,
+                            include_details=False,
                         )
                         parent_components["pink"] = parent_pink
                         parent_components["distance_s"] = float(parent_pink_detail["distance_s"]["score"])
@@ -1692,6 +1799,42 @@ def analyze_transfer_candidates(
                     current_gp_max = profile_gp_max[veteran_index]
                     if current_gp_max is None or gp_score > current_gp_max:
                         profile_gp_max[veteran_index] = gp_score
+                    parent_vectors[veteran_index].append(
+                        round(parent_score, 6) if parent_score is not None else None
+                    )
+                    gp_vectors[veteran_index].append(round(gp_score, 6))
+
+            competitive_vectors = {role: [[] for _ in veterans] for role in ("parent", "grandparent")}
+            for ace_index in range(len(aces)):
+                scores_by_role = {
+                    "parent": {i: parent_vectors[i][ace_index] for i in range(len(veterans))},
+                    "grandparent": {i: gp_vectors[i][ace_index] for i in range(len(veterans))},
+                }
+                quality_by_role = {}
+                for role, scores in scores_by_role.items():
+                    quality = _profile_quality_metrics(
+                        scores, _rank_percentiles(scores), absolute_floor=competitive_score_floor,
+                        absolute_weight=utility_absolute_weight, leader_weight=utility_leader_weight,
+                        percentile_weight=utility_percentile_weight,
+                    )
+                    quality_by_role[role] = quality
+                    for i in range(len(veterans)):
+                        competitive_vectors[role][i].append(_is_globally_competitive(
+                            scores[i], quality.get(i), competitive_score_floor=competitive_score_floor,
+                            competitive_utility_floor=competitive_utility_floor,
+                            minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
+                        ))
+                for group_indices in groups.values():
+                    if len(group_indices) < 2:
+                        continue
+                    _update_group_dominance_for_scores(
+                        group_indices, relations, scores_by_role["parent"], scores_by_role["grandparent"],
+                        quality_by_role["parent"], quality_by_role["grandparent"],
+                        competitive_score_floor=competitive_score_floor,
+                        competitive_utility_floor=competitive_utility_floor,
+                        minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
+                        dominance_tolerance=dominance_tolerance, capture_details=False,
+                    )
 
             parent_percentiles = _rank_percentiles(profile_parent_max)
             gp_percentiles = _rank_percentiles(profile_gp_max)
@@ -1709,22 +1852,6 @@ def analyze_transfer_candidates(
                 leader_weight=utility_leader_weight,
                 percentile_weight=utility_percentile_weight,
             )
-            for group_indices in groups.values():
-                if len(group_indices) < 2:
-                    continue
-                _update_group_dominance_for_scores(
-                    group_indices,
-                    relations,
-                    profile_parent_max,
-                    profile_gp_max,
-                    parent_quality,
-                    gp_quality,
-                    competitive_score_floor=competitive_score_floor,
-                    competitive_utility_floor=competitive_utility_floor,
-                    minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
-                    dominance_tolerance=dominance_tolerance,
-                    context=context,
-                )
             for veteran_index, record in enumerate(records):
                 parent_score = profile_parent_max[veteran_index]
                 gp_score = profile_gp_max[veteran_index]
@@ -1744,6 +1871,9 @@ def analyze_transfer_candidates(
                             "surface": context.surface,
                             "distance": context.distance,
                             "style": context.style,
+                            "ace_scores": parent_vectors[veteran_index],
+                            "ace_competitive": competitive_vectors["parent"][veteran_index],
+                            "ace_ids": [int(ace["card_id"]) for ace in aces],
                         }
                     )
                     record["_best_parent_percentile"] = min(
@@ -1766,6 +1896,9 @@ def analyze_transfer_candidates(
                             "surface": context.surface,
                             "distance": context.distance,
                             "style": context.style,
+                            "ace_scores": gp_vectors[veteran_index],
+                            "ace_competitive": competitive_vectors["grandparent"][veteran_index],
+                            "ace_ids": [int(ace["card_id"]) for ace in aces],
                         }
                     )
                     record["_best_grandparent_percentile"] = min(
@@ -1784,13 +1917,13 @@ def analyze_transfer_candidates(
             "avec les remplaçants dominants…"
         )
         for veteran, record in zip(veterans, records):
-            record["_spark_heritage"] = build_spark_heritage(
+            record["_spark_heritage"] = restrict_heritage(build_spark_heritage(
                 veteran,
                 race_skills,
                 skill_catalog,
                 active_skill_utility,
                 config,
-            )
+            ), spark_protection_config)
 
     for record in records:
         record["parent_evidence"] = _role_evidence(
@@ -1821,6 +1954,7 @@ def analyze_transfer_candidates(
         minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
         regret_tolerance=portfolio_regret_tolerance,
         spark_protection_config=spark_protection_config,
+        node_budget=portfolio_node_budget,
     )
     classify_portfolio_records(
         records,
@@ -1832,9 +1966,21 @@ def analyze_transfer_candidates(
         spark_protection_config=spark_protection_config,
         allow_strict_transfers=analysis_mode == "exhaustive",
     )
+    relevant_aces: dict[str, dict[str, dict[str, list[int]]]] = {}
+    for group_key, requirements in portfolio_requirements.items():
+        axes: dict[str, dict[str, list[int]]] = {"parent": {}, "grandparent": {}}
+        for requirement in requirements.values():
+            if requirement["kind"] == "performance" and requirement.get("ace_index") is not None:
+                axes[requirement["role"]].setdefault(requirement["context_key"], []).append(requirement["ace_index"])
+        relevant_aces[group_key] = axes
+    comparison_model["relevant_aces"] = relevant_aces
+    solver_audit = {group: dict(records[indices[0]].get("portfolio_solver") or {})
+                    for group, indices in groups.items()}
 
     portfolio_regrets: list[dict[str, Any]] = []
     uncovered_assets: list[dict[str, Any]] = []
+    profile_maps = {(i, role): {p["context_key"]: p for p in records[i].get(f"_{role}_profiles") or []}
+                    for i in selected_portfolio for role in ("parent", "grandparent")}
     for group_key, group_requirements in portfolio_requirements.items():
         group_selected = selected_portfolio & set(groups[group_key])
         for requirement_key, requirement in group_requirements.items():
@@ -1853,12 +1999,15 @@ def analyze_transfer_candidates(
                 continue
             role = str(requirement.get("role") or "")
             context_key = str(requirement.get("context_key") or "")
-            retained_scores = [
-                float(profile.get("score") or 0.0)
-                for index in group_selected
-                for profile in records[index].get(f"_{role}_profiles") or []
-                if str(profile.get("context_key") or "") == context_key
-            ]
+            ace_index = requirement.get("ace_index")
+            retained_scores = []
+            for index in group_selected:
+                profile = profile_maps[index, role].get(context_key)
+                if profile is None:
+                    continue
+                score = profile["ace_scores"][ace_index] if ace_index is not None else profile.get("score")
+                if score is not None:
+                    retained_scores.append(float(score))
             retained_best = max(retained_scores) if retained_scores else 0.0
             best_score = float(requirement.get("best_score") or 0.0)
             portfolio_regrets.append(
@@ -1866,6 +2015,7 @@ def analyze_transfer_candidates(
                     "comparison_group": group_key,
                     "role": role,
                     "context_key": context_key,
+                    "ace_card_id": requirement.get("ace_card_id"),
                     "label": requirement.get("label"),
                     "best_score": round(best_score, 6),
                     "retained_best_score": round(retained_best, 6),
@@ -1896,6 +2046,9 @@ def analyze_transfer_candidates(
         "protected": 4,
     }
     for record in records:
+        record["model_transfer_candidate"] = bool(record.get("transfer_eligible"))
+        record["transfer_eligible"] = False
+        record["requires_manual_cost_review"] = bool(record["model_transfer_candidate"])
         record["best_parent_score"] = round(float(record.pop("_best_parent_score")), 4)
         record["best_grandparent_score"] = round(float(record.pop("_best_grandparent_score")), 4)
         record["best_parent_percentile"] = round(float(record.pop("_best_parent_percentile")), 4)
@@ -1905,6 +2058,14 @@ def analyze_transfer_candidates(
         parent_profiles = record.pop("_parent_profiles")
         grandparent_profiles = record.pop("_grandparent_profiles")
         record.pop("_spark_heritage", None)
+        record.pop("_asset_keys", None)
+        record["comparison_profiles"] = {
+            role: {p["context_key"]: p["ace_scores"] for p in profiles if "ace_scores" in p}
+            for role, profiles in (("parent", parent_profiles), ("grandparent", grandparent_profiles))
+        }
+        for profile in parent_profiles + grandparent_profiles:
+            for key in ("ace_scores", "ace_competitive", "ace_ids"):
+                profile.pop(key, None)
         record["top_parent_profiles"] = sorted(
             parent_profiles,
             key=lambda item: (item["score"], -item["percentile"]),
@@ -1936,7 +2097,10 @@ def analyze_transfer_candidates(
     # the selected dominator already carries the useful evidence.
     payload = {
         "metadata": {
-            "format_version": 5,
+            "format_version": 7,
+            "prototype": True,
+            "decision_scope": "individual branches; local pairs do not drive default retention",
+            "unmodeled_costs": ["refarming effort", "current racing/team use", "future borrowed parent availability"],
             "generated_at_utc": generated_at,
             "purpose": "Selective helper for identifying redundant local veterans before transferring them in game.",
             "source_master": {"filename": master.name, "sha256": _sha256(master)},
@@ -1965,6 +2129,11 @@ def analyze_transfer_candidates(
             "portfolio_selected_count": len(selected_portfolio),
             "portfolio_requirement_counts": dict(sorted(requirement_counts.items())),
             "portfolio_audit": portfolio_audit,
+            "portfolio_solver_optimal_groups": sum(bool(item.get("optimal")) for item in solver_audit.values()),
+            "portfolio_solver": solver_audit,
+            "portfolio_group_count": len(groups),
+            "protected_redundant_count": sum(r.get("status") == "protected" and
+                r.get("analysis_status") in {"safe_transfer", "recommended_transfer"} for r in records),
             "spark_protection_floor_count": sum(
                 bool((record.get("spark_protection") or {}).get("applied"))
                 for record in records
@@ -1972,18 +2141,19 @@ def analyze_transfer_candidates(
             "safety_notes": [
                 "The helper never modifies the source collection export and never transfers a veteran automatically.",
                 "Locked veterans and veterans carrying a memo are always Protected before portfolio selection.",
-                "The default verdict scope is a permanent seven-archetype matrix over Front, Pace and Backline; it does not shrink when the upcoming Champion Meeting rotation changes.",
+                "The default exhaustive scope covers seven permanent surface/distance archetypes with all four running styles and all Ace variants; it does not shrink when the upcoming Champion Meeting rotation changes.",
                 "Keep means the copy is required by the minimum same-costume collection portfolio to stay within the configured regret in every competitive niche or to preserve a protected inheritance asset.",
-                "Strictly safe transfer requires one retained same-costume/same-Unique replacement that is not worse in any viable profile envelope, remains at least as good for G1 pair support, clears the average lead, and individually preserves protected Spark heritage.",
+                "Model equivalence compares the same Ace in every viable context; it requires a retained same-costume/same-Unique replacement within the dominance tolerance, individually preserved critical inheritance assets. This is model equivalence, not an in-game safety guarantee.",
                 "Recommended transfer means the copy is redundant at collection level. Its coverage may come from several retained veterans, so the report deliberately does not invent a single replacement.",
-                "Every transfer verdict includes role-by-role profile-envelope deltas: against the strict replacement when one exists, otherwise against the best retained portfolio copy in each competitive context.",
-                "Grandparent scores use an optimistic constant affinity ceiling so a character-specific compatibility niche is not discarded merely because no target was selected.",
+                "Every transfer verdict compares identical Ace targets: against the strict replacement when one exists, otherwise against the best retained portfolio copy for each competitive role/context/Ace. Evidence identifies the worst Ace witness per context.",
+                "Grandparent retention uses own factors and own G1 wins only; unknown future affinity and historical White-generation support have zero weight.",
                 "Alternate costumes are never treated as interchangeable, even when they share the same base character.",
-                "Protected Spark heritage is covered collectively by the retained portfolio; direct 2-star White Sparks require the configured high contextual value before they become mandatory assets.",
+                "Only explicitly listed build-defining skills can impose White coverage obligations. Ordinary Whites still contribute to the score.",
             ],
         },
         "settings": settings,
         "contexts": [context.__dict__ for context in contexts],
+        "comparison_model": comparison_model,
         "records": records,
     }
 
@@ -2012,6 +2182,8 @@ def analyze_transfer_candidates(
         csv_rows.append(
             {
                 "status": record.get("status"),
+                "analysis_status": record.get("analysis_status"),
+                "transfer_eligible": record.get("transfer_eligible"),
                 "reason": record.get("reason_code"),
                 "is_locked": record.get("is_locked"),
                 "memo": record.get("memo"),
@@ -2092,6 +2264,8 @@ def analyze_transfer_candidates(
         csv_rows,
         [
             "status",
+            "analysis_status",
+            "transfer_eligible",
             "reason",
             "is_locked",
             "memo",
@@ -2150,8 +2324,9 @@ def analyze_transfer_candidates(
         f"Veterans analysed: {len(veterans)}",
         f"Profile/category contexts: {len(contexts)}",
         f"Protected: {counts.get('protected', 0)}",
+        f"Protected but analytically redundant (never eligible): {payload['metadata']['protected_redundant_count']}",
         f"Keep: {counts.get('keep', 0)}",
-        f"Strictly safe transfer: {counts.get('safe_transfer', 0)}",
+        f"Model-equivalent candidates: {counts.get('safe_transfer', 0)}",
         f"Recommended transfer: {counts.get('recommended_transfer', 0)}",
         f"Review: {counts.get('review', 0)}",
         "",
@@ -2237,7 +2412,7 @@ def analyze_transfer_candidates(
         if not replacement:
             continue
         log(
-            f"Transfert strictement sûr détaillé : {canonical_veteran_label(record)} "
+            f"Équivalence dans le modèle détaillée : {canonical_veteran_label(record)} "
             f"— Sparks : "
             f"{((record.get('sparks') or {}).get('summary') or 'aucune')}"
         )

@@ -42,19 +42,7 @@ class TransferGuidanceTests(unittest.TestCase):
         )
 
     def test_transfer_controls_and_verdicts_have_contextual_help(self) -> None:
-        targets = (
-            "mode_combo",
-            "upcoming_cm_check",
-            "team_trials_check",
-            "generic_profiles_check",
-            "safe_card",
-            "recommended_card",
-            "review_card",
-            "keep_card",
-            "protected_card",
-            "table",
-            "detail",
-        )
+        targets = ("run_button", "menu_button", "search", "table")
         for target in targets:
             with self.subTest(target=target):
                 self.assertIn(f"self.{target}.setToolTip(", self.source)
@@ -64,18 +52,22 @@ class TransferGuidanceTests(unittest.TestCase):
             "Extraire ma collection",
             "Relier un export existant",
             "Maintenance et fichiers",
-            "Le mode exhaustif compare tous les Ace compatibles. Il ne certifie pas le coût de refarm ni l’usage actuel en course.",
-            "La couverture désigne le remplaçant ou l’ensemble de vétérans qui préserve les rôles compétitifs de la copie.",
-            "Un verrou ou un mémo en jeu interdit toute recommandation de transfert, quel que soit le score.",
+            "Historique, portée de l’analyse et dossier de sortie.",
+            "Rechercher par nom ou score…",
+            "Remplacée par {score}",
+            "Couverte par {first} + {second}",
+            "Jamais dans le top",
+            "À vérifier — couverture insuffisante",
         )
         for source in strings:
             with self.subTest(source=source):
                 self.assertNotEqual(translate_text(source, "en"), source)
 
-    def test_transfer_detail_allows_narrowing_without_changing_default_width(self) -> None:
-        self.assertIn("self.detail.setMinimumWidth(300)", self.source)
-        self.assertIn('"ui_splitter_transfer"', self.source)
-        self.assertIn("[700, 560]", self.source)
+    def test_transfer_has_no_decision_panel_or_costume_filter(self) -> None:
+        self.assertNotIn("TransferDecisionPanel", self.source)
+        self.assertNotIn("family_combo", self.source)
+        self.assertIn("def _reason_tooltip", self.source)
+        self.assertIn("def open_audit", self.source)
 
     def test_transfer_report_freshness_is_explicit(self) -> None:
         for state in (
@@ -84,10 +76,12 @@ class TransferGuidanceTests(unittest.TestCase):
             "STATE_READY",
             "STATE_STALE",
             "STATE_LOADED",
+            "STATE_REANALYZE",
         ):
             self.assertIn(state, self.source)
         self.assertIn("transfer_fingerprint", self.source)
         self.assertIn("generated_at_utc", self.source)
+        self.assertIn("calendar_valid_until", self.source)
 
 
 class FinalPolishSourceTests(unittest.TestCase):

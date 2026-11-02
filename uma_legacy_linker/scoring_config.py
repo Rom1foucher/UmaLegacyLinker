@@ -678,6 +678,51 @@ def validate_scoring_config(config: dict[str, Any]) -> None:
             "transfer_helper.upcoming_cm_limit doit être un entier positif ou nul."
         )
 
+    loop_protection = _require_dict(config, ("transfer_helper", "loop_protection"))
+    loop_skills = loop_protection.get("skills")
+    if (
+        not isinstance(loop_skills, list)
+        or any(not isinstance(skill, str) or not skill.strip() for skill in loop_skills)
+        or len(set(loop_skills)) != len(loop_skills)
+    ):
+        raise ScoringConfigError(
+            "transfer_helper.loop_protection.skills doit être une liste de catalog_key distinctes."
+        )
+    carriers_per_skill = loop_protection.get("carriers_per_skill")
+    if (
+        isinstance(carriers_per_skill, bool)
+        or not isinstance(carriers_per_skill, int)
+        or carriers_per_skill < 1
+    ):
+        raise ScoringConfigError(
+            "transfer_helper.loop_protection.carriers_per_skill doit être un entier strictement positif."
+        )
+    valid_loop_presets = {"front", "pace", "late", "end"}
+    loop_presets = loop_protection.get("presets")
+    if (
+        not isinstance(loop_presets, list)
+        or any(not isinstance(preset, str) or preset not in valid_loop_presets for preset in loop_presets)
+        or len(set(loop_presets)) != len(loop_presets)
+    ):
+        raise ScoringConfigError(
+            "transfer_helper.loop_protection.presets doit être une liste distincte parmi front, pace, late et end."
+        )
+    preset_skills = _require_dict(config, ("transfer_helper", "loop_protection", "preset_skills"))
+    required_preset_keys = {"common", *valid_loop_presets}
+    if set(preset_skills) != required_preset_keys:
+        raise ScoringConfigError(
+            "transfer_helper.loop_protection.preset_skills doit définir common, front, pace, late et end."
+        )
+    for preset, skills in preset_skills.items():
+        if (
+            not isinstance(skills, list)
+            or any(not isinstance(skill, str) or not skill.strip() for skill in skills)
+            or len(set(skills)) != len(skills)
+        ):
+            raise ScoringConfigError(
+                f"transfer_helper.loop_protection.preset_skills.{preset} doit être une liste de catalog_key distinctes."
+            )
+
     spark_protection = _require_dict(
         config, ("transfer_helper", "spark_protection")
     )

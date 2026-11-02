@@ -71,31 +71,13 @@ current inputs. Rerun that family when a current result is needed.
 
 ## Transfer Helper and profiles
 
-Transfer Helper is a prototype. It evaluates individual branches and never
-transfers a veteran in game. **Protected** copies have a lock, memo or an
-explicitly supplied protected ID. White Loop project files are not read on `main`.
-Protected copies remain visible in comparisons and redundant-copy filters.
-**Keep** copies are required by the portfolio. **Equivalent in the model** and
-**Redundant in the model** explain different forms of redundancy; verify racing
-use and refarming effort before acting. No prototype record is transfer-eligible.
+Transfer Helper shows veterans in descending in-game score order, with the score, Uma, verdict and reason. Switch between **List** and **Grid**; the grid echoes the game roster with portraits, rank, score and a clear keep/review/transfer badge. Choose the grid column count beside the view buttons; it defaults to five and is saved. Use **Transfer** to review recommended copies in the same order as the game, or **Keep** for retained, protected and uncertain copies. Search by name or score. Click a reason or press **Enter** to open the explanation panel; it follows the selected row. Select a role to compare its worst Ace and CM case on the score band. Aligned sparks show the factors relevant to that role, with parent-branch carriers marked as self, GP A and GP B. Blue stat rows show the whole lineage total, including stats that have no weight for the selected role. The lineage tree remains available even when the report has no scored role. Press **Escape** to close the panel.
 
-Select a row and use **Compare…**. The **Compared lineage** tab presents two
-alternative branches, not a local pair. Portraits and actual game rank/score help
-find each copy. Click a card or use the member selector to inspect every factor.
-Parent mode counts the copy and its two GPs. Future-GP mode counts only own
-factors. The optional farming-history view does not add old ancestors to score.
-Zoom and Fit controls support narrow windows. Text works with images disabled.
-
-Use the other tabs to inspect the same Ace/course/role: worst matched-target
-witnesses, weighted index points, exact Whites, factors/G1 and retained roles.
-For collective redundancy, one comparison can have a negative delta: another
-retained copy covers that niche. Historical reports freeze their model. Rerun old
-reports to obtain the new prototype rules.
-
-Upcoming CMs are selected dynamically from Global MDB dates, through final team
-registration when the round schedule is available. Future dates are explicitly
-unknown. Permanent roles remain evaluated when the CM rotation changes.
-See [local prototype instructions](TRANSFER_HELPER_PROTOTYPE.md).
+The page menu contains analysis scope, report history and the output folder. Changing scope marks the report stale. Loop protection supports both free-form White Spark selection and four optional presets. Free-form skills retain their best local carriers independently. Presets add the shared Racing Spirit: Stamina skill and the selected running-style package; each keeps the two strongest complete lineage branches, then protects the best lineage presence for any package skill not covered by those branches or the performance portfolio. The report summarizes how many copies loop protection retained and how many were kept only for loops. Preset skill lists are editable in `transfer_helper.loop_protection.preset_skills` in the scoring profile. A missing direct Support card is shown as a badge but does not prevent selection. Reports older than format 13 do not contain current package and floor reasons; rerun the analysis to populate them.
+The analysis never transfers veterans in game. Protected copies remain visible
+and are not eligible. Check current racing use and the effort to refarm before
+acting on any recommendation. Upcoming CMs use Global MDB dates; unknown dates
+remain explicit and permanent roles stay in scope.
 
 The Weights page edits overrides over bundled defaults. **Save profile** persists
 and activates the draft. Structural weights and White priorities are separate.

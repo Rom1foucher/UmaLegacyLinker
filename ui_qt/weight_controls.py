@@ -147,6 +147,8 @@ def weight_subcategory(path: Sequence[str]) -> tuple[str, str, int]:
             70,
         )
 
+    if root == "transfer_helper" and "loop_protection" in path:
+        return ("transfer.scope", "Protection des boucles White", 15)
     if root == "transfer_helper" and "spark_protection" in path:
         return (
             "transfer.spark_protection",

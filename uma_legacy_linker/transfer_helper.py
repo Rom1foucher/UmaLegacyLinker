@@ -21,6 +21,7 @@ from uma_legacy_linker.course_presets import ordered_course_presets, upcoming_cm
 from uma_legacy_linker.solver_pairs import PairPreparation
 from uma_legacy_linker.solver_runtime import solver_search, optimized_solver
 from uma_legacy_linker.transfer_portfolio import minimum_portfolio
+from uma_legacy_linker.transfer_coverage import build_transfer_reason
 from uma_legacy_linker.transfer_comparison import frozen_veteran
 from uma_legacy_linker.parent_optimizer import (
     DISTANCES,
@@ -793,6 +794,11 @@ def _portfolio_requirements(
                     "kind": "performance",
                     "label": f"{role}: {sample.get('profile') or context_key}",
                     "role": role, "context_key": context_key, "ace_index": ace_index,
+                    "surface": sample.get("surface"),
+                    "distance": sample.get("distance"),
+                    "style": sample.get("style"),
+                    "scope": sample.get("scope"),
+                    "course_key": sample.get("course_key"),
                     "ace_card_id": sample["ace_ids"][ace_index] if has_axis else None,
                     "best_score": round(best_score, 6),
                     "covered_by": {i for i, score in scores.items()
@@ -981,6 +987,74 @@ def _portfolio_requirements(
     return requirements
 
 
+def _solve_portfolio_group(
+    group_key: str,
+    group_indices: list[int],
+    requirements: dict[str, dict[str, Any]],
+    records: list[dict[str, Any]],
+    *,
+    node_budget: int,
+):
+    mandatory = {index for index in group_indices if _manual_protection(records[index])}
+    try:
+        return minimum_portfolio(
+            group_indices,
+            (item["covered_by"] for item in requirements.values()),
+            mandatory,
+            priorities={
+                index: (
+                    sum(
+                        float(profile.get("score") or 0.0)
+                        for role in ("parent", "grandparent")
+                        for profile in records[index].get(f"_{role}_profiles") or []
+                    ),
+                    int(records[index].get("rank_score") or 0),
+                )
+                for index in group_indices
+            },
+            node_budget=node_budget,
+        )
+    except ValueError as exc:
+        raise TransferHelperError(
+            f"Portefeuille impossible à couvrir pour {group_key}: {exc}"
+        ) from exc
+
+
+def _resolve_loop_presets(
+    loop_config: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    config = loop_config or {}
+    definitions = config.get("preset_skills") or {}
+    common = list(dict.fromkeys(
+        str(skill).strip() for skill in (definitions.get("common") or [])
+        if str(skill).strip()
+    ))
+    resolved: dict[str, list[str]] = {}
+    for preset in config.get("presets") or []:
+        preset = str(preset)
+        skills = list(dict.fromkeys(
+            common + [
+                str(skill).strip()
+                for skill in (definitions.get(preset) or [])
+                if str(skill).strip()
+            ]
+        ))
+        if skills:
+            resolved[preset] = skills
+    return resolved
+
+
+def _loop_skill_keys(loop_config: dict[str, Any] | None) -> list[str]:
+    config = loop_config or {}
+    skills = [
+        str(skill).strip() for skill in (config.get("skills") or [])
+        if str(skill).strip()
+    ]
+    for preset_skills in _resolve_loop_presets(config).values():
+        skills.extend(preset_skills)
+    return list(dict.fromkeys(skills))
+
+
 def _select_portfolio(
     groups: dict[str, list[int]],
     records: list[dict[str, Any]],
@@ -991,9 +1065,9 @@ def _select_portfolio(
     minimum_absolute_floor_ratio: float,
     regret_tolerance: float,
     spark_protection_config: dict[str, Any],
+    loop_protection_config: dict[str, Any] | None = None,
     node_budget: int = 50000,
 ) -> tuple[set[int], dict[str, dict[str, dict[str, Any]]]]:
-    selected: set[int] = set()
     all_requirements: dict[str, dict[str, dict[str, Any]]] = {}
 
     for group_key, group_indices in groups.items():
@@ -1008,33 +1082,235 @@ def _select_portfolio(
             spark_protection_config=spark_protection_config,
         )
         all_requirements[group_key] = requirements
-        mandatory = {
-            index for index in group_indices if _manual_protection(records[index])
+
+    # Pass one remains the existing performance and asset portfolio.
+    first_pass: dict[str, set[int]] = {}
+    selections = {}
+    for group_key, group_indices in groups.items():
+        selection = _solve_portfolio_group(
+            group_key, group_indices, all_requirements[group_key], records,
+            node_budget=node_budget,
+        )
+        selections[group_key] = selection
+        first_pass[group_key] = set(selection.selected)
+    first_selected = set().union(*first_pass.values()) if first_pass else set()
+    final_selected = set(first_selected)
+
+    loop_config = loop_protection_config or {}
+    manual_loop_skills = list(dict.fromkeys(
+        str(key).strip() for key in loop_config.get("skills") or [] if str(key).strip()
+    ))
+    preset_packages = _resolve_loop_presets(loop_config)
+    preset_loop_skills = list(dict.fromkeys(
+        skill for skills in preset_packages.values() for skill in skills
+    ))
+    loop_skills = list(dict.fromkeys(manual_loop_skills + preset_loop_skills))
+    try:
+        carriers_per_skill = max(1, int(loop_config.get("carriers_per_skill", 2)))
+    except (TypeError, ValueError):
+        carriers_per_skill = 2
+    if manual_loop_skills or preset_packages:
+        group_for_index = {
+            index: group_key
+            for group_key, indices in groups.items()
+            for index in indices
         }
-        try:
-            selection = minimum_portfolio(
-                group_indices, (r["covered_by"] for r in requirements.values()), mandatory,
-                priorities={i: (
-                    sum(float(p.get("score") or 0.0) for role in ("parent", "grandparent")
-                        for p in records[i].get(f"_{role}_profiles") or []),
-                    int(records[i].get("rank_score") or 0),
-                ) for i in group_indices},
+        loop_evidence = {
+            index: ((records[index].get("_spark_heritage") or {}).get("skills") or {})
+            for index in range(len(records))
+        }
+        loop_presence_totals = {
+            index: sum(
+                int((loop_evidence[index].get(skill) or {}).get("white_generation_carrier_count") or 0)
+                for skill in manual_loop_skills
+            )
+            for index in range(len(records))
+        }
+        affected_groups: set[str] = set()
+        loop_required_indices: set[int] = set()
+
+        # Keep the existing free-form skill list: each selected skill retains
+        # its own top carriers, independently of any selected package preset.
+        for skill_key in manual_loop_skills:
+            candidates = []
+            for index, record in enumerate(records):
+                heritage_skill = loop_evidence[index].get(skill_key) or {}
+                presence_count = int(heritage_skill.get("white_generation_carrier_count") or 0)
+                if presence_count <= 0 or index not in group_for_index:
+                    continue
+                candidates.append((
+                    index, presence_count, bool(heritage_skill.get("direct")),
+                    index in first_selected,
+                    int(heritage_skill.get("direct_white_max_stars") or 0),
+                    str(heritage_skill.get("name") or skill_key),
+                ))
+            candidates.sort(key=lambda row: (
+                -row[1], -int(row[2]), -int(row[3]), -row[4],
+                -int(records[row[0]].get("rank_score") or 0),
+                str(records[row[0]].get("trained_chara_id") or ""),
+            ))
+            for ordinal, (index, presence_count, direct, preselected, stars, display_name) in enumerate(
+                candidates[:carriers_per_skill], 1
+            ):
+                group_key = group_for_index[index]
+                all_requirements[group_key][f"loop_skill:{skill_key}:{ordinal}"] = {
+                    "kind": "loop_skill",
+                    "label": f"{display_name} ({presence_count}/3)",
+                    "skill_key": skill_key,
+                    "loop_presence_count": presence_count,
+                    "direct": direct,
+                    "total_loop_presences": loop_presence_totals[index],
+                    "stars": stars,
+                    "was_previously_selected": preselected,
+                    "carrier_ordinal": ordinal,
+                    "covered_by": {index},
+                }
+                loop_required_indices.add(index)
+                affected_groups.add(group_key)
+
+        # Rank full branches per selected preset. If presets overlap, the same
+        # record can satisfy both requirements without being retained twice.
+        for preset, package_skills in preset_packages.items():
+            package_max = 3 * len(package_skills)
+            candidates = []
+            for index, record in enumerate(records):
+                if index not in group_for_index:
+                    continue
+                heritage = loop_evidence[index]
+                package_score = sum(
+                    int((heritage.get(skill) or {}).get("white_generation_carrier_count") or 0)
+                    for skill in package_skills
+                )
+                if package_score <= 0:
+                    continue
+                direct_skill_count = sum(
+                    bool((heritage.get(skill) or {}).get("direct"))
+                    for skill in package_skills
+                )
+                package_stars = sum(
+                    int((heritage.get(skill) or {}).get("direct_total_stars") or 0)
+                    for skill in package_skills
+                )
+                candidates.append((
+                    index, package_score, direct_skill_count,
+                    index in first_selected, package_stars,
+                    int(record.get("rank_score") or 0),
+                ))
+            candidates.sort(key=lambda row: (
+                -row[1], -row[2], -int(row[3]), -row[4], -row[5],
+                str(records[row[0]].get("trained_chara_id") or ""),
+            ))
+            for ordinal, (index, package_score, direct_count, preselected, stars, _rank) in enumerate(
+                candidates[:2], 1
+            ):
+                group_key = group_for_index[index]
+                all_requirements[group_key][f"loop:{preset}:{ordinal}"] = {
+                    "kind": "loop_preset",
+                    "label": f"Boucle {preset.title()} {package_score}/{package_max}",
+                    "preset_key": preset,
+                    "package_score": package_score,
+                    "package_max": package_max,
+                    "package_skills": list(package_skills),
+                    "direct_skill_count": direct_count,
+                    "package_stars": stars,
+                    "branch_ordinal": ordinal,
+                    "was_previously_selected": preselected,
+                    "covered_by": {index},
+                }
+                loop_required_indices.add(index)
+                affected_groups.add(group_key)
+
+        # The per-skill floor protects the best lineage presence if no
+        # first-pass or package-selected copy retains that maximum.
+        selected_before_floor = set(first_selected) | loop_required_indices
+        for skill_key in preset_loop_skills:
+            candidates = []
+            for index, record in enumerate(records):
+                if index not in group_for_index:
+                    continue
+                heritage_skill = loop_evidence[index].get(skill_key) or {}
+                presence_count = int(heritage_skill.get("white_generation_carrier_count") or 0)
+                if presence_count <= 0:
+                    continue
+                candidates.append((
+                    index, presence_count, bool(heritage_skill.get("direct")),
+                    int(heritage_skill.get("direct_white_max_stars") or 0),
+                    int(record.get("rank_score") or 0),
+                ))
+            if not candidates:
+                continue
+            best_presence = max(row[1] for row in candidates)
+            if any(
+                index in selected_before_floor and presence >= best_presence
+                for index, presence, *_rest in candidates
+            ):
+                continue
+            best_candidates = [row for row in candidates if row[1] == best_presence]
+            best_candidates.sort(key=lambda row: (
+                -int(row[2]), -int(row[0] in first_selected), -row[3], -row[4],
+                str(records[row[0]].get("trained_chara_id") or ""),
+            ))
+            index, presence_count, direct, stars, _rank_score = best_candidates[0]
+            name = str((loop_evidence[index].get(skill_key) or {}).get("name") or skill_key)
+            sole_source = sum(row[1] == best_presence for row in candidates) == 1
+            label = (
+                f"Seule source {name} ({presence_count}/3)"
+                if sole_source else f"Meilleur porteur {name} ({presence_count}/3)"
+            )
+            group_key = group_for_index[index]
+            all_requirements[group_key][f"loop_floor:{skill_key}"] = {
+                "kind": "loop_floor",
+                "label": label,
+                "skill_key": skill_key,
+                "skill_name": name,
+                "loop_presence_count": presence_count,
+                "best_presence_count": best_presence,
+                "direct": direct,
+                "stars": stars,
+                "sole_source": sole_source,
+                "covered_by": {index},
+            }
+            loop_required_indices.add(index)
+            affected_groups.add(group_key)
+
+        # Add all requirements first, then rerun only affected costume groups.
+        for group_key in affected_groups:
+            selection = _solve_portfolio_group(
+                group_key, groups[group_key], all_requirements[group_key], records,
                 node_budget=node_budget,
             )
-        except ValueError as exc:
-            raise TransferHelperError(f"Portefeuille impossible à couvrir pour {group_key}: {exc}") from exc
-        group_selected = set(selection.selected)
+            selections[group_key] = selection
+            final_selected.difference_update(groups[group_key])
+            final_selected.update(selection.selected)
 
-        selected.update(group_selected)
+    for group_key, group_indices in groups.items():
+        requirements = all_requirements[group_key]
+        selection = selections[group_key]
+        group_selected = final_selected & set(group_indices)
         for index in group_indices:
             covered_requirements = [
                 {
                     "key": key,
                     "kind": requirement["kind"],
                     "label": requirement["label"],
+                    "preset_key": requirement.get("preset_key"),
+                    "package_score": requirement.get("package_score"),
+                    "package_max": requirement.get("package_max"),
+                    "package_skills": requirement.get("package_skills"),
+                    "direct_skill_count": requirement.get("direct_skill_count"),
+                    "package_stars": requirement.get("package_stars"),
                     "role": requirement.get("role"),
                     "context_key": requirement.get("context_key"),
                     "ace_card_id": requirement.get("ace_card_id"),
+                    "skill_key": requirement.get("skill_key"),
+                    "skill_name": requirement.get("skill_name"),
+                    "loop_presence_count": requirement.get("loop_presence_count"),
+                    "direct": requirement.get("direct"),
+                    "total_loop_presences": requirement.get("total_loop_presences"),
+                    "stars": requirement.get("stars"),
+                    "was_previously_selected": requirement.get("was_previously_selected"),
+                    "best_presence_count": requirement.get("best_presence_count"),
+                    "sole_source": requirement.get("sole_source"),
                 }
                 for key, requirement in requirements.items()
                 if index in requirement["covered_by"]
@@ -1059,12 +1335,86 @@ def _select_portfolio(
             records[index]["_asset_keys"] = {item["key"] for item in covered_requirements
                                              if item["kind"] != "performance"}
             records[index]["selected_in_portfolio"] = index in group_selected
+            records[index]["_portfolio_selected_before_loop"] = index in first_pass[group_key]
             records[index]["portfolio_solver"] = {
                 "optimal": selection.optimal, "nodes": selection.nodes,
                 "greedy_count": selection.greedy_count, "retained_count": len(group_selected),
             }
             records[index]["manual_protection_reasons"] = _manual_protection(records[index])
-    return selected, all_requirements
+    return final_selected, all_requirements
+
+
+def _loop_protection_report(
+    loop_config: dict[str, Any],
+    records: list[dict[str, Any]],
+    requirements: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any]:
+    manual_carriers: dict[str, list[dict[str, Any]]] = {}
+    preset_branches: dict[str, list[dict[str, Any]]] = {}
+    floor_carriers: dict[str, dict[str, Any]] = {}
+    retained_indices: set[int] = set()
+    additional_indices: set[int] = set()
+    for group_requirements in requirements.values():
+        for requirement in group_requirements.values():
+            kind = requirement.get("kind")
+            if kind not in {"loop_skill", "loop_preset", "loop_floor"}:
+                continue
+            index = next(iter(requirement.get("covered_by") or ()), None)
+            if index is None or index >= len(records):
+                continue
+            record = records[index]
+            retained_indices.add(index)
+            if not requirement.get("was_previously_selected"):
+                additional_indices.add(index)
+            entry = {
+                "trained_chara_id": record.get("trained_chara_id"),
+                "display_name": record.get("display_name") or record.get("card_name"),
+                "rank_score": record.get("rank_score"),
+                "presence_count": requirement.get("loop_presence_count", 0),
+                "direct": bool(requirement.get("direct")),
+                "total_loop_presences": requirement.get("total_loop_presences", 0),
+                "spark_stars": requirement.get("stars", 0),
+                "label": requirement.get("label"),
+                "already_retained_for_performance": bool(
+                    requirement.get("was_previously_selected")
+                ),
+            }
+            if kind == "loop_skill":
+                manual_carriers.setdefault(str(requirement.get("skill_key") or ""), []).append(entry)
+            elif kind == "loop_preset":
+                entry.update({
+                    "package_score": requirement.get("package_score"),
+                    "package_max": requirement.get("package_max"),
+                    "direct_skill_count": requirement.get("direct_skill_count"),
+                    "package_stars": requirement.get("package_stars"),
+                })
+                preset_branches.setdefault(str(requirement.get("preset_key") or ""), []).append(entry)
+            else:
+                entry.update({
+                    "best_presence_count": requirement.get("best_presence_count"),
+                    "sole_source": bool(requirement.get("sole_source")),
+                })
+                floor_carriers[str(requirement.get("skill_key") or "")] = entry
+    preset_packages = _resolve_loop_presets(loop_config)
+    requested_skills = _loop_skill_keys(loop_config)
+    available_skills = {
+        skill
+        for record in records
+        for skill, evidence in (((record.get("_spark_heritage") or {}).get("skills") or {}).items())
+        if int((evidence or {}).get("white_generation_carrier_count") or 0) > 0
+    }
+    return {
+        "skills": list(loop_config.get("skills") or []),
+        "carriers_per_skill": int(loop_config.get("carriers_per_skill", 2) or 2),
+        "presets": list(loop_config.get("presets") or []),
+        "preset_skills": preset_packages,
+        "selected_carriers": manual_carriers,
+        "selected_branches": preset_branches,
+        "floor_carriers": floor_carriers,
+        "skills_without_carriers": sorted(set(requested_skills) - available_skills),
+        "retained_copy_count": len(retained_indices),
+        "additional_retained_copy_count": len(additional_indices),
+    }
 
 
 def _strict_retained_replacement(
@@ -1258,6 +1608,7 @@ def classify_portfolio_records(
     *,
     dominance_mean_margin: float,
     spark_protection_config: dict[str, Any],
+    regret_tolerance: float = 2.5,
     allow_strict_transfers: bool = True,
 ) -> None:
     """Assign protection/portfolio verdicts without inventing one replacement."""
@@ -1354,6 +1705,13 @@ def classify_portfolio_records(
                 record["status"] = "protected"
                 record["reason_code"] = manual_reasons[0]
 
+        group_requirements = requirements.get(group_key) or {}
+        for index in group_indices:
+            records[index]["transfer_reason"] = build_transfer_reason(
+                index, group_indices, group_selected, group_requirements, records,
+                regret_tolerance,
+            )
+
 
 @solver_search
 def analyze_transfer_candidates(
@@ -1437,6 +1795,7 @@ def analyze_transfer_candidates(
         1, int(helper_config.get("minimum_ace_aptitude_rank", 6))
     )
     spark_protection_config = dict(helper_config.get("spark_protection") or {})
+    loop_protection_config = dict(helper_config.get("loop_protection") or {})
     settings = {
         "analysis_mode": analysis_mode,
         "competitive_score_floor": competitive_score_floor,
@@ -1459,6 +1818,12 @@ def analyze_transfer_candidates(
         "include_generic_profiles": include_generic_profiles,
         "portfolio_node_budget": portfolio_node_budget,
         "minimum_ace_aptitude_rank": minimum_ace_aptitude_rank,
+        "loop_protection": {
+            "skills": list(loop_protection_config.get("skills") or []),
+            "presets": list(loop_protection_config.get("presets") or []),
+            "preset_skills": dict(loop_protection_config.get("preset_skills") or {}),
+            "carriers_per_skill": int(loop_protection_config.get("carriers_per_skill", 2)),
+        },
         "course_preset_scope": "seven permanent archetypes by default; upcoming Champion Meetings and Team Trials are optional extra evidence",
         "portfolio_scope": "minimum same-costume collection covering every competitive permanent niche within the configured regret and every protected inheritance asset",
         "replacement_scope": "same costume ID and inherited Unique signature only",
@@ -1911,19 +2276,25 @@ def analyze_transfer_candidates(
     finally:
         resolver.close()
 
-    if bool(spark_protection_config.get("enabled", False)):
+    loop_protection_enabled = bool(_loop_skill_keys(loop_protection_config))
+    if bool(spark_protection_config.get("enabled", False)) or loop_protection_enabled:
         log(
             "Protection des Sparks : normalisation du patrimoine et comparaison "
             "avec les remplaçants dominants…"
         )
         for veteran, record in zip(veterans, records):
-            record["_spark_heritage"] = restrict_heritage(build_spark_heritage(
+            heritage = build_spark_heritage(
                 veteran,
                 race_skills,
                 skill_catalog,
                 active_skill_utility,
                 config,
-            ), spark_protection_config)
+            )
+            record["_spark_heritage"] = (
+                restrict_heritage(heritage, spark_protection_config)
+                if spark_protection_config.get("enabled", False)
+                else heritage
+            )
 
     for record in records:
         record["parent_evidence"] = _role_evidence(
@@ -1954,7 +2325,11 @@ def analyze_transfer_candidates(
         minimum_absolute_floor_ratio=minimum_absolute_floor_ratio,
         regret_tolerance=portfolio_regret_tolerance,
         spark_protection_config=spark_protection_config,
+        loop_protection_config=loop_protection_config,
         node_budget=portfolio_node_budget,
+    )
+    loop_protection_report = _loop_protection_report(
+        loop_protection_config, records, portfolio_requirements
     )
     classify_portfolio_records(
         records,
@@ -1964,6 +2339,7 @@ def analyze_transfer_candidates(
         relations,
         dominance_mean_margin=dominance_mean_margin,
         spark_protection_config=spark_protection_config,
+        regret_tolerance=portfolio_regret_tolerance,
         allow_strict_transfers=analysis_mode == "exhaustive",
     )
     relevant_aces: dict[str, dict[str, dict[str, list[int]]]] = {}
@@ -2059,6 +2435,7 @@ def analyze_transfer_candidates(
         grandparent_profiles = record.pop("_grandparent_profiles")
         record.pop("_spark_heritage", None)
         record.pop("_asset_keys", None)
+        record.pop("_portfolio_selected_before_loop", None)
         record["comparison_profiles"] = {
             role: {p["context_key"]: p["ace_scores"] for p in profiles if "ace_scores" in p}
             for role, profiles in (("parent", parent_profiles), ("grandparent", grandparent_profiles))
@@ -2097,7 +2474,7 @@ def analyze_transfer_candidates(
     # the selected dominator already carries the useful evidence.
     payload = {
         "metadata": {
-            "format_version": 7,
+            "format_version": 13,
             "prototype": True,
             "decision_scope": "individual branches; local pairs do not drive default retention",
             "unmodeled_costs": ["refarming effort", "current racing/team use", "future borrowed parent availability"],
@@ -2128,6 +2505,7 @@ def analyze_transfer_candidates(
             "status_counts": dict(sorted(counts.items())),
             "portfolio_selected_count": len(selected_portfolio),
             "portfolio_requirement_counts": dict(sorted(requirement_counts.items())),
+            "loop_protection": loop_protection_report,
             "portfolio_audit": portfolio_audit,
             "portfolio_solver_optimal_groups": sum(bool(item.get("optimal")) for item in solver_audit.values()),
             "portfolio_solver": solver_audit,
@@ -2257,6 +2635,12 @@ def analyze_transfer_candidates(
                         record.get("covered_by_portfolio") or []
                     )
                 ),
+                "reason_code": (record.get("transfer_reason") or {}).get("code", ""),
+                "reason_refs": json.dumps(
+                    (record.get("transfer_reason") or {}).get("refs") or [],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
             }
         )
     _write_csv(
@@ -2314,6 +2698,8 @@ def analyze_transfer_candidates(
             "portfolio_required_for",
             "portfolio_coverage_ids",
             "portfolio_coverage",
+            "reason_code",
+            "reason_refs",
         ],
     )
 

@@ -36,6 +36,7 @@ SPARK_COLORS = {
     # Spark list gold.
     "white_useful": ("#132d3b", "#407e9b", "#bfe9ff"),
     "white_priority": ("#352b12", "#d5aa3f", "#ffe9a3"),
+    "inactive": ("#252b34", "#687587", "#c0cad7"),
     # Scenario Sparks are informative/stat-oriented, not automatically major
     # white priorities.  A muted violet keeps them distinct from both ordinary
     # race whites and the gold priority treatment.
@@ -54,12 +55,15 @@ SPARK_SEMANTIC_LABELS = {
     "white_race": "Course",
     "white_useful": "Utile",
     "white_priority": "Priorité",
+    "inactive": "Inactif",
     "scenario": "Scénario",
     "other": "Autre",
 }
 
 
 def spark_style_key(factor: Mapping[str, object]) -> str:
+    if factor.get("is_inactive"):
+        return "inactive"
     if factor.get("is_score_priority"):
         return "white_priority"
     if factor.get("is_score_useful"):
@@ -69,6 +73,8 @@ def spark_style_key(factor: Mapping[str, object]) -> str:
 
 
 def spark_semantic_label(factor: Mapping[str, object]) -> str:
+    if factor.get("is_inactive"):
+        return "Inactif"
     return SPARK_SEMANTIC_LABELS[spark_style_key(factor)]
 
 APTITUDE_COLORS = {

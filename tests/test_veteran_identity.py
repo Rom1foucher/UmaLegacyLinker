@@ -74,14 +74,11 @@ def test_collisions_use_rank_then_blue_stars_instead_of_ids() -> None:
 def test_internal_ids_are_hidden_and_absent_from_transfer_search() -> None:
     transfer_source = Path("ui_qt/pages_transfer.py").read_text(encoding="utf-8")
     result_source = Path("ui_qt/result_panes.py").read_text(encoding="utf-8")
-    assert 'Column(t("ID technique")' not in transfer_source
+    assert 'default_hidden=()' in transfer_source
     assert 'default_hidden=(8,) if self.kind == "future" else ()' in result_source
-    filter_source = transfer_source[
-        transfer_source.index("def apply_filters") : transfer_source.index(
-            "def selected_row"
-        )
+    search_source = transfer_source[
+        transfer_source.index("def _search_text") : transfer_source.index("def apply_filters")
     ]
-    haystack = filter_source[filter_source.index("haystack ="):filter_source.index("selected =")]
-    assert 'record.get("trained_chara_id")' not in haystack
-    assert 'replacement.get("trained_chara_id")' not in haystack
-    assert "Rechercher un nom, un score ou un remplaçant" in transfer_source
+    assert '"trained_chara_id"' not in search_source
+    assert '"rank_score"' in search_source
+    assert "Rechercher par nom ou score…" in transfer_source

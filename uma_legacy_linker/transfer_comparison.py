@@ -110,7 +110,7 @@ def factor_inventory(record: dict[str, Any], role: str) -> dict[tuple[str, str],
         for kind in ("blue_stat", "red_aptitude", "white_skill", "white_race", "scenario", "unique"):
             for factor in _factor_list(source, kind):
                 # Stable MDB group identity prevents same-label factors merging.
-                identity = str(factor.get("factor_group_id") or factor.get("name") or "")
+                identity = factor_identity(kind, factor)
                 entry = inventory.setdefault((kind, identity), {
                     "type": kind, "name": factor.get("name") or identity,
                     "stars": 0, "carriers": [], "direct_stars": 0,
@@ -121,6 +121,14 @@ def factor_inventory(record: dict[str, Any], role: str) -> dict[tuple[str, str],
                 if source is veteran:
                     entry["direct_stars"] += stars
     return inventory
+
+
+def factor_identity(kind: str, factor: dict[str, Any]) -> str:
+    """Use the displayed stat name for blue totals across mixed group IDs."""
+    name = str(factor.get("name") or "").strip()
+    if kind == "blue_stat" and name:
+        return name.casefold()
+    return str(factor.get("factor_group_id") or name)
 
 
 def white_inventory(evaluation: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -1,4 +1,12 @@
-# Prototype Transfer Helper — test local
+# Archive du premier prototype Transfer Helper
+
+Cette procédure et les chiffres ci-dessous décrivent uniquement le premier
+prototype Transfer Helper. L’interface actuelle est la liste triée par score en
+jeu décrite dans le [guide utilisateur](USER_GUIDE.md). Les raisons explicites
+sont enregistrées dans `transfer_reason` (format 10) ; les rapports antérieurs
+doivent être recalculés.
+
+---
 
 Ce patch complet vise `origin/main`, vérifié le 11 octobre 2026 au commit
 `c8df8fc953c041c4a194e2ec488cbfe6ab2d21c4`. Il inclut le rework moteur, les

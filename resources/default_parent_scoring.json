@@ -390,6 +390,19 @@
     "upcoming_cm_limit": 5,
     "include_team_trials": false,
     "include_generic_profiles": false,
+    "loop_protection": {
+      "description": "Protect manually selected White Sparks independently and optionally protect complete style-loop packages. Package branches rank by lineage presences, direct skills, first-pass retention, stars and in-game score.",
+      "skills": [],
+      "carriers_per_skill": 2,
+      "presets": [],
+      "preset_skills": {
+        "common": ["racing_spirit_stamina"],
+        "front": ["groundwork", "prudent_positioning", "dodging_danger"],
+        "pace": ["groundwork", "nimble_navigator", "uma_stan"],
+        "late": ["uma_stan", "pedal_to_the_metal", "tail_held_high", "nimble_navigator"],
+        "end": ["uma_stan", "restraint", "tail_held_high", "nimble_navigator"]
+      }
+    },
     "dominance_tolerance": 0.0,
     "portfolio_node_budget": 50000,
     "dominance_mean_margin": 1.0,

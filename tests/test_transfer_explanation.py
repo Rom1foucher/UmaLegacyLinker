@@ -3,8 +3,8 @@ from copy import deepcopy
 import pytest
 
 from tests.test_transfer_comparison import comparison_fixture
-from ui_qt.transfer_explanation import comparison_explanation, explanation_html, fact_text
-from uma_legacy_linker.transfer_comparison import comparison_evaluation
+from ui_qt.transfer_explanation import comparison_explanation, explanation_html, fact_text, spark_duel
+from uma_legacy_linker.transfer_comparison import comparison_evaluation, factor_inventory
 
 
 def saved_pair():
@@ -66,6 +66,54 @@ def test_unchanged_factors_are_not_used_as_fabricated_explanations():
     assert result['gains'] == result['losses'] == []
     assert 'Aucune différence pertinente identifiée' in explanation_html(result, lambda s: s)
     assert 'Aucune perte' not in explanation_html(result, lambda s: s)
+
+
+def test_spark_duel_aggregates_stat_totals_across_group_ids_and_keeps_them_visible():
+    from ui_qt.transfer_lineage import comparison_nodes
+
+    _, candidate, model = comparison_fixture()
+    veteran = candidate['comparison_veteran']
+    veteran['factors']['by_type']['blue_stat'].extend([
+        {'name': 'Wit', 'stars': 3, 'factor_group_id': 101},
+    ])
+    lineage = veteran['when_used_as_parent']
+    lineage['grandparent_1']['factors']['by_type']['blue_stat'].append(
+        {'name': 'Wit', 'stars': 3, 'factor_group_id': 102}
+    )
+    lineage['grandparent_2'] = {
+        'card_name': 'GP B', 'factors': {'by_type': {
+            'blue_stat': [{'name': 'Wit', 'stars': 2, 'factor_group_id': 103}],
+        }},
+    }
+    target = deepcopy(candidate)
+    target['trained_chara_id'] = 2
+    target['comparison_veteran']['trained_chara_id'] = 2
+    for member in [target['comparison_veteran'], *target['comparison_veteran']['when_used_as_parent'].values()]:
+        member['factors']['by_type']['blue_stat'] = [
+            factor for factor in member['factors']['by_type'].get('blue_stat', [])
+            if factor.get('name') != 'Wit'
+        ]
+    for record in (candidate, target):
+        record['comparison_profiles'] = {
+            'parent': {'context': [comparison_evaluation(record, model, 'context', 0, 'parent')['score']]}
+        }
+
+    inventory = factor_inventory(candidate, 'parent')
+    duel = spark_duel(candidate, target, model, 'context', 0, 'parent', limit=1)
+
+    assert inventory[('blue_stat', 'wit')]['stars'] == 8
+    wit = next(item for item in duel['factors'] if item['name'] == 'Wit')
+    assert wit['left_stars'] == 8
+    assert wit['right_stars'] == 0
+    nodes = comparison_nodes(
+        (candidate, target), 'parent', spark_filter={('blue_stat', 'wit')}
+    )
+    left_wit_totals = [
+        factor['branch_star_delta']
+        for position, node in nodes.items() if position.startswith('p1')
+        for factor in node['all_sparks'] if factor['name'] == 'Wit'
+    ]
+    assert left_wit_totals == [8, 8, 8]
 
 
 def test_without_frozen_factors_the_explanation_stays_explicitly_unavailable():

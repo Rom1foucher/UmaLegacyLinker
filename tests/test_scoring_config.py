@@ -156,6 +156,35 @@ class ScoringConfigTests(unittest.TestCase):
         with self.assertRaises(ScoringConfigError):
             validate_scoring_config(config)
 
+    def test_transfer_helper_loop_protection_is_validated(self) -> None:
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["loop_protection"]["skills"] = ["one", "one"]
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["loop_protection"]["carriers_per_skill"] = 0
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["loop_protection"]["skills"] = ["nimble_navigator"]
+        validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["loop_protection"]["presets"] = ["front", "late"]
+        validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["loop_protection"]["presets"] = ["front", "unknown"]
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
+        config = read_json_object(DEFAULT_SCORING)
+        config["transfer_helper"]["loop_protection"]["preset_skills"]["common"] = ["one", "one"]
+        with self.assertRaises(ScoringConfigError):
+            validate_scoring_config(config)
+
     def test_negative_weight_is_rejected(self) -> None:
         default = read_json_object(DEFAULT_SCORING)
         invalid = deep_merge(

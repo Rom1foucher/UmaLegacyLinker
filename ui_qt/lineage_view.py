@@ -55,6 +55,7 @@ from ui_qt.theme import (
     spark_semantic_label,
     spark_style_key,
 )
+from ui_qt.spark_chip import paint_spark_chip
 from ui_qt.typography import css_point_size, point_size
 from ui_qt.zoom import (
     CALENDAR_ZOOM_KEY,
@@ -367,7 +368,9 @@ class LineageTree(ZoomableCanvas):
     def _spark_chip_width(self, factor: dict[str, Any], maximum: float) -> float:
         metrics = QFontMetrics(self._spark_font())
         stars = max(0, int(factor.get("stars") or 0))
-        marker = f"[{self.context.t(spark_semantic_label(factor))}] "
+        category = spark_semantic_label(dict(factor, is_inactive=False))
+        status = " · " + self.context.t("Inactif") if factor.get("is_inactive") else ""
+        marker = f"[{self.context.t(category)}{status}] "
         text = f"{marker}{stars}★  {factor.get('name') or '—'}"
         probability = _probability_text(_run_probability(factor))
         if probability:
@@ -912,67 +915,9 @@ class LineageTree(ZoomableCanvas):
         rect: QRectF,
         factor: dict[str, Any],
     ) -> None:
-        background, border, foreground = _factor_style(factor)
-        painter.setBrush(QColor(background))
-        border_width = (
-            1.8
-            if factor.get("is_score_priority")
-            else 1.4
-            if factor.get("is_score_useful")
-            else 1.0
-        )
-        painter.setPen(QPen(QColor(border), border_width))
-        painter.drawRoundedRect(rect, 5.0, 5.0)
-        left = rect.left() + 7.0
         icon_url = self._skill_urls.get((position, index))
         icon = self._pixmaps.get(icon_url or "")
-        if icon is not None and not icon.isNull():
-            icon_rect = QRectF(left, rect.top() + 3.0, 19.0, 19.0)
-            scaled = icon.scaled(
-                icon_rect.size().toSize(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            painter.drawPixmap(icon_rect, scaled, QRectF(scaled.rect()))
-            left = icon_rect.right() + 5.0
-
-        font = self._spark_font()
-        painter.setFont(font)
-        probability_text = _probability_text(_run_probability(factor))
-        probability_width = (
-            painter.fontMetrics().horizontalAdvance(probability_text) + 12.0
-            if probability_text
-            else 0.0
-        )
-        stars = max(0, int(factor.get("stars") or 0))
-        marker = f"[{self.context.t(spark_semantic_label(factor))}] "
-        name = f"{marker}{stars}★  {factor.get('name') or '—'}"
-        available = max(12, int(rect.right() - left - 7.0 - probability_width))
-        visible = painter.fontMetrics().elidedText(name, Qt.TextElideMode.ElideRight, available)
-        painter.setPen(QColor(foreground))
-        painter.drawText(
-            QRectF(left, rect.top(), float(available), rect.height()),
-            Qt.AlignmentFlag.AlignVCenter,
-            visible,
-        )
-        if probability_text:
-            probability_rect = QRectF(
-                rect.right() - probability_width,
-                rect.top() + 3.0,
-                probability_width - 4.0,
-                rect.height() - 6.0,
-            )
-            painter.setBrush(QColor("#111821"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(probability_rect, 4.0, 4.0)
-            if factor.get("is_score_priority"):
-                probability_color = "#ffe9a3"
-            elif factor.get("is_score_useful"):
-                probability_color = "#bfe9ff"
-            else:
-                probability_color = "#f0f5fb"
-            painter.setPen(QColor(probability_color))
-            painter.drawText(probability_rect, Qt.AlignmentFlag.AlignCenter, probability_text)
+        paint_spark_chip(self.context, painter, rect, factor, self._spark_font(), icon)
 
     def _card_tooltip(self, position: str) -> str:
         node = self.nodes.get(position)

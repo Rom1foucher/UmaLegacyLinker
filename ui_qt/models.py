@@ -17,6 +17,7 @@ class Column:
     sort_getter: Getter | None = None
     tooltip_getter: Getter | None = None
     decoration_getter: Getter | None = None
+    foreground_getter: Getter | None = None
 
 
 def nested(*keys: str, default: Any = "—") -> Getter:
@@ -80,6 +81,8 @@ class ResultTableModel(QAbstractTableModel):
             if column.tooltip_getter is not None:
                 return column.tooltip_getter(row)
             return row.get("_tooltip")
+        if role == Qt.ItemDataRole.ForegroundRole and column.foreground_getter is not None:
+            return column.foreground_getter(row)
         if role == Qt.ItemDataRole.DecorationRole and column.decoration_getter is not None:
             return column.decoration_getter(row)
         if role == self.RawValueRole:

@@ -96,27 +96,30 @@ class QtUiCoreTests(unittest.TestCase):
         self.assertIn('freshness.state == "ready"', source)
         self.assertIn('freshness.state == "inputs_changed"', source)
 
-    def test_transfer_page_exposes_analysis_scope_controls(self) -> None:
+    def test_transfer_page_exposes_the_inline_mass_transfer_list(self) -> None:
         source = (PROJECT_DIR / "ui_qt" / "pages_transfer.py").read_text(
             encoding="utf-8"
         )
         tree = ast.parse(source)
-        attributes = {
-            node.attr
+        columns = [
+            node.args[0].args[0].value
             for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute)
-        }
-        self.assertTrue(
-            {
-                "mode_combo",
-                "upcoming_cm_check",
-                "upcoming_cm_limit",
-                "team_trials_check",
-                "generic_profiles_check",
-            }.issubset(attributes)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "Column"
+            and node.args
+            and isinstance(node.args[0], ast.Call)
+            and node.args[0].args
+            and isinstance(node.args[0].args[0], ast.Constant)
+        ]
+        self.assertEqual(columns, ["Score", "Uma", "Verdict", "Raison"])
+        self.assertIn('("all", "transfer", "keep")', source)
+        self.assertIn("def _reason_label", source)
+        self.assertIn("def _reason_cell_clicked", source)
+        self.assertIn("def _show_row_context_menu", source)
+        main_window = (PROJECT_DIR / "ui_qt" / "main_window.py").read_text(
+            encoding="utf-8"
         )
-        self.assertIn('"fast"', source)
-        self.assertIn('"exhaustive"', source)
+        self.assertIn('"transfer": TransferPage', main_window)
 
     def test_partial_white_skill_priorities_merge_recursively(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -297,7 +300,7 @@ class QtUiCoreTests(unittest.TestCase):
             if not any(key in hidden or key.endswith("description") for key in path)
         ]
         sources = {weight_subcategory(path)[1] for path in paths}
-        self.assertEqual(len(sources), 54)
+        self.assertEqual(len(sources), 55)
         self.assertNotIn("Autres réglages", sources)
         for source in sources:
             with self.subTest(source=source):
@@ -370,7 +373,7 @@ class QtUiCoreTests(unittest.TestCase):
                 self.assertNotEqual(french.summary, english.summary)
                 self.assertFalse(french.summary.startswith("Règle «"))
             checked += 1
-        self.assertEqual(checked, 244)
+        self.assertEqual(checked, 252)
 
     def test_settings_updates_preserve_legacy_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

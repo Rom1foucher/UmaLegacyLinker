@@ -262,6 +262,8 @@ class TransferRequest:
     include_team_trials: bool = False
     include_generic_profiles: bool = False
     active_loop_ids: tuple[int, ...] = ()
+    loop_protection_skills: tuple[str, ...] | None = None
+    loop_protection_presets: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -583,6 +585,16 @@ def run_transfer_analysis(
             "include_generic_profiles": request.include_generic_profiles,
         }
     )
+    if request.loop_protection_skills is not None:
+        loop_protection = helper_config.setdefault("loop_protection", {})
+        if not isinstance(loop_protection, dict):
+            raise ScoringConfigError("transfer_helper.loop_protection doit être un objet JSON.")
+        loop_protection["skills"] = list(request.loop_protection_skills)
+    if request.loop_protection_presets is not None:
+        loop_protection = helper_config.setdefault("loop_protection", {})
+        if not isinstance(loop_protection, dict):
+            raise ScoringConfigError("transfer_helper.loop_protection doit être un objet JSON.")
+        loop_protection["presets"] = list(request.loop_protection_presets)
     validate_scoring_config(scoring_payload)
     scoring_config = write_json_object(scoring_config, scoring_payload)
     skill_priorities = _materialize_skill_priorities(

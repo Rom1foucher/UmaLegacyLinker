@@ -5,8 +5,11 @@ Stars, skill utilities and index points are deliberately kept in separate units.
 """
 from html import escape
 from math import isfinite
+from math import isfinite
 
 from uma_legacy_linker.transfer_comparison import comparison_evaluation, factor_inventory, white_inventory
+from uma_legacy_linker.skill_catalog import slugify
+from uma_legacy_linker.parent_optimizer import _scenario_stat_targets
 from ui_qt.theme import COLORS
 
 
@@ -16,6 +19,139 @@ COMPONENT_LABELS = {
     'white_generation': 'Génération White', 'race_scenario': 'Course / scénario',
     'unique': 'Unique', 'g1_potential': 'Potentiel G1', 'affinity': 'Affinité',
 }
+
+
+def spark_duel(candidate, target, model, key, ace_index, role, evaluations=None, limit=6):
+    """Build aligned, role-relevant spark rows after verifying both frozen scores."""
+    try:
+        left, right = evaluations or (
+            comparison_evaluation(candidate, model, key, ace_index, role),
+            comparison_evaluation(target, model, key, ace_index, role),
+        )
+        for record, value in ((candidate, left), (target, right)):
+            saved = record.get('comparison_profiles', {}).get(role, {}).get(key, [])
+            score = value.get('score')
+            if (ace_index >= len(saved) or score is None or saved[ace_index] is None
+                    or not all(isfinite(float(v)) for v in (score, saved[ace_index]))
+                    or abs(float(saved[ace_index]) - float(score)) > 1e-5):
+                return {'available': False, 'factors': [], 'folded': 0}
+        context = model['contexts'][key]
+        inventories = [factor_inventory(record, role) for record in (candidate, target)]
+        skill_rows = [white_inventory(item) for item in (left, right)]
+        axes = {'Turf': 'surface', 'Dirt': 'surface', 'Sprint': 'distance', 'Mile': 'distance',
+                'Medium': 'distance', 'Long': 'distance', 'Front Runner': 'style',
+                'Pace Chaser': 'style', 'Late Surger': 'style', 'End Closer': 'style'}
+        items = []
+        for factor_key in set(inventories[0]) | set(inventories[1]):
+            kind = factor_key[0]
+            l, r = (inventory.get(factor_key, {}) for inventory in inventories)
+            name = str(l.get('name') or r.get('name') or factor_key[1])
+            inactive_reason = ""
+            if kind == 'blue_stat':
+                relevance = float(left['weights'].get('blue', 0)) * float(left['details']['blue'].get('stat_weights', {}).get(name, 1))
+            elif kind == 'unique':
+                relevance = float(left['weights'].get('unique', 0))
+            elif kind == 'red_aptitude':
+                dimension = axes.get(name)
+                if dimension is None:
+                    relevance = 0.0
+                    inactive_reason = "Aptitude non reconnue par le modèle."
+                elif name.casefold() != str(context.get(dimension, '')).replace('_', ' ').title().casefold():
+                    relevance = 0.0
+                    inactive_reason = "Aptitude hors du profil de course sélectionné."
+                elif role == 'parent':
+                    component = {
+                        'distance': 'distance_s',
+                        'surface': 'surface_aptitude',
+                        'style': 'pink_other',
+                    }[dimension]
+                    relevance = float(left['weights'].get(component, 0))
+                    if relevance <= 0:
+                        inactive_reason = "Poids nul pour cette composante dans ce profil."
+                else:
+                    pink = left['details'].get('pink', {})
+                    dimension_detail = (pink.get('dimensions') or {}).get(dimension) or {}
+                    relevance = (
+                        float(left['weights'].get('pink', 0))
+                        * float(dimension_detail.get('dimension_weight', 0))
+                    )
+                    if relevance <= 0:
+                        inactive_reason = "Poids nul pour cette composante dans ce profil."
+            elif kind == 'white_skill':
+                skill_key = next((skill for skill, item in (skill_rows[0] | skill_rows[1]).items()
+                                  if slugify(name) == skill or slugify(str(item.get('name') or '')) == slugify(name)), '')
+                profile_weight = float(context.get('skill_weights', {}).get(skill_key, 0))
+                relevance = profile_weight * float(left['weights'].get('white_skill', 0))
+                if not skill_key or relevance <= 0:
+                    continue
+                name = str((skill_rows[0].get(skill_key) or skill_rows[1].get(skill_key) or {}).get('name') or name)
+            elif kind == 'white_race':
+                grants = (model.get('race_skills') or {}).get(name, [])
+                profile_weight = max((float(context.get('skill_weights', {}).get(skill, 0))
+                                      for skill in grants), default=0.0)
+                white_relevance = profile_weight * float(left['weights'].get('white_skill', 0))
+                race_relevance = float(left['weights'].get('race_scenario', 0)) if role == 'parent' else 0.0
+                relevance = max(white_relevance, race_relevance)
+                if relevance <= 0:
+                    continue
+            elif kind == 'scenario':
+                targets, _source = _scenario_stat_targets(l or r)
+                stat_weights = left['details']['blue'].get('stat_weights', {})
+                relevance = float(left['weights'].get('blue', 0)) * sum(
+                    max(0.0, float(stat_weights.get(stat, 0))) for stat in targets
+                )
+            else:
+                continue
+            if relevance <= 0:
+                if kind == 'blue_stat':
+                    inactive_reason = "Poids nul pour cette composante dans ce profil."
+                    items.append({
+                        'key': factor_key, 'type': kind, 'role': role, 'name': name,
+                        'left_stars': int(l.get('stars') or 0),
+                        'right_stars': int(r.get('stars') or 0),
+                        'left_carriers': list(l.get('carriers') or []),
+                        'right_carriers': list(r.get('carriers') or []),
+                        'priority': 0.0, 'is_inactive': True,
+                        'inactive_reason': inactive_reason,
+                    })
+                elif kind == 'red_aptitude' and inactive_reason:
+                    items.append({
+                        'key': factor_key, 'type': kind, 'role': role, 'name': name,
+                        'left_stars': int(l.get('stars') or 0),
+                        'right_stars': int(r.get('stars') or 0),
+                        'left_carriers': list(l.get('carriers') or []),
+                        'right_carriers': list(r.get('carriers') or []),
+                        'priority': 0.0, 'is_inactive': True,
+                        'inactive_reason': inactive_reason,
+                    })
+                continue
+            left_carriers = list(l.get('carriers') or [])
+            right_carriers = list(r.get('carriers') or [])
+            items.append({
+                'key': factor_key, 'type': kind, 'role': role, 'name': name,
+                'left_stars': int(l.get('stars') or 0), 'right_stars': int(r.get('stars') or 0),
+                'left_carriers': left_carriers if role == 'parent' else [('self', int(l.get('direct_stars') or 0))],
+                'right_carriers': right_carriers if role == 'parent' else [('self', int(r.get('direct_stars') or 0))],
+                'priority': relevance * max(1, int(l.get('stars') or 0), int(r.get('stars') or 0)),
+            })
+        items.sort(key=lambda item: (
+            bool(item.get('is_inactive')), -item['priority'],
+            item['name'].casefold(), str(item['key']),
+        ))
+        # Keep every stat total visible, even when a stat has no weight for
+        # this distance; mark zero-weight stats inactive instead of folding
+        # their total into a generic "other sparks" count.
+        stats = [item for item in items if item.get('type') == 'blue_stat']
+        active = [item for item in items
+                  if item.get('type') != 'blue_stat' and not item.get('is_inactive')]
+        inactive = [item for item in items
+                    if item.get('type') != 'blue_stat' and item.get('is_inactive')]
+        remaining = max(0, limit - len(stats))
+        return {'available': True, 'factors': stats + active[:remaining] + inactive,
+                'folded': max(0, len(active) - remaining),
+                'all_factors': items}
+    except (KeyError, TypeError, ValueError, IndexError, OverflowError):
+        return {'available': False, 'factors': [], 'folded': 0}
 
 
 def comparison_explanation(candidate, target, model, key, ace_index, role, evaluations=None):

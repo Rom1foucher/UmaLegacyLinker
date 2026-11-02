@@ -45,9 +45,10 @@ class I18nTests(unittest.TestCase):
         )
 
     def test_current_transfer_labels_are_translated(self) -> None:
+        self.assertEqual(translate_text("Raison", "en"), "Reason")
         self.assertEqual(
-            translate_text("Couverture / remplaçant", "en"),
-            "Coverage / replacement",
+            translate_text("Remplacée par {score}", "en"),
+            "Replaced by {score}",
         )
         self.assertEqual(translate_text("Rang parent", "en"), "Parent rank")
         self.assertEqual(translate_text("Rang GP", "en"), "GP rank")
@@ -181,10 +182,8 @@ class I18nTests(unittest.TestCase):
 
     def test_current_transfer_terminology_is_translated(self) -> None:
         self.assertEqual(translate_text("ID technique", "en"), "Technical ID")
-        self.assertEqual(
-            translate_text("Couverture / remplaçant", "en"),
-            "Coverage / replacement",
-        )
+        self.assertEqual(translate_text("Raison", "en"), "Reason")
+        self.assertEqual(translate_text("Jamais dans le top", "en"), "Never near the top")
 
     def test_profile_values_remain_canonical(self) -> None:
         label = profile_label("style", "pace_chaser", "en")

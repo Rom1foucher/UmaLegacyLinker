@@ -548,6 +548,55 @@ def describe_weight(path: Sequence[str], value: Any, language: str) -> WeightHel
     low, high = _scale_labels(path, value, language)
     advanced = isinstance(value, (list, dict))
 
+    if root == "transfer_helper" and len(path) >= 3 and path[1] == "loop_protection":
+        field = path[2]
+        if field == "skills":
+            summary = _pick(
+                language,
+                "Skills White choisies librement, protégées en plus des presets de boucle.",
+                "White Skills selected freely and protected in addition to loop presets.",
+            )
+            impact = _pick(
+                language,
+                "Ajoute ou retire des clés du catalogue pour préserver ces porteurs pendant le transfert.",
+                "Add or remove catalog keys to preserve their carriers during transfer.",
+            )
+        elif field == "carriers_per_skill":
+            summary = _pick(
+                language,
+                "Nombre de meilleurs porteurs conservés pour chaque skill de la sélection libre.",
+                "Number of top carriers retained for each freely selected skill.",
+            )
+            impact = _pick(
+                language,
+                "L’augmenter garde davantage de sources indépendantes pour chaque skill sélectionnée.",
+                "Increasing it retains more independent sources for each selected skill.",
+            )
+        elif field == "presets":
+            summary = _pick(
+                language,
+                "Presets de boucle actifs, cumulés à la sélection libre des skills.",
+                "Active loop presets, combined with the freely selected skills.",
+            )
+            impact = _pick(
+                language,
+                "Chaque preset conserve ses meilleures branches de package et protège les sources uniques nécessaires.",
+                "Each preset keeps its strongest package branches and protects any required unique sources.",
+            )
+        else:
+            preset = _label(path[-1], language)
+            summary = _pick(
+                language,
+                f"Skills White qui composent le package du preset « {preset} », avec le socle commun.",
+                f"White Skills in the “{preset}” preset package, together with the shared core.",
+            )
+            impact = _pick(
+                language,
+                "Modifier la liste change les skills utilisées pour classer les branches et calculer leur plancher de protection.",
+                "Editing this list changes which skills rank package branches and receive a protection floor.",
+            )
+        return WeightHelp(summary, impact, scope, low, high, True)
+
     if (root == "mode_weights" or root == "transfer_helper" and path[1] in {"branch_weights", "grandparent_weights"}) and len(path) >= 3:
         component = path[-1]
         summary = _pick(

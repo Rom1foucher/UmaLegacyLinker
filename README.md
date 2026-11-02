@@ -1,6 +1,3 @@
-> Transfer Helper prototype: individual-branch diagnostics and visual lineage
-> comparison. See [local test instructions](docs/TRANSFER_HELPER_PROTOTYPE.md).
-
 <div align="center">
 
 <img src="resources/branding/app.png" alt="Uma Legacy Linker icon" width="80">
@@ -91,10 +88,9 @@ Save a profile and rerun the search to apply it. Effective profiles are written 
 > [!WARNING]
 > Review the evidence before transferring a veteran in game. Transfer Helper is a work in progress: its verdicts depend on the evaluated contexts and configured thresholds. It never transfers veterans or modifies the source export.
 
-The helper selects a collection of same-costume copies that covers useful parent and GP roles while preserving protected inheritance assets.
+The helper selects a collection of same-costume copies that covers useful parent and GP roles while preserving protected inheritance assets. The default screen is one four-column list in descending in-game score order: score, Uma, verdict and inline reason. Use **Transfer** for the recommended mass-transfer review or **Keep** for retained, protected and uncertain copies. Search by name or score; hover a reason for its evidence, click a cited score to select that retained copy, or right-click a row for **Audit…**.
 
-Exhaustive analysis is the default. A bounded exact portfolio search reports whether the retained count is proven minimal. Comparisons use the same Ace and expose weighted score components, exact Whites, Spark carriers and G1s. Protected copies receive a separate redundancy diagnostic and remain ineligible for transfer. Upcoming CMs follow the Global MDB calendar; unknown dates are shown explicitly.
-
+The page menu holds report history, analysis scope and the output folder. Reports older than format 12 show a rerun prompt; role-level evidence is not reconstructed approximately. The scope can also protect selected White Spark loops by keeping the top configured number of local carriers, ranked by generation presence, direct ownership, and the portfolio already selected for performance. Click a reason or press Enter to open the explanation panel. Its role list shows the tightest roles first; the shared score band marks the solver's regret zone, and aligned sparks show only factors relevant to that role. **Arbre** opens the filtered lineage view. Exhaustive analysis is the default. A bounded exact portfolio search reports whether the retained count is proven minimal. Protected copies remain ineligible for transfer. Upcoming CMs follow the Global MDB calendar; unknown dates are shown explicitly.
 | Verdict | Meaning |
 | --- | --- |
 | **Protected** | Preserved because of an in-game lock, memo or active White Loop use; still analysed |

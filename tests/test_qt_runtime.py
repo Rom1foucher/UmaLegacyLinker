@@ -193,14 +193,17 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             output = root / "output"
             output.mkdir()
             (output / "transfer_helper_report.json").write_text(
-                json.dumps(
-                    {
-                        "metadata": {
-                            "generated_at_utc": "2026-08-29T08:15:00+00:00"
-                        },
-                        "records": [],
-                    }
-                ),
+                json.dumps({
+                    "metadata": {
+                        "format_version": 13,
+                        "generated_at_utc": "2026-08-29T08:15:00+00:00",
+                    },
+                    "records": [{
+                        "trained_chara_id": 1,
+                        "status": "keep",
+                        "transfer_reason": {"code": "last_copy", "refs": [], "roles": []},
+                    }],
+                }),
                 encoding="utf-8",
             )
             store = SettingsStore(root / "config.json")
@@ -209,78 +212,19 @@ class QtRuntimeSmokeTests(unittest.TestCase):
 
             self.assertEqual(page._result_state, STATE_LOADED)
             self.assertTrue(page.generated_at.text())
-            page.team_trials_check.setChecked(
-                not page.team_trials_check.isChecked()
-            )
-            self.application.processEvents()
+            scope = page._scope_values()
+            scope["include_team_trials"] = not scope["include_team_trials"]
+            scope["loop_protection_skills"] = ["nimble_navigator"]
+            scope["loop_protection_presets"] = ["late", "end"]
+            page._persist_scope(scope)
+            self.assertEqual(page._scope_values()["loop_protection_skills"], ["nimble_navigator"])
+            self.assertEqual(page._scope_values()["loop_protection_presets"], ["late", "end"])
+            page._refresh_freshness()
             self.assertEqual(page._result_state, STATE_STALE)
             _dispose_widget(page, self.application)
 
-    def test_transfer_history_loads_previous_report_with_provenance(self) -> None:
-        from uma_legacy_linker.output_history import PREVIOUS_REVISION, write_json_with_history
-        from ui_qt.context import AppContext
-        from uma_legacy_linker.application import SettingsStore
-        from ui_qt.layout_audit import _dispose_widget
-        from ui_qt.pages_transfer import STATE_LOADED, TransferPage
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            output = root / "output"
-            report = output / "transfer_helper_report.json"
-            write_json_with_history(
-                report,
-                {
-                    "metadata": {
-                        "format_version": 5,
-                        "generated_at_utc": "2026-08-29T08:15:00+00:00",
-                        "purpose": "Transfer analysis",
-                        "source_veterans": {
-                            "filename": "veterans-old.json",
-                            "sha256": "old-sha256",
-                        },
-                    },
-                    "records": [],
-                },
-            )
-            write_json_with_history(
-                report,
-                {
-                    "metadata": {
-                        "format_version": 5,
-                        "generated_at_utc": "2026-08-30T09:30:00+00:00",
-                    },
-                    "records": [{"status": "keep", "trained_chara_id": 1}],
-                },
-            )
-            store = SettingsStore(root / "config.json")
-            store.update({"output_dir": str(output)})
-            page = TransferPage(AppContext(store))
-
-            self.assertEqual(len(page._records), 1)
-            page.load_revision(PREVIOUS_REVISION, show_errors=False)
-            page._rebuild_history_menu()
-
-            self.assertEqual(page._result_state, STATE_LOADED)
-            self.assertEqual(page._records, [])
-            self.assertIsNotNone(page._provenance)
-            assert page._provenance is not None
-            self.assertEqual(page._provenance.revision.key, PREVIOUS_REVISION)
-            self.assertIn("précédente", page.revision_badge.text())
-            self.assertIn("transfer_helper_report.prev.json", page.revision_badge.toolTip())
-            self.assertIn("veterans-old.json · old-sha256", page.revision_badge.toolTip())
-            self.assertEqual(
-                [
-                    action.text()
-                    for action in page.history_menu.actions()
-                    if not action.isSeparator()
-                ][-1],
-                "Comparer courant ↔ précédent",
-            )
-            _dispose_widget(page, self.application)
-
-    def test_transfer_compares_selected_veteran_with_full_retained_record(self) -> None:
-        from unittest.mock import patch
-
+    def test_transfer_roster_view_uses_rating_order_and_keeps_row_identity(self) -> None:
+        from PySide6.QtCore import Qt
         from ui_qt.context import AppContext
         from uma_legacy_linker.application import SettingsStore
         from ui_qt.layout_audit import _dispose_widget
@@ -290,36 +234,148 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             page = TransferPage(
                 AppContext(SettingsStore(Path(temp_dir) / "config.json"))
             )
+            page.set_records([
+                {"trained_chara_id": 1, "uma_name": "Lower", "rank": "A+",
+                 "rank_score": 12000, "status": "keep"},
+                {"trained_chara_id": 2, "uma_name": "Top", "rank": "S+",
+                 "rank_score": 25344, "status": "recommended_transfer"},
+                {"trained_chara_id": 3, "uma_name": "Middle", "rank": "S",
+                 "rank_score": 18000, "status": "review"},
+            ])
+            page._set_view_mode("grid")
+            self.assertEqual(page.context.store.get("ui_transfer_view_mode_v01"), "grid")
+            self.assertEqual(page.roster.fixed_columns, 5)
+            page.resize(900, 640)
+            page.show()
+            self.application.processEvents()
+
+            self.assertEqual(page.views.currentWidget(), page.roster)
+            self.assertEqual(page.roster.count(), 3)
+            self.assertEqual(
+                page.roster.item(0).data(Qt.ItemDataRole.UserRole)["rank_score"],
+                25344,
+            )
+            self.assertEqual(
+                page.roster.item(0).data(Qt.ItemDataRole.UserRole)["status"],
+                "recommended_transfer",
+            )
+            self.assertEqual(page.selected_row()["trained_chara_id"], 2)
+            self.assertEqual(
+                len({page.roster.visualItemRect(page.roster.item(index)).y() for index in range(5)}),
+                1,
+            )
+
+            page.roster_columns.setValue(6)
+            self.application.processEvents()
+            self.assertEqual(
+                len({page.roster.visualItemRect(page.roster.item(index)).y() for index in range(6)}),
+                1,
+            )
+            self.assertEqual(page.roster.fixed_columns, 6)
+            page.roster_columns.setValue(4)
+            self.assertEqual(page.roster.fixed_columns, 4)
+            self.assertEqual(page.context.store.get("ui_transfer_roster_columns_v01"), "4")
+
+            page._set_view_mode("list")
+            self.assertEqual(page.context.store.get("ui_transfer_view_mode_v01"), "list")
+            self.assertEqual(page.views.currentWidget(), page.table)
+            self.assertEqual(page.selected_row()["trained_chara_id"], 2)
+            _dispose_widget(page, self.application)
+
+    def test_transfer_tree_remains_available_when_a_report_has_no_scored_roles(self) -> None:
+        from ui_qt.context import AppContext
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.transfer_reason_panel import TransferReasonPanel
+        from uma_legacy_linker.application import SettingsStore
+
+        def lineage_member(name):
+            return {
+                "card_name": name,
+                "uma_name": name,
+                "factors": {"by_type": {"blue_stat": [], "red_aptitude": [], "unique": []}},
+                "when_used_as_parent": {
+                    "grandparent_1": {"card_name": f"{name} GP A", "factors": {"by_type": {}}},
+                    "grandparent_2": {"card_name": f"{name} GP B", "factors": {"by_type": {}}},
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = AppContext(SettingsStore(Path(temp_dir) / "config.json"))
             candidate = {
                 "trained_chara_id": 1,
-                "card_name": "Candidate",
-                "rank_score": 100,
                 "status": "safe_transfer",
-                "dominated_by": {"trained_chara_id": 2},
+                "comparison_veteran": lineage_member("Studied"),
+                "transfer_reason": {
+                    "code": "replaced_by", "refs": [{"trained_chara_id": 2}], "roles": [],
+                },
             }
             replacement = {
                 "trained_chara_id": 2,
-                "card_name": "Replacement",
-                "rank_score": 120,
-                "status": "keep",
+                "comparison_veteran": lineage_member("Replacement"),
             }
-            page.set_records([candidate, replacement])
-            for index in range(page.model.rowCount()):
-                if page.model.row(index).get("trained_chara_id") == 1:
-                    page.table.selectRow(index)
-                    break
-            self.application.processEvents()
+            panel = TransferReasonPanel(context, [candidate, replacement], {}, {})
+            panel.set_candidate(candidate)
 
-            self.assertTrue(page.compare_button.isEnabled())
-            with patch("ui_qt.pages_transfer.ResultComparisonDialog") as dialog:
-                page.compare_selected_veteran()
+            self.assertIn("p1", panel.tree.nodes)
+            self.assertIn("p1-1", panel.tree.nodes)
+            self.assertIn("p2", panel.tree.nodes)
+            self.assertFalse(panel.tree_scroll.isHidden())
+            _dispose_widget(panel, self.application)
+    def test_transfer_history_marks_old_report_for_rerun(self) -> None:
+        from uma_legacy_linker.output_history import PREVIOUS_REVISION, write_json_with_history
+        from ui_qt.context import AppContext
+        from uma_legacy_linker.application import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_transfer import STATE_REANALYZE, TransferPage
 
-            options = dialog.call_args.kwargs
-            self.assertEqual(options["left"].items[0].key, "trained:1")
-            self.assertEqual(options["right"].items[0].key, "trained:2")
-            self.assertTrue(options["lock_left"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "output"
+            report = output / "transfer_helper_report.json"
+            write_json_with_history(report, {
+                "metadata": {"format_version": 7,
+                             "generated_at_utc": "2026-08-29T08:15:00+00:00"},
+                "records": [],
+            })
+            write_json_with_history(report, {
+                "metadata": {"format_version": 7,
+                             "generated_at_utc": "2026-08-30T09:30:00+00:00"},
+                "records": [{"status": "keep", "trained_chara_id": 1}],
+            })
+            store = SettingsStore(root / "config.json")
+            store.update({"output_dir": str(output)})
+            page = TransferPage(AppContext(store))
+
+            page.load_revision(PREVIOUS_REVISION, show_errors=False)
+            page._rebuild_history_menu()
+
+            self.assertEqual(page._result_state, STATE_REANALYZE)
+            self.assertFalse(page.legacy_report_banner.isHidden())
+            self.assertEqual(page._records, [])
+            self.assertIsNotNone(page._provenance)
+            assert page._provenance is not None
+            self.assertEqual(page._provenance.revision.key, PREVIOUS_REVISION)
+            self.assertEqual(
+                [action.text() for action in page.history_menu.actions() if not action.isSeparator()][-1],
+                "Comparer courant ↔ précédent",
+            )
             _dispose_widget(page, self.application)
+    def test_transfer_audit_is_available_from_row_context_action(self) -> None:
+        from unittest.mock import patch
+        from PySide6.QtWidgets import QDialog
+        from ui_qt.context import AppContext
+        from uma_legacy_linker.application import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
+        from ui_qt.pages_transfer import TransferPage
 
+        with tempfile.TemporaryDirectory() as temp_dir:
+            page = TransferPage(AppContext(SettingsStore(Path(temp_dir) / "config.json")))
+            row = {"trained_chara_id": 1, "card_name": "Candidate", "uma_name": "Uma",
+                   "rank_score": 100, "status": "safe_transfer"}
+            with patch.object(QDialog, "exec", return_value=QDialog.DialogCode.Accepted) as execute:
+                page.open_audit(row)
+            execute.assert_called_once()
+            _dispose_widget(page, self.application)
     def test_transfer_history_compares_same_veteran_before_and_after(self) -> None:
         from unittest.mock import patch
 
@@ -424,9 +480,11 @@ class QtRuntimeSmokeTests(unittest.TestCase):
         self.assertEqual(table.font().featureValue(TABULAR_NUMBERS_FEATURE), 1)
         self.assertEqual(table.font().family(), original_family)
 
-    def test_data_hierarchy_and_transfer_help_are_exposed_at_runtime(self) -> None:
+    def test_data_hierarchy_and_transfer_list_are_exposed_at_runtime(self) -> None:
+        from PySide6.QtCore import Qt
         from ui_qt.context import AppContext
         from uma_legacy_linker.application import SettingsStore
+        from ui_qt.layout_audit import _dispose_widget
         from ui_qt.pages_home_data import DataPage
         from ui_qt.pages_transfer import TransferPage
 
@@ -443,25 +501,14 @@ class QtRuntimeSmokeTests(unittest.TestCase):
             self.assertTrue(data.link_detail.text())
             self.assertTrue(data.catalog_button.toolTip())
             self.assertTrue(data.force_link_button.toolTip())
-
-            for widget in (
-                transfer.mode_combo,
-                transfer.safe_card,
-                transfer.recommended_card,
-                transfer.review_card,
-                transfer.keep_card,
-                transfer.protected_card,
-                transfer.table,
-                transfer.detail,
-            ):
-                self.assertTrue(widget.toolTip(), type(widget).__name__)
-
-            context.set_language("en")
-            self.assertEqual(data.extract_button.text(), "Extract my collection")
-            self.assertEqual(data.link_button.text(), "Link an existing export")
-            data.deleteLater()
-            transfer.deleteLater()
-
+            self.assertEqual(transfer.model.columnCount(), 4)
+            self.assertEqual(
+                [transfer.model.headerData(i, Qt.Orientation.Horizontal) for i in range(4)],
+                ["Score", "Uma", "Verdict", "Raison"],
+            )
+            self.assertEqual(set(transfer.filter_buttons), {"all", "transfer", "keep"})
+            _dispose_widget(data, self.application)
+            _dispose_widget(transfer, self.application)
     def test_semantic_controls_have_bilingual_accessible_contracts(self) -> None:
         from ui_qt.context import AppContext
         from uma_legacy_linker.application import SettingsStore
@@ -491,8 +538,6 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                     (search.ace_label, search.ace_combo),
                     (search.target_label, search.target_combo),
                     (search.top_label, search.top_spin),
-                    (transfer.mode_label, transfer.mode_combo),
-                    (transfer.filter_label, transfer.status_combo),
                     (weights.category_filter_label, weights.category_combo),
                     (tools.api_base_label, tools.api_base),
                     (tools.api_key_label, tools.api_key),
@@ -500,6 +545,12 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                     with self.subTest(language=language, control=type(control).__name__):
                         self.assertIs(label.buddy(), control)
                         self.assertEqual(control.accessibleName(), label.text())
+
+                self.assertTrue(transfer.run_button.accessibleName())
+                self.assertTrue(transfer.menu_button.accessibleName())
+                self.assertTrue(transfer.search.accessibleName())
+                self.assertTrue(transfer.table.accessibleName())
+                self.assertTrue(all(button.accessibleName() for button in transfer.filter_buttons.values()))
 
                 for label, picker in (
                     (data.master_label, data.master_picker),
@@ -523,7 +574,7 @@ class QtRuntimeSmokeTests(unittest.TestCase):
                     search.online_parent_results.detail,
                     transfer.search,
                     transfer.table,
-                    transfer.detail,
+                    *transfer.filter_buttons.values(),
                     weights.search,
                     weights.tree,
                     tools.show_key,

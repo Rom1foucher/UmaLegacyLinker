@@ -4,6 +4,25 @@ This project uses feature-level semantic versioning. Small internal iterations a
 
 ## Unreleased
 
+- Add a game-roster grid view to Transfer Helper, preserving rating-descending
+  order and marking each veteran to keep, review or transfer. Let users fix
+  the number of columns, defaulting to five.
+- Keep a single-branch lineage visible when no scored role is available, and
+  consolidate same-stat Blue totals across differing factor-group IDs in duel
+  and lineage comparisons.
+- Add optional Transfer Helper protection for manually selected White Sparks
+  and Front/Pace/Late/End loop presets. Presets rank complete lineage branches,
+  protect best-presence sources when needed, and report retained-copy costs;
+  manual skill selection remains available alongside presets.
+- Show nearest role comparisons for portfolio-covered copies even when none
+  qualify for the top band, and distinguish a report with no role evidence
+  from a failed score verification. Bump the report format to 13 for package
+  and floor reasons.
+- Rework Transfer Helper as a score-ordered mass-transfer list with inline
+  reasons, a role-first explanation panel, score-band coverage and aligned
+  spark duels. Keep the lineage tree as an optional view and mark older reports
+  for rerun when they do not contain role-level evidence.
+
 ## 1.9.0 - Desktop hardening and faster lineage searches
 
 ### Added
